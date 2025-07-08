@@ -13,22 +13,20 @@ start_scope()
 
 # SET PARAMETERS
 # simulation parameters
-simtime = 65 * second               # simulation time
-transient = 5 * second              # time omitted as transient
+simtime = 10 * second               # simulation time
+transient = 3 * second              # time omitted as transient
 sed = 39                             # random number seed
 devices.device.seed(sed)            # set the seed for all the random number realisations
 
-outputdir = '/home/Nina/Documents/FB_project/Output'    # directory to save figures
-simname = '/test_'                                      # simulation name to save figures
 
 # network parameters
-Nl = 1
+Nl = 10
 N = Nl * Nl                         # number of neurons
                      # connection probability between neurons
-
+connprob = 0.2
 distributed = True                  # Choose if the synaptic weights are normally distributed with standard deviation sd
 sd = 0.7
-DistDelays = True                   # Choose if the delays should be distant dependent
+DistDelays = False                   # Choose if the delays should be distant dependent
 Maxdelay = 25*ms                    # with maximum conduction delay
 
 # neuron parameters
@@ -41,7 +39,7 @@ g_na = 1.6 * 50 * msiemens * cm ** -2 * area  # maximal conductance of sodium ch
 g_kd = 1.3 * 5 * msiemens * cm ** -2 * area   # maximal conductance of potassium
 gl = (0.3*msiemens*cm**-2) * area   # maximal leak conductance
 VT = -30.4*mV                       # alters firing threshold of neurons
-sigma = 6 * mV                      # standard deviation of the noisy voltage fluctuations
+sigma = 5 * mV                      # standard deviation of the noisy voltage fluctuations
 
 # Adaptation parameters
 E_AHP = EK                          # Nernst potential of afterhyperpolarization current
@@ -51,9 +49,11 @@ alpha_Ca = 0.00035                  # strength of the spike-frequency adaptation
 
 # synapse parameters
 S = 0.4                             # Overall synaptic strength multiplicative factor
-delta = 0.6                         # changes NMDAR/AMPAR ratio, should be between -1 and 1
-g_ampa = (1 + delta) * nS           # maximal conductance of AMPA channels
-g_nmda = (1 - delta) * nS           # maximal conductance of NMDA channels
+delta = 0.4                         # changes NMDAR/AMPAR ratio, should be between -1 and 1
+# g_ampa = 0 * nS           # maximal conductance of AMPA channels
+# g_nmda = 0 * nS           # maximal conductance of NMDA channels
+g_ampa = (0.5 + delta) * nS           # maximal conductance of AMPA channels
+g_nmda = (0.5 - delta) * nS           # maximal conductance of NMDA channels
 E_ampa = 0 * mV                     # Nernst potentials of synaptic channels
 E_nmda = 0 * mV
 tau_ampa = 2 * ms                   # recovery time constant of AMPA conductance
@@ -106,62 +106,118 @@ y : meter
 P = NeuronGroup(N, model=eqs, threshold='V>0*mV', reset='Ca += alpha_Ca', refractory=2 * ms,
                     method='exponential_euler')
 
+# Make population of neurons
+P = NeuronGroup(N, model=eqs, threshold='V>0*mV', reset='Ca += alpha_Ca', refractory=2 * ms,
+                    method='exponential_euler')
+
 # Initialize neuron parameters
 P.V = -39 * mV                          # approximately resting membrane potential
-P.I =  0*nA         # Make neurons heterogeneously excitable
+P.I = '(rand() -0.5) * 10 * pA'          # Make neurons heterogeneously excitable
+
+# Position neurons on a grid
+grid_dist = 45 * umeter
+P.x = '(i % Nl) * grid_dist'
+P.y = '(i // Nl) * grid_dist'
+
+# synapse model
+if AsynchronousRelease:
+    eqs_synapsmodel = '''
+    s_nmda_tot_post = w * S * s_nmda * x_d :1 (summed) 
+    qar_tot_post = w * S * x0 * qar :Hz (summed)
+    qar = clip(randn()*sqrt(x_d/x0*uar*dt*(1-uar*dt))+uar*dt*x_d/x0, 0, 2*x_d/x0*uar*dt)/dt :Hz (constant over dt)
+    ds_nmda/dt = -s_nmda/(taus_nmda)+alpha_nmda*(x_nmda)*(1-s_nmda) + x0 * qar : 1 (clock-driven)
+    dx_nmda/dt = -x_nmda/(taux_nmda) :1 (clock-driven)
+    dx_d/dt = (1-x_d)/tau_d -qar :1 (clock-driven)
+    duar/dt = -uar/tau_ar :Hz (clock-driven)
+    w : 1
+    '''
+    eqs_onpre = '''
+    x_nmda += 1 
+    x_d *= (1-U) 
+    uar += Uar*(Umax-uar)
+    s_ampa += w * S * x_d 
+    '''
+elif STF:
+    eqs_synapsmodel = '''
+    s_nmda_tot_post = w * S * x_d * u_d * s_nmda  :1 (summed)
+    ds_nmda/dt = -s_nmda/(taus_nmda)+alpha_nmda*x_nmda*(1-s_nmda) : 1 (clock-driven)
+    dx_nmda/dt = -x_nmda/(taux_nmda) :1 (clock-driven)
+    dx_d/dt = (1-x_d)/tau_d :1 (clock-driven)
+    du_d/dt = -u_d/tau_f :1 (clock-driven)
+    w : 1
+    '''
+    eqs_onpre = '''
+    x_nmda += 1
+    x_d *= (1-u_d)
+    u_d += U*(1-u_d)
+    s_ampa += w * S * x_d * u_d
+    '''
+else:
+    eqs_synapsmodel = '''
+    s_nmda_tot_post = w * S * x_d * s_nmda  :1 (summed)
+    ds_nmda/dt = -s_nmda/(taus_nmda)+alpha_nmda*x_nmda*(1-s_nmda) : 1 (clock-driven)
+    dx_nmda/dt = -x_nmda/(taux_nmda) :1 (clock-driven)
+    dx_d/dt = (1-x_d)/tau_d :1 (clock-driven)
+    w : 1
+    '''
+    eqs_onpre = '''
+    x_nmda += 1
+    x_d *= (1-U)
+    s_ampa += w * S * x_d 
+    '''
+
+# Make synapses
+Conn = Synapses(P, P, model=eqs_synapsmodel, on_pre=eqs_onpre, method='euler')
+
+# connect neurons
+Conn.connect(p=connprob)
+
+if distributed:
+    Conn.w[:] = 'clip(1.+sd*randn(), 0, 2)'
+else:
+    Conn.w[:] = 1
+
+Conn.x_d[:] = 1
+
+if DistDelays:
+    Vmax = (sqrt(Nl ** 2 + Nl ** 2) * grid_dist) / Maxdelay
+    Conn.delay = '(sqrt((x_pre - x_post)**2 + (y_pre - y_post)**2))/Vmax'
+else:
+    Conn.delay = Maxdelay
+
+# SET UP MONITORS AND RUN
+recordstring = ['V']
 
 
+dt2 = defaultclock.dt                                           # Allows for chanching the timestep of recording
 
-
-# --- Monitors ---
-# Set up monitors to record the neuron's activity during the simulation.
-M_v = StateMonitor(P, 'V', record=0) # Record membrane potential of neuron 0
-M_gates = StateMonitor(P, ['m', 'h', 'n'], record=0) # Record gating variables
-
-# --- Simulation Run ---
-print("Starting simulation...")
-
-# 1. Run for a short period to let the neuron settle at resting potential
-print("Running initial settling period (50 ms)...")
-run(50 * ms)
-
-
-# 1. Run for a short period to let the neuron settle at resting potential
-print("Running initial settling period (50 ms)...")
-run(100 * ms)
-
-
-# 2. Apply a constant injected current to trigger an action potential
-print("Injecting current (20 nA for 50 ms)...")
-P.I = 20 * pA
-run(100 * ms)
-
-# 3. Stop the injected current and observe the neuron's recovery
-print("Current injection stopped. Observing recovery (50 ms)...")
-P.I = 30 * pA
-run(100 * ms)
-
-print("Simulation finished.")
+trace = StateMonitor(P, recordstring, record=True, dt=dt2)
 #%%
-# --- Plotting Results ---
+import random
+recordlist = random.sample(range(1, len(Conn)-1), 100)          # Only measure a subset of synapses for speed
 
-# Plot Membrane Potential (Voltage)
-plt.figure(figsize=(10, 6))
-plt.plot(M_v.t/ms, M_v.V[0]/mV)
-plt.xlabel('Time (ms)')
-plt.ylabel('Membrane Potential (mV)')
-plt.title('Hodgkin-Huxley Neuron: Membrane Potential')
-plt.grid(True)
-plt.show()
 
-# Plot Gating Variables
-plt.figure(figsize=(10, 6))
-plt.plot(M_gates.t/ms, M_gates.m[0], label='m (Na activation)')
-plt.plot(M_gates.t/ms, M_gates.h[0], label='h (Na inactivation)')
-plt.plot(M_gates.t/ms, M_gates.n[0], label='n (K activation)')
-plt.xlabel('Time (ms)')
-plt.ylabel('Gating Variable Value')
-plt.title('Hodgkin-Huxley Neuron: Gating Variables')
-plt.legend()
-plt.grid(True)
-plt.show()
+spikes = SpikeMonitor(P)
+
+run(simtime, report='text', profile=True)
+
+# PLOTS
+
+plt.figure(dpi=200)
+plot(trace.t / second, trace[2].V / mV, 'k', linewidth=0.7)
+xlabel('time (s)')
+ylabel('Membrane Potential of a neurons (mV)')
+
+
+show()
+
+
+plt.figure(dpi=200)
+plt.plot(spikes.t / second, spikes.i, '.k', ms=0.7)
+xlabel('time (s)')
+ylabel('neuron index')
+#xlim([45, 49])
+#xlim([transient/second, simtime/second])
+
+show()
+
