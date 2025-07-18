@@ -1110,5 +1110,3 @@ ax3.plot(traceS.t / second, traceS[2].x_S / mV, 'c', linewidth=0.7)
 
 
 
-
-
