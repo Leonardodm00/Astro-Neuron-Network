@@ -1,3 +1,8 @@
+"""
+Created on Thu Jul  3 16:40:23 2025
+
+@author: Admin
+"""
 
 '''
 
@@ -62,11 +67,200 @@ import os
 
 
 from brian2 import *
+from brian2 import devices
 
 
 
+def Synapse_simulation(Params):
+    
+    
+    '''
+    Syynapse wrapper: Brian2 based simulation
+    
+ 
+    
+    '''
+
+    # ----------- Load and preprocess data -----------
+    # Upload the reference data that we're trying to fit.
+    
+    # Load data
+    os.chdir(r'C:\Users\leona\Desktop\Temp scripts\CURRENTS')
+    with open('I_AMPA.csv', 'r') as file:
+        Ref_data = file.read()
+    
+    
+    # ---------- Initial params -----------
+    start_scope()
 
 
+    # simulation parameters
+    simtime = 6 * second               # simulation time
+    sed = 39                             # random number seed
+    devices.device.seed(sed)            # set the seed for all the random number realisations
+   
+    
+    # Tune the trace extracion window
+    Window_length = 300 * ms
+    Start_time = 1 * second
+    
+    # ---- Paramter extraction ----
+    
+    Y_T_t = Params[0]
+    alpha_t = Params[1]
+    beta_t = Params[2]
+    
+    # ----------------- NEURONAL EQUATIONS ----------------------
+    
+    
+     # neuron model
+    eqs_NN = Equations('''
+    # dV/dt = noise + ((-gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK)+I+I_AHP)/Cm) : volt
+    dV/dt = noise + (-gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK)+I-I_syn)/Cm  : volt
+    dm/dt = alpha_m*(1-m)-beta_m*m : 1
+    dh/dt = alpha_h*(1-h)-beta_h*h : 1
+    dn/dt = (alpha_n*(1-n)-beta_n*n) : 1
+    dhp/dt = 0.128*exp((17.*mV-V+VT)/(18.*mV))/ms*(1.-hp)-4./(1+exp((30.*mV-V+VT)/(5.*mV)))/ms*h : 1
+    alpha_m = 0.32*(mV**-1)*4*mV/exprel((13*mV-V+VT)/(4*mV))/ms : Hz
+    beta_m = 0.28*(mV**-1)*5*mV/exprel((V-VT-40*mV)/(5*mV))/ms : Hz
+    alpha_h = 0.128*exp((17*mV-V+VT)/(18*mV))/ms : Hz
+    beta_h = 4./(1+exp((40*mV-V+VT)/(5*mV)))/ms : Hz
+    alpha_n = 0.032*(mV**-1)*5*mV/exprel((15*mV-V+VT)/(5*mV))/ms : Hz
+    beta_n = .5*exp((10*mV-V+VT)/(40*mV))/ms : Hz
+    noise = sigma*(2*gl/Cm)**.5*randn()/sqrt(dt) : volt/second (constant over dt)
+    I : amp
+    
+    
+    x : meter
+    y : meter
+    ''')
+    
+    
+    
+    
+    
+    # ----------------- SYNAPTIC EQUATIONS ----------------------
+    
+    # Basic synaptic equations are the same. what changes is how the post synaptic current behaves.
+    
+  
+    
+    eqs_Syn = Equations('''
+    # Fraction of activated presynaptic receptors
+    
+    
+    # Usage of releasable neurotransmitter per single action potential:
+    du_S/dt = -Omega_f * u_S : 1 (clock-driven)
+    
+    # Fraction of synaptic neurotransmitter resources available for release:
+    dx_S/dt = Omega_d *(1 - x_S) : 1 (clock-driven)
+    dY_S/dt = -Omega_c * Y_S : mole (clock-driven)
+    
+    
+    # Define the variables of the model
+    G_A : mole  # gliotransmitter concentration in the extracellular space
+    U_0 : 1
+    r_S : 1     # Because r_S is the product of u_S and x_S that are event-driven, it is itself event-driven too
+    
+    
+     
+    # Astrocyte ID for connection
+    astro_index : integer
+    # Per-synapse gliotransmitter-effect parameter
+    alpha  : 1
+    ''')
+    
+    # -------------- Event based update --------------
+    
+    
+    pre = '''
+    
+    U_0 =  U_0__star
+    u_S += U_0 * (1 - u_S)
+    r_S = u_S * x_S # released synaptic neurotransmitter resources
+    x_S -= r_S
+    Y_S += rho * Y_T * r_S
+    '''
+    post = None
+    
+
+    
+    # ----------- UPGRADED MODEL -------------
+    
+    
+    eqs_Syn += Equations('''
+                         
+                         
+                            dr_ampa/dt = alpha_ampa_new * Y_S * (1 - r_ampa) - beta_ampa_new * r_ampa: 1 (clock-driven)
+                            dr_nmda/dt =  alpha_nmda_new * Y_S * (1 - r_nmda) - beta_nmda_new * r_nmda : 1 (clock-driven)
+                            
+              
+                            
+                            r_ampa_tot_post = r_ampa : 1 (summed)
+                            r_nmda_tot_post = r_nmda : 1 (summed)
+                         
+                         
+                        ''')
+                        
+
+    
+    eqs_NN += Equations(''' 
+                        I_syn =  I_ampa + I_nmda: amp
+                        I_ampa = g_ampa*(V-E_ampa)*(r_ampa_tot) : amp
+                        I_nmda = g_nmda*(V-E_nmda)*(r_nmda_tot)/(1+exp(-0.062*V/mV)/3.57) : amp
+                        r_nmda_tot :1
+                        r_ampa_tot :1
+                        
+                    
+                        ''')
+    
+    
+    
+    
+    
+    # ----------- Network build -----------
+    
+    params_NN = get_Neuronparam(sigma = 0*mV)
+    params_Syn = get_Synparam(synapse = 'neutral', Y_T = Y_T_t *mmole, alpha_ampa_new = alpha_t * 1/mole * 1/second, beta_ampa_new = beta_t * 1/second)
+   
+
+    
+    
+    poisson_rate = 1*Hz
+    P = PoissonGroup(1, poisson_rate)
+    
+    neuron = NeuronGroup(1, eqs_NN, threshold='V > 0*mV', refractory=2*ms,
+                     method='exponential_euler',namespace=params_NN)
+    neuron.V = -39 *mV # Initialize neuron voltage
+    
+    
+    synapse = Synapses(P, neuron, model=eqs_Syn,
+                   on_pre=pre, on_post=post,namespace=params_Syn,method='exponential_euler')
+    
+    
+    #%
+    # Connect the input spikes to the neuron
+    synapse.connect(i=0, j=0) # Connect the single input "neuron" to the single target neuron
+    synapse.x_S = 1.0
+    # --- Monitoring ---
+    state_monitor = StateMonitor(neuron, ['V','I_syn','I_ampa','I_nmda'], record=0)
+    # state_monitorsynapse = StateMonitor(synapse, ['Y_S','r_ampa','r_nmda'], record=0)
+    spike_monitor_neuron = SpikeMonitor(neuron)
+    spike_monitor_input = SpikeMonitor(P)
+    
+   
+    # --- Run Simulation ---
+    run(simtime)
+     
+     
+    # --- Extract trace ---
+    
+    Simulated_trace = state_monitor[0].I_ampa
+
+    # ---------- Retrun the  NMRE ----------
+         
+        
+    return Simulated_trace,Ref_data
 
 
 
@@ -315,9 +509,9 @@ def Synapse_wrapper(Params):
     
     # ---- Paramter extraction ----
     
-    Y_T_t = params[0]
-    alpha_t = params[1]
-    beta_t = params[2]
+    Y_T_t = Params[0]
+    alpha_t = Params[1]
+    beta_t = Params[2]
     
     # ----------------- NEURONAL EQUATIONS ----------------------
     
@@ -490,16 +684,12 @@ def get_newspace(res_gp,pers):
     algorithm given the 'pers' persentage of best points from the previous Optimization 
     Process.
   
-    !!! At this step the regression parameter BETA musn't be optimized !!!
-    
     pers = between 0 and 1  
     
     Space parameters are set as follow:
-        space = [SR,
-                 LR,
-                 W,
-                 Win,
-                 Beta
+        space = [Y_T,
+                Alpha,
+                Beta
                      ]
     
     
@@ -546,19 +736,18 @@ def get_newspace(res_gp,pers):
     # Define the new space
     
     # Set HPs' range
-    SR = Real(lower_bounds[0],upper_bounds[0],'log-uniform',name = 'Spectral_radius')
-    LR = Real(lower_bounds[1],upper_bounds[1],'log-uniform',name = 'Leak_rate')
-    W  = Real(lower_bounds[2],upper_bounds[2],name = 'R_conn')
-    Win =  Real(lower_bounds[3],upper_bounds[3],name = 'In_conn')
+    Y_T = Real(lower_bounds[0],upper_bounds[0],name='Vescicle [Glu]')
+    Alpha = Real(lower_bounds[1],upper_bounds[1],name = 'Alpha')
+    Beta  = Real(lower_bounds[2],upper_bounds[2],'log-uniform', name = 'Beta')
+    
     
 
 
 
 
-    space = [SR,
-             LR,
-             W,
-             Win
+    space = [Y_T,
+             Alpha,
+             Beta
         
         ]
     
@@ -579,7 +768,7 @@ from skopt import gp_minimize
 # --------------------- FIRST RANDOM SEARCH --------------------- 
 
 # Set the parameters' range
-Y_S = Integer(200,700,name = 'Vescicle [Glu]')
+Y_T = Integer(200,700,name = 'Vescicle [Glu]')
 alpha = Real(1e5,1e10, name = 'Alpha')
 beta = Real(1e-4,1e3,'log-uniform', name = 'Beta')
 
@@ -596,14 +785,14 @@ space = [Y_T,
 
 # ------- Run the gp -------
 
-res_gp = gp_minimize(ESN_wrapper, space, n_calls=120, random_state=0,verbose=True)
+res_gp = gp_minimize(Synapse_wrapper, space, n_calls=120, random_state=0,verbose=True)
 
   
 # ------- Plot the Partial Dependence Plots (PDP) -------
 
 # This is needed to spotlight possible parameters that do not have great influence
 # on the model performance. These appear to have flat Partial Dependence profiles.
-    
+ #%%   
     
 from skopt.plots import plot_objective
     
@@ -618,16 +807,14 @@ plt.show()
 
 # The search space is narrowed in base of the range covered by the first 10% of best points.
 # The space covered by Beta parameter is left untouched and optimized later on.
-pers = 30/100
+pers = 10/100
 Narrowed_space = get_newspace(res_gp,pers)
 
 
-# Add the full-ranged Regression parameter to the new space
-Narrowed_space[4] = Beta
 
 #%% 
 # --------------------- SECOND RANDOM SEARCH ---------------------     
-res_gp2 = gp_minimize(ESN_wrapper, Narrowed_space, n_calls=120, random_state=0,verbose=True)    
+res_gp2 = gp_minimize(Synapse_wrapper, Narrowed_space, n_calls=120, random_state=0,verbose=True)    
 
 
 # --- PLOT ---
@@ -683,4 +870,8 @@ def HP_choice(res_gp2,method,n_hp,xbest):
     
     # Sort function values
     Sorted_funcval = res_gp.func_vals[Sorting_idx]
+    #%%
     
+    
+
+Sim_timeseries,reference  = Synapse_simulation(Params)
