@@ -1,6 +1,5 @@
 
 
-
 # -*- coding: utf-8 -*-
 """
 Created on Wed Jul  9 10:28:10 2025
@@ -14,57 +13,8 @@ from brian2 import *
 
 
 
-def Get_efficacy_scale(td,scaling_f,rho,Y_T):
-    
-    '''
-    This function calculates the Syanptic efficacy scaling factor. It is used to 
-    scale the post-synaptic currents gating variable.
-        
-    
-    Params:
-        td = decay time scale
-        rho = Vescicular versus mixing volume ratio
-        Y_T = Total vescicular glutamate concentration
-    '''
-    
-    return scaling_f / (rho * Y_T * td)
 
-
-def Get_amplitude_scale(tr,td,scaling_f):
-    
-    '''
-    This function calculates the Syanptic amplitude scaling factor. It is used to 
-    scale the post-synaptic currents amplitude
-    
-    Params:
-        td = decay time scale
-        tr = rise time scale
-       
-    '''
-
-    rise_ratio = tr / (td - tr)
-    decay_ratio = td / (td - tr)
-    Numerator = scaling_f * ((1 / td) - (1 / tr))
-    Denominator = ((tr / td) ** decay_ratio) - ((tr / td) ** rise_ratio)
-    
-    Scaling_f_I = Numerator / Denominator
-
-
-    return Scaling_f_I
-
-
-
-
-
-
-
-
-
-
-
-
-
-def get_Neuronparam(Adaptation,delta = 0.5):
+def get_Neuronparam(Adaptation=False,delta = 0.5,**kwargs):
     
     
     Neuron_area =  300*umetre**2
@@ -137,6 +87,7 @@ def get_Neuronparam(Adaptation,delta = 0.5):
     'x0': 5, # x0 seems to be unitless here
 
      }
+    params.update(kwargs)
 
     return params
 
@@ -194,11 +145,15 @@ def get_Synparam(synapse='depressing',**kwargs):
         'STF': False,
         'tau_f': 1000 * ms,
         
+        'w':1,
         
+        # Params of the upgrated model
+        'alpha_ampa_new' : 1.1e6 * 1/mole * 1/second,
+        'alpha_nmda_new' : 7.2e4 * 1/mole * 1/second,
+        'beta_ampa_new' : 190 * 1/second,
+        'beta_nmda_new' :  6.6 * 1/second,
+        'epsilon': 1e-40 * Hz,
         
-        # Weight
-        'sd' : 0.7,
-        'w' : 1,
        
     
        # Asynchronous Release parameters (uncommented and added to dictionary)
@@ -254,7 +209,7 @@ def get_Synparam(synapse='depressing',**kwargs):
         'W_0'    : 0.5,    # LTP/LTD boundary
         'tau_w'  : 346.3615*second, # Time decay of synaptic weights
         'D'      : 13.7*ms,# Synaptic delay
-        'sigma'  : 2.8284, # variance in the diffusion approx,
+        'sigma_'  : 2.8284, # variance in the diffusion approx,
         'beta'   : 0.5,
         'b'      : 5.
     })
@@ -264,6 +219,7 @@ def get_Synparam(synapse='depressing',**kwargs):
     params.update(kwargs)
 
     return params
+
 
 
 
@@ -287,7 +243,7 @@ sic=None
 delay=None
 RandomKinetics = False 
 OnlyExc = True
-
+Syn_Currents_model = 'Nina'
 Max_delay = 25 *ms
 add_delay = False
 delay_mode = 'random'
@@ -317,25 +273,6 @@ devices.device.seed(sed)            # set the seed for all the random number rea
 Nl = 2
 N = Nl * Nl  
 
-# area = 300*umetre**2                # membrane area of the neuron
-# Cm = (2*ufarad*cm**-2) * area       # membrane capacitance
-# El = -39.2 * mV                     # Nernst potential of leaky ions
-# EK = -80 * mV                       # Nernst potential of potassium
-# ENa = 70 * mV                       # Nernst potential of sodium
-# g_na = 1.6 * 50 * msiemens * cm ** -2 * area  # maximal conductance of sodium channels
-# g_kd = 1.3 * 5 * msiemens * cm ** -2 * area   # maximal conductance of potassium
-# gl = (0.3*msiemens*cm**-2) * area   # maximal leak conductance
-# VT = -30.4*mV                       # alters firing threshold of neurons
-# sigma = 4.5 * mV                      # standard deviation of the noisy voltage fluctuations
-
-# if adaptation == True:
-        
-#         g_m= (0.4*msiemens*cm**-2) * area
-        
-        
-# else:
-#         g_m = 0
-
 
 
 
@@ -347,174 +284,12 @@ target = [1,2,3]
 
 
 
-
-# # --- Synaptic dynamics
-# E_Iper = 80/100,          # Persentage of excitatory connections
-# # Omega_d (see below)      # Depression rate
-# # Omega_f (see below)      # Facilitation rate,
-# # U_0__star (see below)    # Basal synaptic release probability
-# Omega_c = 40./second,     # Neurotransmitter clearance rate
-# rho_c = 0.005,            # synaptic vesicle-to-extracellular space volume ratio
-# Y_T = 500.*mmole,         # Total neurotransmitter synaptic resource (in terms of vesicular concentration)
-# # --- Presynaptic receptors
-# O_G = 1.5/umole/second,   # Agonist binding rate (activating)
-# Omega_G = 0.5/(60*second),# Agonist release rate (inactivating)
-# # alpha (see below)        # Gliotransmitter effect on synaptic release
-# # --- SIC/SOC
-# G_sic =  4.5*mV,      # Max SIC/SOC depolarization
-# tau_sic_r = 30.*ms,      # SIC/SOC rise time constant
-# tau_sic = 600.*ms,       # SIC/SOC decay time constant
-
-
-# if oscillations == 'AM':
-    
-#         K_P = 0.1*umole,
-#         O_delta = 0.01*umole/second,
-#         Omega_5P = 0.1/second,
-#         I_bias = 0.8*umole
-    
-# elif oscillations == 'FM':
-    
-#         K_P = 0.05*umole,
-#         O_delta = 0.05*umole/second,
-#         Omega_5P =  0.1/second,
-#         I_bias = 1.*umole
-    
-# else:
-#     raise ValueError('oscillations argument has to be "AM" or "FM"')
-
-
-# # ------------------ SYNAPSES ------------------
-# if synapse == 'depressing':
-    
-#         Omega_d = 2./second,
-#         Omega_f = 3.33/second,
-#         U_0__star = 0.6,
-#         alpha = 0.,
-    
-# elif synapse == 'facilitating':
-    
-#         Omega_d = 2./second,
-#         Omega_f = 2./second,
-#         U_0__star = 0.15,
-#         alpha = 1.,
-    
-# elif synapse == 'neutral':
-    
-#         Omega_d = 3./second,
-#         Omega_f = 3./second,
-#         U_0__star = 0.5,
-#         alpha =  1.,
-    
-# else:
-#     raise ValueError('synapse argument has to be "depressing", "facilitating" or "neutral"')
-
-# # Post-synaptic neuron parameters
-
-# G_e = 2*mV,   # Max synaptic depolarization
-# tau_m= 20*ms,  # Membrane time constant
-# tau_r= 5*ms,   # Refractory time
-  
-# # --- AMPA/NMDA means ---
-# AMPA_tau_r= 0.5*ms, # excitatory conductance rise time
-# AMPA_tau= 5*ms,   # excitatory conductance time constant
-# NMDA_tau_r= 10*ms, # excitatory conductance rise time
-# NMDA_tau= 40*ms,   # excitatory conductance time constant
-
-# # --- AMPA/NMDA std ---
-# AMPA_tau_r_STD= 0.5*ms, # excitatory conductance rise time
-# AMPA_tau_STD= 5*ms,   # excitatory conductance time constant
-# NMDA_tau_r_STD= 10*ms, # excitatory conductance rise time
-# NMDA_tau_STD= 40*ms,   # excitatory conductance time constant
-
-# # --- GABA means ---
-# GABA_tau_i_r= 10*ms,  # inhibitory conductance time constant
-# GABA_tau_i= 10*ms,  # inhibitory conductance time constant
-
-# # --- GABA std ---
-# GABA_tau_i_r_STD= 10*ms,  # inhibitory conductance time constant
-# GABA_tau_i_STD= 10*ms,  # inhibitory conductance time constant
-
-
-# # Synaptic efficacy 
-# we_AMPA = 0.5, # Relative contribution of AMPA channels to the total syn weight
-# we_NMDA = 0.5, # Relative contribution of NMDA channels to the total syn weight
-# we= 4, # Total excitatory synaptic weigth
-# we_std = 0.2,  # Total excitatory synaptic weight std
-# wi= - 1,
-# wi_std= 0.1,
-
-
-
-
-# -------- ASTROCYTIC ---------
-# ----Input
-f_in = 1.*Hz,              # Input frequency (synapse)
-f_c = 1.*Hz,              # Input frequency (gliotransmission)
-# 't_on' : 0*second,         # Start of synaptic stimulation (used in STDP)
-t_off =  Inf*second,      # End of astrocyte stimulation (used in standalone gliotransmission)
-# --- IP_3R kinectics
-d_1 = 0.13*umole,         # IP_3 binding affinity
-O_2 = 0.2/umole/second,   # Inactivating Ca^2+ binding rate
-d_2 = 1.05*umole,         # Inactivating Ca^2+ binding affinity
-d_3 = 0.9434*umole,       # IP_3 binding affinity (with Ca^2+ inactivation)
-d_5 = 0.08*umole,         # Activating Ca^2+ binding affinity
-# ---  Calcium fluxes
-C_osc = 0.2*umole,        # Estimated Threshold for Ca^2+ oscillations
-C_T = 2*umole,            # Total ER Ca^2+ content
-rho_A = 0.18,             # ER-to-cytoplasm volume ratio
-Omega_C = 6/second,       # Maximal Ca^2+ release rate by IP_3Rs
-Omega_L =  0.1/second,     # Maximal Ca^2+ leak rate,
-O_P = 0.9*umole/second,   # Maximal Ca^2+ uptake rate
-# K_P (see below)          # Ca^2+ affinity of SERCA pumps
-# --- IP_3 production
-# Omega_delta (see below)  # Maximal rate of IP_3 production by PLCdelta
-K_delta = 0.5*umole,      # Ca^2+ affinity of PLCdelta
-kappa_delta = 1.*umole,    # Inhibiting IP_3 affinity of PLCdelta
-# --- IP_3 degradation
-# Omega_5P (see below)     # Maximal rate of IP_3 degradation by IP-5P
-O_3K =  4.5*umole/second,  # Maximal rate of IP_3 degradation by IP_3-3K
-K_D = 0.5*umole,          # Ca^2+ affinity of IP3-3K
-K_3K = 1.*umole,           # IP_3 affinity of IP_3-3K
-# --- IP_3 diffusion
-F = 2.*umole/second,       # GJC IP_3 permeability (nonlinear)
-I_Theta = 0.3*umole,      # Threshold IP_3 gradient for diffusion
-omega_I= 0.05*umole,     # Scaling factor of diffusion
-# I_bias (see below)       # IP_3 bias
-# --- Agonist-dependent IP_3 production
-O_beta = 1.*umole/second,  # Maximal rate of IP_3 production by PLCbeta
-O_N = 0.3/umole/second,   # Agonist binding rate
-Omega_N = 1.8/second,     # Inactivation rate of GPCR signalling
-K_KC = 0.5*umole,         # Ca^2+ affinity of PKC
-zeta =  2.,                # Maximal reduction of receptor affinity by PKC
-n = 1.,                   # Cooperativity of agonist binding reaction
-# --- Gliotransmitter release and time course        
-C_Theta = 0.5*umole,      # Ca^2+ threshold for exocytosis
-Omega_A = 0.6/second,     # Gliotransmitter recycling rate
-U_A = 0.6,                # Gliotransmitter release probability
-G_T = 200.*mmole,         # Total vesicular gliotransmitter
-rho_e = 6.5e-4,           # Ratio of astrocytic vesicle volume/ESS volume
-Omega_e = 5./second,      # Gliotransmitter clearance rate (think about distributed release)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #%
 # ---------------------- NEURONAL GROUP ----------------------
  # neuron model
 eqs_NN = Equations('''
 # dV/dt = noise + ((-gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK)+I+I_AHP)/Cm) : volt
-dV/dt = noise + (-gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK)+I+I_syn)/Cm  : volt
+dV/dt = noise + (-gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK)+I-I_syn)/Cm  : volt
 dm/dt = alpha_m*(1-m)-beta_m*m : 1
 dh/dt = alpha_h*(1-h)-beta_h*h : 1
 dn/dt = (alpha_n*(1-n)-beta_n*n) : 1
@@ -557,28 +332,6 @@ y : meter
 # it cannot be used in this module and 'postc' is used instead.
 
 
-
-# !!!TODO: LAter add: 
-# dGamma_S/dt = O_G * G_A * (1 - Gamma_S) - Omega_G * Gamma_S : 1 (clock-driven)
-# U_0 = (1 - Gamma_S) * U_0__star + alpha * Gamma_S
-# ie_AMPA : amp
-# ie_NMDA : amp
-# B_syn_AMPA : Hz
-# B_syn_NMDA : Hz
- 
-
-
-
-# nge_AMPA : 1
-# nge_NMDA : 1
-# AMPA_tau_r : second
-# NMDA_tau_r : second
-# AMPA_tau : second
-# NMDA_tau : second
-# we : 1
-# Omega_f : 
-# Omega_d :
-# Omega_c :
 eqs_Syn = Equations('''
     # Fraction of activated presynaptic receptors
     
@@ -670,255 +423,132 @@ if RandomKinetics == True:
 
 
 
-'''
-# ADD THE NMDA AND AMPA and GABA
+# ----------------- SYNAPTIC EQUATIONS ----------------------
 
-Given that the rise and decay time constant can be differntly assigned to each neuron,
-Brian2 requires to initialize them as state variables 
-'''
+# Basic synaptic equations are the same. what changes is how the post synaptic current behaves.
 
+
+
+
+
+eqs_Syn = Equations('''
+    # Fraction of activated presynaptic receptors
+    
+    
+    # Usage of releasable neurotransmitter per single action potential:
+    du_S/dt = -Omega_f * u_S : 1 (clock-driven)
+    
+    # Fraction of synaptic neurotransmitter resources available for release:
+    dx_S/dt = Omega_d *(1 - x_S) : 1 (clock-driven)
+    dY_S/dt = -Omega_c * Y_S : mole (clock-driven)
+    
+    
+    # Define the variables of the model
+    G_A : mole  # gliotransmitter concentration in the extracellular space
+    U_0 : 1
+    r_S : 1     # Because r_S is the product of u_S and x_S that are event-driven, it is itself event-driven too
+    
+    
+ 
+    # Astrocyte ID for connection
+    astro_index : integer
+    # Per-synapse gliotransmitter-effect parameter
+    alpha  : 1
+    ''')
+
+# -------------- Event based update --------------
+
+
+pre = '''
+
+U_0 =  U_0__star
+u_S += U_0 * (1 - u_S)
+r_S = u_S * x_S # released synaptic neurotransmitter resources
+x_S -= r_S
+Y_S += rho * Y_T * r_S
+'''
+post = None
 
 
 ## NINA POST_SYNAPTIC MODEL
+if Syn_Currents_model == 'Nina':
 
-
-    
-
-    
-eqs_Syn += Equations('''
+        
+    eqs_Syn += Equations('''
+                        
                     
-                
-                
+                    
+                  
+                    
+                    ds_ampa/dt = -s_ampa/tau_ampa : 1 (clock-driven)
+                    
+                    
+                    s_ampa_tot_post = s_ampa :1 (summed)
+                    s_nmda_tot_post = w * S * x_d * s_nmda  :1 (summed)
+                    ds_nmda/dt = -s_nmda/(taus_nmda)+alpha_nmda*x_nmda*(1-s_nmda) : 1 (clock-driven)
+                    dx_nmda/dt = -x_nmda/(taux_nmda) :1 (clock-driven)
+                    dx_d/dt = (1-x_d)/tau_d :1 (clock-driven)
+                    
+                    
+                    
+    
+                      
+                      
+                     
+                      ''')
+                      
+                      
+    pre += '''           
+            x_nmda += 1
+            x_d *= (1-U)
+            s_ampa += w * S * x_d 
+                   '''                 
+                      
+                      
+    eqs_NN += Equations(''' 
+                        I_syn =  I_ampa + I_nmda: amp
+                        I_ampa = g_ampa*(V-E_ampa)*(s_ampa_tot) : amp
+                        I_nmda = g_nmda*(V-E_nmda)*(s_nmda_tot)/(1+exp(-0.062*V/mV)/3.57) : amp
+                        s_nmda_tot :1
+                        s_ampa_tot :1
+                        
+                    
+                        ''')
+
+
+
+# ----------- UPGRADED MODEL -------------
+
+else:
+    
+    eqs_Syn += Equations('''
               
-                
-                ds_ampa/dt = -s_ampa/tau_ampa : 1 (clock-driven)
-                
-                
-                s_ampa_tot_post = s_ampa :1 (summed)
-                s_nmda_tot_post = w * S * x_d * s_nmda  :1 (summed)
-                ds_nmda/dt = -s_nmda/(taus_nmda)+alpha_nmda*x_nmda*(1-s_nmda) : 1 (clock-driven)
-                dx_nmda/dt = -x_nmda/(taux_nmda) :1 (clock-driven)
-                dx_d/dt = (1-x_d)/tau_d :1 (clock-driven)
-                w : 1
-                taus_nmda : second
-                taux_nmda : second
-                tau_ampa : second
-                
-
-                  
-                  
-                 
-                  ''')
-                  
-                  
-pre += '''           
-        x_nmda += 1
-        x_d *= (1-U)
-        s_ampa += w * S * x_d 
-               '''                 
-                  
-                  
-eqs_NN += Equations(''' 
-                    I_syn =  I_ampa + I_nmda: amp
-                    I_ampa = g_ampa*(V-E_ampa)*(s_ampa_tot) : amp
-                    I_nmda = g_nmda*(V-E_nmda)*(s_nmda_tot)/(1+exp(-0.062*V/mV)/3.57) : amp
-                    s_nmda_tot :1
-                    s_ampa_tot :1
-                    
-                
-                    ''')
-                    
-
-
-
-# if RandomKinetics == True:
-#     # Some variance is given to the time constant of synaptic transmission
-    
-#     # Determine the number of synapses
-#     N_syn = len(source)
-    
-#     if OnlyExc == True:
-        
-#         AMPA_rise = np.random.normal(loc=params_Syn['AMPA_tau_r'], scale=params_Syn['AMPA_tau_r_STD'], size=N_syn)
-#         NMDA_rise = np.random.normal(loc=params_Syn['NMDA_tau_r'], scale=params_Syn['NMDA_tau_r_STD'], size=N_syn)
-#         AMPA_decay = np.random.normal(loc=params_Syn['AMPA_tau'], scale=params_Syn['AMPA_tau_STD'], size=N_syn)
-#         NMDA_decay = np.random.normal(loc=params_Syn['NMDA_tau'], scale=params_Syn['NMDA_tau_STD'], size=N_syn)
-#         we = np.random.normal(loc=params_Syn['we'], scale=params_Syn['we_std'], size=N_syn)
-        
-        
-      
-#         params_Syn.update({  
-            
-#             'AMPA_tau_r': AMPA_rise,
-#             'NMDA_tau_r': NMDA_rise,
-#             'AMPA_tau': AMPA_decay,
-#             'NMDA_tau': NMDA_decay,
-#             'we':we
-            
-#             })
-                
-            
-            
-            
-            
-            
-        
-        
-        
-        
-        
-#     else:
-        
-#         N_syn_exc = np.int16(N_syn * params_Syn['E_Iper'])
-#         N_syn_inh = N_syn - N_syn_exc
-        
-        
-#         AMPA_rise = np.random.normal(loc=params_Syn['AMPA_tau_r'], scale=params_Syn['AMPA_tau_r_STD'], size=N_syn_exc)
-#         NMDA_rise = np.random.normal(loc=params_Syn['NMDA_tau_r'], scale=params_Syn['NMDA_tau_r_STD'], size=N_syn_exc)
-#         AMPA_decay = np.random.normal(loc=params_Syn['AMPA_tau'], scale=params_Syn['AMPA_tau_STD'], size=N_syn_exc)
-#         NMDA_decay = np.random.normal(loc=params_Syn['NMDA_tau'], scale=params_Syn['NMDA_tau_STD'], size=N_syn_exc)
-        
-#         GABA_rise = np.random.normal(loc=params_Syn['GABA_tau_i_r'], scale=params_Syn['GABA_tau_i_r_STD'], size=N_syn_inh)
-#         GABA_decay = np.random.normal(loc=params_Syn['GABA_tau_i'], scale=params_Syn['GABA_tau_i_STD'], size=N_syn_inh)
-        
-#         we = np.random.normal(loc=params_Syn['we'], scale=params_Syn['we_std'], size=N_syn_exc)
-#         wi = np.random.normal(loc=params_Syn['we'], scale=params_Syn['we_std'], size=N_syn_inh)
-        
-        
-        ###### TO FINISH
-    
-    
-
-
-# # Add case-specific code
-# if postc_sic =='exp' :
-    
-    
-
-    
-#     eqs_Syn += Equations('''
-                        
-#                       AMPA_tau : second  
-                        
-                       
                          
-#                       dge_AMPA/dt = -ge_AMPA/AMPA_tau + Y_S* we/AMPA_tau : 1 (clock-driven)
-#                       ge_AMPA_tot_post = ge_AMPA : 1 (summed) 
-                    
-#                       ''')
-                      
-                      
-                      
-                      
-                      
-#     eqs_NN += Equations(''' 
-                        
-#                         ge_AMPA_tot :volt/second  
-                        
-#                         v_syn = ge_AMPA_tot
-                        
-                    
-#                         ''')
-                        
-                        
-                        
-                        
-                        
-                        
-                        
-                        
-                        
-# elif postc_sic =='double-exp':
-    
-#       # # Initialize the scaling factors for both types of synapses.
-#       # AMPA_efficacy = Get_efficacy_scale(params_Syn['AMPA_tau'], params_Syn['J_AMPA'], params_Syn['rho'], params_Syn['Y_T'])
-#       # AMPA_amplitude = Get_amplitude_scale(params_Syn['AMPA_tau_r'], params_Syn['AMPA_tau'], params_Syn['I_AMPA'])
-     
-#       # NMDA_efficacy = Get_efficacy_scale(params_Syn['NMDA_tau'], params_Syn['J_NMDA'], params_Syn['rho'], params_Syn['Y_T'])
-#       # NMDA_amplitude = Get_amplitude_scale(params_Syn['NMDA_tau_r'], params_Syn['NMDA_tau'], params_Syn['I_NMDA'])
-    
-#       # params_Syn.update({  
-        
-#       #   'AMPA_efficacy': AMPA_efficacy,
-#       #   'AMPA_amplitude': AMPA_amplitude,
-#       #   'NMDA_efficacy': NMDA_efficacy,
-#       #   'NMDA_amplitude': NMDA_amplitude,
-
-        
-#       #   })
-    
-#         params_Syn['normfac_AMPA'] = peak_normalize(1.,params_Syn['AMPA_tau_r'],params_Syn['AMPA_tau'])
-#         params_Syn['normfac_NMDA'] = peak_normalize(1.,params_Syn['NMDA_tau_r'],params_Syn['NMDA_tau'])
-
-#     # Firstly are initialized the vector-like synaptic variables, i.e. the ones that are randomly 
-#     # initiated in a syanptic specific way.
-   
-   
-#         eqs_Syn += Equations('''
+                               
+                            dr_ampa/dt = alpha_ampa_new * Y_S * (1 - r_ampa) - beta_ampa_new * r_ampa: 1 (clock-driven)
+                            dr_nmda/dt =  alpha_nmda_new * Y_S * (1 - r_nmda) - beta_nmda_new * r_nmda : 1 (clock-driven)
                             
-#                       normfac_AMPA: second
-#                       normfac_NMDA: second
-                      
-#                       AMPA_tau : second
-#                       AMPA_tau_r : second
-#                       NMDA_tau : second
-#                       NMDA_tau_r : second
-                      
-                      
+                 
                             
-#                       dge_AMPA/dt = -ge_AMPA/AMPA_tau_r + normfac_AMPA * B_syn_AMPA : 1 (clock-driven)
-                      
-#                       dB_syn_AMPA/dt = -B_syn_AMPA/AMPA_tau + Y_S * we : Hz  (clock-driven)
-                      
-#                       ge_AMPA_tot_post = ge_AMPA : 1 (summed) 
-                      
-                      
-                       
-#                       dge_NMDA/dt = -ge_NMDA/NMDA_tau_r + normfac_NMDA * B_syn_NMDA : 1 (clock-driven)
-                      
-#                       dB_syn_NMDA/dt = -B_syn_NMDA/NMDA_tau + Y_S * we  : Hz  (clock-driven)
-                      
-#                       ge_NMDA_tot_post = ge_NMDA : 1  (summed) 
-                      
-#                       ''')
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-#         eqs_NN += Equations(''' 
-                          
-#                           ge_AMPA_tot : 1
-#                           ge_NMDA_tot : 1 
-#                           v_syn =  ge_AMPA_tot * (1 - we_AMPA) + ge_NMDA_tot * (1 - we_NMDA) : 1
-                          
-                      
-#                           ''')
-
-# # if sic==True:
-# #     if postc_sic =='exp':
-# #         eqs_Syn += Equations('''
-# #                         dgsic/dt = -gsic/tau_sic + G_A_sic*wa/tau_sic : 1
-# #                         G_A_sic : mole
-# #                         ''')
-# #     elif postc_sic =='double-exp':
-# #         nsic = peak_normalize(1.,tau_sic_r,tau_sic)
-# #         eqs_Syn += Equations('''
-# #                         dgsic/dt = -gsic/tau_sic_r + nsic*B_sic : 1
-# #                         dB_sic/dt = -B_sic/tau_sic + G_A_sic*wa : Hz  # Technically you need the concentration in the cleft, but you can use Y_S and recale w/in 'we'
-# #                         G_A_sic : mole
-# #                         ''')
-
-
+                            
+                            r_ampa_tot_post = r_ampa : 1 (summed)
+                            r_nmda_tot_post = r_nmda : 1 (summed)
+                         
+                         
+                        ''')
+                        
 
     
-    
+    eqs_NN += Equations(''' 
+                        I_syn =  I_ampa + I_nmda: amp
+                        I_ampa = g_ampa*(V-E_ampa)*(r_ampa_tot) : amp
+                        I_nmda = g_nmda*(V-E_nmda)*(r_nmda_tot)/(1+exp(-0.062*V/mV)/3.57) : amp
+                        r_nmda_tot :1
+                        r_ampa_tot :1
+                        
+                    
+                        ''')
+
 
 
 
@@ -1028,7 +658,11 @@ if ics=='rand':
 # --- Run try ---
 # Define the state monitor
 recording_stringP = ['V']
-recording_stringS = ['u_S','x_S','Y_S']
+recording_stringS = ['u_S','x_S','Y_S','I_syn','I_ampa','I_nmda']
+
+
+
+
 dt2 = defaultclock.dt                                           # Allows for chanching the timestep of recording
 synapses
 traceS = StateMonitor(S, recording_stringS, record=True, dt=dt2)
@@ -1077,35 +711,105 @@ fig, (ax1, ax2, ax3) = plt.subplots(3, 1,figsize=[10,12]) # Added figsize for be
 
 
 
-ax1.plot(traceS.t / second, traceS[0].u_S / mV, 'r', linewidth=0.7)
+ax1.plot(traceS.t / second, traceS[0].u_S, 'r', linewidth=0.7,label='Ready-to-relase resources')
 
-ax1.plot(traceS.t / second, traceS[0].x_S / mV, 'c', linewidth=0.7)
-
-# ax1.plot(traceS.t / second, traceS[0].Y_S / mV, 'k', linewidth=0.7)
+ax1.plot(traceS.t / second, traceS[0].x_S, 'c', linewidth=0.7,label='Available resources')
 
 
-
-
-ax2.plot(traceS.t / second, traceS[1].u_S / mV, 'r', linewidth=0.7)
-
-ax2.plot(traceS.t / second, traceS[1].x_S / mV, 'c', linewidth=0.7)
-
-# ax2.plot(traceS.t / second, traceS[1].Y_S / mV, 'k', linewidth=0.7)
+ax1.legend()
 
 
 
-ax3.plot(traceS.t / second, traceS[2].u_S / mV, 'r', linewidth=0.7)
+ax2.plot(traceS.t / second, traceS[1].u_S, 'r', linewidth=0.7)
 
-ax3.plot(traceS.t / second, traceS[2].x_S / mV, 'c', linewidth=0.7)
+ax2.plot(traceS.t / second, traceS[1].x_S, 'c', linewidth=0.7)
 
-# ax3.plot(traceS.t / second, traceS[2].Y_S / mV, 'k', linewidth=0.7)
 
+
+
+ax3.plot(traceS.t / second, traceS[2].u_S, 'r', linewidth=0.7)
+
+ax3.plot(traceS.t / second, traceS[2].x_S, 'c', linewidth=0.7)
+
+ax3.set_xlabel('Time [s]')
 # fig.show()
 
 # plt.figure(dpi=200)
 # plt.plot(spikes.t / second, spikes.i, '.k', ms=0.7)
 
 # show()
+
+#%%
+
+# Synaptically released glutamate 
+
+fig, (ax1, ax2, ax3) = plt.subplots(3, 1,figsize=[10,12]) # Added figsize for better viewing
+
+
+
+
+ax1.plot(traceS.t / second, traceS[0].Y_S, 'k', linewidth=0.7,label='[Glu]')
+ax1.plot(spikes.t/second,spikes[0].i+3,'.g', ms=5,label='Spikes')
+ax1.set_ylabel('Mol')
+ax1.legend()
+
+
+ax2.plot(traceS.t / second, traceS[1].Y_S, 'k', linewidth=0.7)
+ax2.plot(spikes.t/second,spikes[1].i+3,'.g', ms=5)
+ax2.set_ylabel('Mol')
+
+
+ax3.plot(traceS.t / second, traceS[2].Y_S, 'k', linewidth=0.7)
+ax3.plot(spikes.t/second,spikes[2].i+3,'.g', ms=5)
+# fig.show()
+ax3.set_ylabel('Mol')
+ax3.set_xlabel('Time [s]')
+# plt.figure(dpi=200)
+# plt.plot(spikes.t / second, spikes.i, '.k', ms=0.7)
+
+show()
+
+#%%
+
+# SYNAPTIC CURRENTS
+
+
+
+fig, (ax1, ax2, ax3) = plt.subplots(3, 1,figsize=[10,12]) # Added figsize for better viewing
+
+
+
+ax1.plot(trace.t/second, trace[0].I_syn, 'k', label='I_syn')
+ax1.plot(trace.t/second, trace[0].I_ampa, 'r', label='I_ampa')
+ax1.plot(trace.t/second, trace[0].I_nmda, 'b', label='I_nmda')
+ax1.plot(spikes.t/second, spikes[0].i+1e-11, '.g', ms=5, label='Spikes') # Or a more descriptive label like 'Neuron Spikes'
+ax1.set_ylabel('A')
+ax1.legend()
+
+
+ax2.plot(trace.t/second, trace[1].I_syn, 'k')
+ax2.plot(trace.t/second, trace[1].I_ampa, 'r')
+ax2.plot(trace.t/second, trace[1].I_nmda, 'b')
+ax2.plot(spikes.t/second,spikes[1].i+1e-11,'.g', ms=5)
+ax2.set_ylabel('A')
+
+
+ax3.plot(trace.t/second, trace[2].I_syn, 'k')
+ax3.plot(trace.t/second, trace[2].I_ampa, 'r')
+ax3.plot(trace.t/second, trace[2].I_nmda, 'b')
+ax3.plot(spikes.t/second,spikes[2].i+1e-11,'.g', ms=5)
+# fig.show()
+ax3.set_ylabel('A')
+ax3.set_xlabel('Time [s]')
+# plt.figure(dpi=200)
+# plt.plot(spikes.t / second, spikes.i, '.k', ms=0.7)
+
+show()
+
+
+
+
+
 
 
 
