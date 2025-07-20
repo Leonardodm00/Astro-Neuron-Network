@@ -28,8 +28,8 @@ def unfold_ADJ(ADJ):
     
     '''
     # Extract dimensions
-    rows, cols = matrix.shape
-    my_numpy_array = np.full(n_times, number_to_repeat)
+    rows, cols = ADJ.shape
+    
     
     # Initialize variables
     Source = []
@@ -43,6 +43,9 @@ def unfold_ADJ(ADJ):
         # Extract indicies
         Post_idx = np.where( ADJ[pre,:] != 0 )[0]
         
+        if Post_idx.size == 0: # Empty array....no post units
+            continue
+        
         # Construct pre vector
         source_num = np.full(len(Post_idx), pre)
         
@@ -54,7 +57,7 @@ def unfold_ADJ(ADJ):
         
         
         
-    return Source, Target
+    return np.squeeze(np.array(Source)), np.squeeze(np.array(Target))
         
 
 
@@ -169,7 +172,7 @@ def get_Neuronparam(Adaptation=False,delta = 0.5,**kwargs):
     'sigma': 6 * mV,                     # standard deviation of the noisy voltage fluctuations
     'Tau_max': 4000 * ms,                # Decay factor of AHP
     
-    'I_inj': 10*pA, # Injected current
+    'I_inj': 15*pA, # Injected current
  
      # Synaptic contribution
      'we_AMPA' : 0.5, # Relative contribution of AMPA channels to the total syn weight
@@ -438,7 +441,7 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
             # Astrocyte ID for connection
             astro_index : integer
             # Per-synapse gliotransmitter-effect parameter
-            alpha  : 1
+            # alpha  : 1
             ''')
         
         # -------------- Event based update --------------
@@ -476,7 +479,7 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
             # Astrocyte ID for connection
             astro_index : integer
             # Per-synapse gliotransmitter-effect parameter
-            alpha  : 1
+            # alpha  : 1
             ''')
         
         # -------------- Event based update --------------
@@ -740,7 +743,7 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
 # -------------- ASTROCYTE GROUP --------------
 
 
-def Astrocyte_Group(N_astro,Source_astro,Target_astro):
+def Astrocyte_Group(N_astro,ADJ):
 # ------ Astrocyte core equations ------
 
     eqs_A = Equations('''
@@ -756,6 +759,7 @@ def Astrocyte_Group(N_astro,Source_astro,Target_astro):
       
        # diffusion between astrocytes:
        I_coupling_tot : mole/second
+       
     
        # Ca^2+-induced Ca^2+ release:
        dC/dt = (Omega_C * m_inf**3 * h**3 + Omega_L) * (C_T - (1 + rho_A)*C) -
@@ -823,7 +827,7 @@ def Astrocyte_Group(N_astro,Source_astro,Target_astro):
     # ----- Connections -----
     
     Source_astro,Target_astro = unfold_ADJ(ADJ)
-    
+    print(Source_astro)
     GJ.connect(i = Source_astro,j= Target_astro)
         
         
@@ -918,5 +922,7 @@ def Astro_to_Syn(Glio_relaease,synapse,ADJ):
     Astro_Syn.connect(i = Source_astro, j = Target_syn)
     
     return Astro_Syn
+
+
 
 
