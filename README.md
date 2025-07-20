@@ -1,7 +1,7 @@
 
 ## MAIN CODES
-*Main_code.py*: Primary interface to simulate the ***in-silico*** culture
-*ANS_fun.py*: Gathers all the functions employed in *Main_code.py* 
+- *Main_code.py*: Primary interface to simulate the ***in-silico*** culture
+- *ANS_fun.py*: Gathers all the functions employed in *Main_code.py* 
 
 
 ## TO DO
