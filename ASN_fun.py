@@ -1,0 +1,922 @@
+# -*- coding: utf-8 -*-
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from sklearn.metrics import mean_squared_error
+import numpy as np
+# import torch
+import scipy.io
+import pdb
+import os
+
+
+from brian2 import *
+from brian2 import devices
+
+
+
+
+
+def unfold_ADJ(ADJ):
+    
+    '''
+    This function is meant to take in input an adejency matrix (not necessarily squared)
+    and return the source and target units' index.
+    
+    The ADJ matrix must comply to the following concention:
+        rows    : pre
+        columns : post
+    
+    '''
+    # Extract dimensions
+    rows, cols = matrix.shape
+    my_numpy_array = np.full(n_times, number_to_repeat)
+    
+    # Initialize variables
+    Source = []
+    Target = []
+    
+    
+    
+    # Run across rows (pre units)
+    for pre in range(rows):
+        
+        # Extract indicies
+        Post_idx = np.where( ADJ[pre,:] != 0 )[0]
+        
+        # Construct pre vector
+        source_num = np.full(len(Post_idx), pre)
+        
+        # Update variables 
+        Source.append(source_num)
+        Target.append(Post_idx)
+        
+        
+        
+        
+        
+    return Source, Target
+        
+
+
+
+
+
+
+
+
+
+def get_Astroparam(oscillations = 'AM',**kwargs):
+    
+    
+    params = {
+        # ----Input
+        'f_in': 1.*Hz,              # Input frequency (synapse)
+        'f_c' : 1.*Hz,              # Input frequency (gliotransmission)
+        # 't_on' : 0*second,         # Start of synaptic stimulation (used in STDP)
+        't_off' : Inf*second,      # End of astrocyte stimulation (used in standalone gliotransmission)
+        # --- IP_3R kinectics
+        'd_1': 0.13*umole,         # IP_3 binding affinity
+        'O_2': 0.2/umole/second,   # Inactivating Ca^2+ binding rate
+        'd_2': 1.05*umole,         # Inactivating Ca^2+ binding affinity
+        'd_3': 0.9434*umole,       # IP_3 binding affinity (with Ca^2+ inactivation)
+        'd_5': 0.08*umole,         # Activating Ca^2+ binding affinity
+        # ---  Calcium fluxes
+        'C_osc': 0.2*umole,        # Estimated Threshold for Ca^2+ oscillations
+        'C_T': 2*umole,            # Total ER Ca^2+ content
+        'rho_A': 0.18,             # ER-to-cytoplasm volume ratio
+        'Omega_C': 6/second,       # Maximal Ca^2+ release rate by IP_3Rs
+        'Omega_L': 0.1/second,     # Maximal Ca^2+ leak rate,
+        'O_P': 0.9*umole/second,   # Maximal Ca^2+ uptake rate
+        # K_P (see below)          # Ca^2+ affinity of SERCA pumps
+        # --- IP_3 production
+        # Omega_delta (see below)  # Maximal rate of IP_3 production by PLCdelta
+        'K_delta': 0.5*umole,      # Ca^2+ affinity of PLCdelta
+        'kappa_delta': 1.*umole,    # Inhibiting IP_3 affinity of PLCdelta
+        # --- IP_3 degradation
+        # Omega_5P (see below)     # Maximal rate of IP_3 degradation by IP-5P
+        'O_3K': 4.5*umole/second,  # Maximal rate of IP_3 degradation by IP_3-3K
+        'K_D': 0.5*umole,          # Ca^2+ affinity of IP3-3K
+        'K_3K': 1.*umole,           # IP_3 affinity of IP_3-3K
+        # --- IP_3 diffusion
+        'F': 2.*umole/second,       # GJC IP_3 permeability (nonlinear)
+        'I_Theta': 0.3*umole,      # Threshold IP_3 gradient for diffusion
+        'omega_I': 0.05*umole,     # Scaling factor of diffusion
+        # I_bias (see below)       # IP_3 bias
+        # --- Agonist-dependent IP_3 production
+        'O_beta': 1.*umole/second,  # Maximal rate of IP_3 production by PLCbeta
+        'O_N': 0.3/umole/second,   # Agonist binding rate
+        'Omega_N': 1.8/second,     # Inactivation rate of GPCR signalling
+        'K_KC': 0.5*umole,         # Ca^2+ affinity of PKC
+        'zeta': 2.,                # Maximal reduction of receptor affinity by PKC
+        'n': 1.,                   # Cooperativity of agonist binding reaction
+        # --- Gliotransmitter release and time course        
+        'C_Theta': 0.5*umole,      # Ca^2+ threshold for exocytosis
+        'Omega_A': 0.6/second,     # Gliotransmitter recycling rate
+        'U_A': 0.6,                # Gliotransmitter release probability
+        'G_T': 200.*mmole,         # Total vesicular gliotransmitter
+        'rho_e': 6.5e-4,           # Ratio of astrocytic vesicle volume/ESS volume
+        'Omega_e': 5./second,      # Gliotransmitter clearance rate (think about distributed release)
+      
+    }
+
+    if oscillations == 'AM':
+        parameters.update({
+            'K_P': 0.1*umole,
+            'O_delta': 0.01*umole/second,
+            'Omega_5P': 0.1/second,
+            'I_bias': 0.8*umole
+        })
+    elif oscillations == 'FM':
+        parameters.update({
+            'K_P': 0.05*umole,
+            'O_delta': 0.05*umole/second,
+            'Omega_5P': 0.1/second,
+            'I_bias': 1.*umole
+        })
+    
+    
+    return params
+    
+    
+
+def get_Neuronparam(Adaptation=False,delta = 0.5,**kwargs):
+    
+    
+    Neuron_area =  300*umetre**2
+    
+    if Adaptation == True:
+            
+            g_m= (0.4*msiemens*cm**-2) * Neuron_area
+            
+            
+    else:
+            g_m = 0
+
+    
+    
+    
+    params = { # --- Neuron Parameters
+    'area': Neuron_area,               # membrane area of the neuron
+    'Cm': (2*ufarad*cm**-2) * Neuron_area, # membrane capacitance (calculated with area)
+    'El': -39.2 * mV,                    # Nernst potential of leaky ions
+    'EK': -80 * mV,                      # Nernst potential of potassium
+    'ENa': 70 * mV,                      # Nernst potential of sodium
+    'g_na': 1.6 * 50 * msiemens * cm**-2 * Neuron_area, # maximal conductance of sodium channels (calculated with area)
+    'g_kd': 1.3 * 5 * msiemens * cm**-2 * Neuron_area,  # maximal conductance of potassium (calculated with area)
+    'gl': (0.3*msiemens*cm**-2) * Neuron_area, # maximal leak conductance (calculated with area)
+    'g_m': g_m, # maximal conductance of AHP currents
+    'VT': -30.4*mV,                      # alters firing threshold of neurons
+    'sigma': 6 * mV,                     # standard deviation of the noisy voltage fluctuations
+    'Tau_max': 4000 * ms,                # Decay factor of AHP
+    
+    'I_inj': 10*pA, # Injected current
+ 
+     # Synaptic contribution
+     'we_AMPA' : 0.5, # Relative contribution of AMPA channels to the total syn weight
+     'we_NMDA' : 0.5, # Relative contribution of NMDA channels to the total syn weight
+     'g_ampa': (1 + delta) * nS, # Note: if delta is a direct value, not a key lookup, it should be 0.6
+     'g_nmda': (1 - delta) * nS, # Note: if delta is a direct value, not a key lookup, it should be 0.6
+     'E_ampa': 0 * mV,
+     'E_nmda': 0 * mV,
+    
+ 
+    
+ 
+    # Adaptation parameters (uncommented and added to dictionary)
+    # If these are meant to be included, they should also be added as key-value pairs
+    # 'E_AHP': EK, # Note: if EK is a direct value, not a key lookup, it should be -80*mV
+    # 'g_AHP': 5 * nS,
+    # 'tau_Ca': 8000 * ms,
+    # 'alpha_Ca': 0.00035,
+ 
+    # Synapse parameters (uncommented and added to dictionary)
+    # If these are meant to be included, they should also be added as key-value pairs
+    # 'S': 0.4,
+    # 'delta': 0.6,
+    # 'g_ampa': (1 + delta) * nS, # Note: if delta is a direct value, not a key lookup, it should be 0.6
+    # 'g_nmda': (1 - delta) * nS, # Note: if delta is a direct value, not a key lookup, it should be 0.6
+    # 'E_ampa': 0 * mV,
+    # 'E_nmda': 0 * mV,
+    # 'tau_ampa': 2 * ms,
+    # 'taus_nmda': 100 * ms,
+    # 'taux_nmda': 2 * ms,
+    # 'alpha_nmda': 0.5 * kHz,
+    # 'tau_d': 200 * ms,
+    # 'U': 0.2,
+    # 'STF': False,
+    # 'tau_f': 1000 * ms,
+ 
+    # Asynchronous Release parameters (uncommented and added to dictionary)
+    'AsynchronousRelease': False,
+    'tau_ar': 700 * ms,
+    'Uar': 0.003,
+    'Umax': 0.5/ms,
+    'x0': 5, # x0 seems to be unitless here
+
+     }
+    params.update(kwargs)
+
+    return params
+
+
+
+
+
+
+def get_Synparam(synapse='depressing',**kwargs):
+    
+    # std_pers = persentage of mean value used as standard deviation for introducing some
+    #   variability
+        
+    params = {
+        
+        'area' : 300*umetre**2,  
+        # --- Synaptic dynamics
+        'E_Iper': 80/100,          # Persentage of excitatory connections
+        # Omega_d (see below)      # Depression rate
+        # Omega_f (see below)      # Facilitation rate,
+        # U_0__star (see below)    # Basal synaptic release probability
+        'Omega_c': 40./second,     # Neurotransmitter clearance rate
+        'rho': 0.005,            # synaptic vesicle-to-extracellular space volume ratio
+        'Y_T': 500.*mmole,         # Total neurotransmitter synaptic resource (in terms of vesicular concentration)
+        # --- Presynaptic receptors
+        'O_G': 1.5/umole/second,   # Agonist binding rate (activating)
+        'Omega_G': 0.5/(60*second),# Agonist release rate (inactivating)
+        # alpha (see below)        # Gliotransmitter effect on synaptic release
+        # --- SIC/SOC
+        'G_sic'     : 4.5*mV,      # Max SIC/SOC depolarization
+        'tau_sic_r' : 30.*ms,      # SIC/SOC rise time constant
+        'tau_sic' : 600.*ms,       # SIC/SOC decay time constant
+        
+        
+       
+       # Adaptation parameters (uncommented and added to dictionary)
+       # If these are meant to be included, they should also be added as key-value pairs
+        'E_AHP': -80 * mV, # Note: if EK is a direct value, not a key lookup, it should be -80*mV
+        'g_AHP': 5 * nS,
+        'tau_Ca': 8000 * ms,
+        'alpha_Ca': 0.00035,
+    
+       # Synapse parameters (uncommented and added to dictionary)
+       # If these are meant to be included, they should also be added as key-value pairs
+        'S': 0.4,
+        'delta': 0.6,
+        'tau_ampa': 2 * ms,
+        'taus_nmda': 100 * ms, # Decay
+        'taux_nmda': 2 * ms, # Rise
+        'tau_ampa_std': 0.02 * ms,
+        'taus_nmda_std': 10 * ms,
+        'taux_nmda_std': 0.02 * ms,
+        'alpha_nmda': 0.5 * kHz,
+        'tau_d': 200 * ms,
+        'U': 0.2,
+        'STF': False,
+        'tau_f': 1000 * ms,
+        
+        'w':1,
+        
+        # Params of the upgrated model
+        'alpha_ampa_kin' : 1.1e6 * 1/mole * 1/second,
+        'alpha_nmda_kin' : 7.2e4 * 1/mole * 1/second,
+        'beta_ampa_kin' : 190 * 1/second,
+        'beta_nmda_kin' :  6.6 * 1/second,
+        'epsilon': 1e-40 * Hz,
+        
+       
+    
+       # Asynchronous Release parameters (uncommented and added to dictionary)
+       'AsynchronousRelease': False,
+       'tau_ar': 700 * ms,
+       'Uar': 0.003,
+       'Umax': 0.5/ms,
+       'x0': 5, # x0 seems to be unitless here
+    
+    }
+    
+    
+    # ------------------ SYNAPSES ------------------
+    if synapse == 'depressing':
+        params.update({
+            'Omega_d': 2./second,
+            'Omega_f': 3.33/second,
+            'U_0__star': 0.6,
+            'alpha': 0.,
+        })
+    elif synapse == 'facilitating':
+        params.update({
+            'Omega_d': 2./second,
+            'Omega_f': 2./second,
+            'U_0__star': 0.15,
+            'alpha': 1.,
+        })
+    elif synapse == 'neutral':
+        params.update({
+            'Omega_d': 3./second,
+            'Omega_f': 3./second,
+            'U_0__star': 0.5,
+            'alpha': 1.,
+        })
+    else:
+        raise ValueError('synapse argument has to be "depressing", "facilitating" or "neutral"')
+    
+   
+    # parameters.update({
+    # 'G_norm'     : normalize(1.0,parameters['tau_e_r'],parameters['tau_e']),
+    # 'G_sic_norm' : normalize(1.0,parameters['tau_sic_r'],parameters['tau_sic_d'])
+    # })
+    # STDP parameters
+    # Graupner and Brunel (PNAS 2012) / DP curve
+    params.update({
+        'tau_ca': 20.0*ms, # Intrasynaptic Ca2+ decay constant
+        'Cpre'  : 1.0,     # Presynaptic Ca2+ increase per spk
+        'Cpost' : 2.0,     # Postynaptic Ca2+ increase per spk
+        'Theta_d' : 1.0,   # LTD threshold
+        'Theta_p': 1.3,    # LTP threshold
+        'gamma_d': 200.0,  # LTD learning rate
+        'gamma_p': 321.808,# LTP learning rate
+        'W_0'    : 0.5,    # LTP/LTD boundary
+        'tau_w'  : 346.3615*second, # Time decay of synaptic weights
+        'D'      : 13.7*ms,# Synaptic delay
+        'sigma_'  : 2.8284, # variance in the diffusion approx,
+        'beta'   : 0.5,
+        'b'      : 5.
+    })
+    
+
+    
+    params.update(kwargs)
+
+    return params
+
+
+
+
+
+def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
+                     Syn_Currents_model = 'Kinetic',add_delay= False,delay_mode= 'random',
+                     Max_delay = 10*ms,ics = True,std_pers = 0.01, Simulated_network = True):
+    
+# std_pers = persentage of mean value used as standard deviation for introducing some
+#   variability
+# ---------------------- NEURONAL GROUP ----------------------
+     # neuron model
+    eqs_NN = Equations('''
+    # dV/dt = noise + ((-gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK)+I+I_AHP)/Cm) : volt
+    dV/dt = noise + (-gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK)+I-I_syn)/Cm  : volt
+    dm/dt = alpha_m*(1-m)-beta_m*m : 1
+    dh/dt = alpha_h*(1-h)-beta_h*h : 1
+    dn/dt = (alpha_n*(1-n)-beta_n*n) : 1
+    dhp/dt = 0.128*exp((17.*mV-V+VT)/(18.*mV))/ms*(1.-hp)-4./(1+exp((30.*mV-V+VT)/(5.*mV)))/ms*h : 1
+    alpha_m = 0.32*(mV**-1)*4*mV/exprel((13*mV-V+VT)/(4*mV))/ms : Hz
+    beta_m = 0.28*(mV**-1)*5*mV/exprel((V-VT-40*mV)/(5*mV))/ms : Hz
+    alpha_h = 0.128*exp((17*mV-V+VT)/(18*mV))/ms : Hz
+    beta_h = 4./(1+exp((40*mV-V+VT)/(5*mV)))/ms : Hz
+    alpha_n = 0.032*(mV**-1)*5*mV/exprel((15*mV-V+VT)/(5*mV))/ms : Hz
+    beta_n = .5*exp((10*mV-V+VT)/(40*mV))/ms : Hz
+    noise = sigma*(2*gl/Cm)**.5*randn()/sqrt(dt) : volt/second (constant over dt)
+    I : amp
+    
+    
+    x : meter
+    y : meter
+    ''')
+    
+    
+    
+    
+    #%
+    # ---------------------- SYNAPSES ----------------------
+    '''
+    
+    # If a variable should be taken as a parameter of the neurons, 
+    # i.e. if it should be possible to vary its value across neurons, 
+    # it has to be declared as part of the model description:
+    
+        
+    
+    '''
+    
+    # -------------- Equations --------------
+    
+    # Synapses modelled as in Tsodyks (2005) with basal release probability
+    # modulated by presynaptic receptors as in De Pitta' et al., PLoS Comput. Biol. (2011)
+    #
+    # IMPORTANT: 'postc' argument stands for 'post' in other methods, but because 'post' is a protected keyword in Synapse
+    # it cannot be used in this module and 'postc' is used instead.
+    
+  
+   
+    
+    # ----------------- SYNAPTIC EQUATIONS ----------------------
+    
+    # Basic synaptic equations are the same. what changes is how the post synaptic current behaves.
+    
+    
+    
+    
+    if Simulated_network == 'Neuronal':
+        eqs_Syn = Equations('''
+            # Fraction of activated presynaptic receptors
+            dGamma_S/dt = O_G * G_A * (1 - Gamma_S) - Omega_G * Gamma_S : 1
+    
+            
+            # Usage of releasable neurotransmitter per single action potential:
+            du_S/dt = -Omega_f * u_S : 1 (clock-driven)
+            
+            # Fraction of synaptic neurotransmitter resources available for release:
+            dx_S/dt = Omega_d *(1 - x_S) : 1 (clock-driven)
+            dY_S/dt = -Omega_c * Y_S : mole (clock-driven)
+            
+            
+            # Define the variables of the model
+            G_A : mole  # gliotransmitter concentration in the extracellular space
+            U_0 : 1
+            r_S : 1     # Because r_S is the product of u_S and x_S that are event-driven, it is itself event-driven too
+            
+            
+         
+            # Astrocyte ID for connection
+            astro_index : integer
+            # Per-synapse gliotransmitter-effect parameter
+            alpha  : 1
+            ''')
+        
+        # -------------- Event based update --------------
+        
+        
+        pre = '''
+        
+        U_0 =  (1 - Gamma_S) * U_0__star + alpha * Gamma_S
+        u_S += U_0 * (1 - u_S)
+        r_S = u_S * x_S # released synaptic neurotransmitter resources
+        x_S -= r_S
+        Y_S += rho * Y_T * r_S
+        '''
+        post = None
+        
+    else:
+        
+        eqs_Syn = Equations('''
+        
+            # Usage of releasable neurotransmitter per single action potential:
+            du_S/dt = -Omega_f * u_S : 1 (clock-driven)
+            
+            # Fraction of synaptic neurotransmitter resources available for release:
+            dx_S/dt = Omega_d *(1 - x_S) : 1 (clock-driven)
+            dY_S/dt = -Omega_c * Y_S : mole (clock-driven)
+            
+            
+            # Define the variables of the model
+            G_A : mole  # gliotransmitter concentration in the extracellular space
+            U_0 : 1
+            r_S : 1     # Because r_S is the product of u_S and x_S that are event-driven, it is itself event-driven too
+            
+            
+         
+            # Astrocyte ID for connection
+            astro_index : integer
+            # Per-synapse gliotransmitter-effect parameter
+            alpha  : 1
+            ''')
+        
+        # -------------- Event based update --------------
+        
+        
+        pre = '''
+        
+        U_0 =  U_0__star
+        u_S += U_0 * (1 - u_S)
+        r_S = u_S * x_S # released synaptic neurotransmitter resources
+        x_S -= r_S
+        Y_S += rho * Y_T * r_S
+        '''
+        post = None
+        
+    
+    
+    # ----------- SYNAPTIC CURRENTS MODEL -------------
+    
+   
+    if Syn_Currents_model == 'Nina':
+        
+        
+    
+            
+        eqs_Syn += Equations('''
+                            
+                        
+                        
+                      
+                        
+                        ds_ampa/dt = -s_ampa/tau_ampa : 1 (clock-driven)
+                        
+                        
+                        s_ampa_tot_post = s_ampa :1 (summed)
+                        s_nmda_tot_post = w * S * x_d * s_nmda  :1 (summed)
+                        ds_nmda/dt = -s_nmda/(taus_nmda)+alpha_nmda*x_nmda*(1-s_nmda) : 1 (clock-driven)
+                        dx_nmda/dt = -x_nmda/(taux_nmda) :1 (clock-driven)
+                        dx_d/dt = (1-x_d)/tau_d :1 (clock-driven)
+                        
+                        
+                        
+        
+                          
+                          
+                         
+                          ''')
+                          
+                          
+        pre += '''           
+                x_nmda += 1
+                x_d *= (1-U)
+                s_ampa += w * S * x_d 
+                       '''                 
+                          
+                          
+        eqs_NN += Equations(''' 
+                            I_syn =  I_ampa + I_nmda: amp
+                            I_ampa = g_ampa*(V-E_ampa)*(s_ampa_tot) : amp
+                            I_nmda = g_nmda*(V-E_nmda)*(s_nmda_tot)/(1+exp(-0.062*V/mV)/3.57) : amp
+                            s_nmda_tot :1
+                            s_ampa_tot :1
+                            
+                        
+                            ''')
+    
+    
+    
+ 
+    
+    else:
+        
+        eqs_Syn += Equations('''
+                  
+                             
+                                   
+                                dr_ampa/dt = alpha_ampa_kin * Y_S * (1 - r_ampa) - beta_ampa_kin * r_ampa: 1 (clock-driven)
+                                dr_nmda/dt =  alpha_nmda_kin * Y_S * (1 - r_nmda) - beta_nmda_kin * r_nmda : 1 (clock-driven)
+                                
+                     
+                                
+                                
+                                r_ampa_tot_post = r_ampa : 1 (summed)
+                                r_nmda_tot_post = r_nmda : 1 (summed)
+                             
+                             
+                            ''')
+                            
+    
+        
+        eqs_NN += Equations(''' 
+                            I_syn =  I_ampa + I_nmda: amp
+                            I_ampa = g_ampa*(V-E_ampa)*(r_ampa_tot) : amp
+                            I_nmda = g_nmda*(V-E_nmda)*(r_nmda_tot)/(1+exp(-0.062*V/mV)/3.57) : amp
+                            r_nmda_tot :1
+                            r_ampa_tot :1
+                            
+                        
+                            ''')
+    
+    
+    
+    
+    # ----------- SYNAPTIC PARAMETERS ------------
+    params_Syn = get_Synparam()
+    
+    
+    
+    # -------------- Currents --------------
+    
+    if RandomKinetics == True:
+        # Some variance is given to the time constant of synaptic transmission
+        
+        # Determine the number of synapses
+        N_syn = len(source)
+        
+        if OnlyExc == True:
+            
+            
+            
+            # ---------- NINA'S MODEL ----------
+    
+            
+            x_NMDA = np.random.normal(loc=params_Syn['taux_nmda'], scale=params_Syn['taux_nmda']*std_pers, size=N_syn)
+            AMPA_decay = np.random.normal(loc= params_Syn['tau_ampa'], scale= params_Syn['tau_ampa']*std_pers, size=N_syn)
+            s_NMDA = np.random.normal(loc=params_Syn['taus_nmda'], scale=params_Syn['taus_nmda']*std_pers, size=N_syn)
+            
+            
+            # Generate random weigths
+            
+                # Step 1-3: Generate and shift/scale the random number
+            random_value = 1.0 + params_Syn['sd'] * np.random.randn()
+        
+            # Step 4: Clip the value
+            w_ = np.clip(random_value, min_val, max_val)
+            
+            
+            
+            
+            
+            
+          
+            params_Syn.update({  
+                
+                
+                'taux_nmda': x_NMDA,
+                'tau_ampa': AMPA_decay,
+                'taus_nmda': s_NMDA,
+                'w':w_
+                
+                
+                })
+            
+            
+            # ---------- KINETIC MODEL ----------
+            
+            
+            alpha_nmda_ = np.random.normal(loc=params_Syn['alpha_nmda_kin'], scale=params_Syn['alpha_nmda_kin']*std_pers, size=N_syn)
+            alpha_ampa_ = np.random.normal(loc= params_Syn['alpha_ampa_kin'], scale= params_Syn['alpha_ampa_kin']*std_pers, size=N_syn)
+            
+            beta_nmda_ = np.random.normal(loc=params_Syn['beta_nmda_kin'], scale=params_Syn['beta_nmda_kin']*std_pers, size=N_syn)
+            beta_ampa_ = np.random.normal(loc= params_Syn['beta_ampa_kin'], scale= params_Syn['beta_ampa_kin']*std_pers, size=N_syn)
+            
+                    
+    
+        
+            params_Syn.update({
+                
+                'alpha_ampa_kin' :  alpha_ampa_ * 1/mole * 1/second,
+                'alpha_nmda_kin' :  alpha_nmda_ * 1/mole * 1/second,
+                'beta_ampa_kin'  :   beta_ampa_ * 1/second,
+                'beta_nmda_kin'  :   beta_nmda_ * 1/second
+                
+                })
+    
+    
+
+    
+    # -------------------------- INITIALIZE THE NETWORKS ---------------------------
+    
+    # ---- Get parameters ----
+    params_NN = get_Neuronparam(Adaptation)
+    
+    
+    P = NeuronGroup(Nn, model=eqs_NN, name='Neuron*',namespace= params_NN, threshold='V>0*mV', refractory=2 * ms,
+                        method='exponential_euler')
+    
+    # Initialize neuron parameters
+    P.V = -39 * mV                          # approximately resting membrane potential
+    P.I = '(rand() -0.5) * I_inj'          # Make neurons heterogeneously excitable
+    
+    
+    
+    
+    
+    
+    
+    #!!! TO CHECK
+    S = Synapses(P, model=eqs_Syn,
+                        on_pre=pre,
+                        on_post=post,
+                        name='Synapse*',
+                        namespace=params_Syn,
+                        method='exponential_euler')
+    
+    
+    
+    # -------------- Connections --------------
+    
+    Source_neuron,Target_neuron = unfold_ADJ(ADJ)
+    
+    S.connect(i=Source_neuron, j=Target_neuron)
+    
+    
+    
+    
+    # --- Delays ---
+    if add_delay == True:
+        
+        Max_delay = Max_delay # Max conduction delay expressed in ms
+        N_synapses = S.N
+        
+        if delay_mode == 'random':
+            # Randomly generate scaling values.
+            random_values = np.random.rand(N_synapses)
+            Delays = (Max_delay * ms) * random_values
+            S.delay = Delays
+            
+        elif delay_mode == 'distance':    
+            # Retrieve the distances between neuronal somata.
+            # Unmyelinated nerve fibers. Usually reach 0.5 [mm/ms] speed.
+            # To this it must be add the time required from the vescicle release 
+            # at the pre-synaptic site.
+            random_values = np.random.rand(N_synapses)
+            Delays = (Max_delay * ms) * random_values
+            Conductance_velocity = 0.5 * (mm/ms) + Delays
+            S.delay = '(sqrt((x_pre - x_post)**2 + (y_pre - y_post)**2 + (z_pre - z_post)**2)) * Conductance_velocity'
+    
+    
+    
+    
+        
+    # S Initialization --------------
+    S.x_S = 1.0
+    
+    
+    
+    # Random initialization of initial conditions
+    if ics=='rand':
+        S.u_S = 'rand()'
+        S.x_S = 'rand()'
+        Y_T = params['Y_T']
+        S.Y_S = '1.2 * rho_c * Y_T * rand()'
+        
+    return P,S
+        
+    
+
+
+
+# -------------- ASTROCYTE GROUP --------------
+
+
+def Astrocyte_Group(N_astro,Source_astro,Target_astro):
+# ------ Astrocyte core equations ------
+
+    eqs_A = Equations('''
+       # Fraction of activated astrocyte receptors:
+       dGamma_A/dt = O_N * (Y_bias+Y_extra)**n * (1 - Gamma_A) -
+                     Omega_N*(1 + zeta * C/(C + K_KC)) * Gamma_A : 1 (clock-driven)
+    
+       # IP_3 dynamics:
+       dI/dt = O_beta * Gamma_A + O_delta/(1 + I/K_delta) * C**2/(C**2 + K_delta**2) -
+               O_3K * C**4/(C**4 + K_D**4) * I/(I + K_3K) - Omega_5P*I +
+               I_coupling_tot : mole (clock-driven)
+    
+      
+       # diffusion between astrocytes:
+       I_coupling_tot : mole/second
+    
+       # Ca^2+-induced Ca^2+ release:
+       dC/dt = (Omega_C * m_inf**3 * h**3 + Omega_L) * (C_T - (1 + rho_A)*C) -
+               O_P * C**2/(C**2 + K_P**2) : mole (clock-driven)
+       dh/dt = (h_inf - h)/tau_h : 1  (clock-driven) # IP3R de-inactivation probability
+       m_inf = I/(I + d_1) * C/(C + d_5) : 1
+       h_inf = Q_2/(Q_2 + C) : 1
+       tau_h = 1/(O_2 * (Q_2 + C)) : second
+       Q_2 = d_2 * (I + d_1)/(I + d_3) : mole
+    
+       # External neurotransmitter stimulation
+       Y_bias : mole
+       # Neurotransmitter concentration in the extracellular space
+       Y_extra : mole
+    
+       # Additional (optional) coordinates (for spatial network implementation)
+       x : meter
+       y : meter
+       ''')
+       
+       
+       
+    Params_astroGT = get_Astroparam()
+       
+    # The definition of a threshold and reset mechanism in the astrocyte group
+    # allows to use SpikeMonitors to estimate the frequency of oscillations
+    Astro = NeuronGroup(N_astro, eqs_A,
+                        threshold='C>C_osc',
+                        refractory='C>C_osc',
+                        method='exponential_euler',
+                        namespace=Params_astroGT,
+                        name='astrocyte*')
+    
+    # Random initialization of initial conditions
+    if ics=='rand':
+        Astro.Gamma_A = 'rand()'
+        Astro.I = '3*rand()*umole'
+        Astro.C = '1.5*rand()*umole'
+        Astro.h = 'rand()'
+        
+        
+        
+        
+    # ----- Gap-junction based astro links -----
+    
+    Gap_Eq = Equations('''
+                     
+            
+                       delta_I = I_post - I_pre: mole
+                       I_coupling = -F/2*(1 + tanh((abs(delta_I) - I_Theta)/omega_I))*sign(delta_I) : mole/second (Clock-driven)
+                       I_coupling_tot_post = I_coupling : mole/second (summed)
+                       
+                       ''')
+    
+    GJ = Synapses(Astro,Astro,
+                  model=Gap_Eq,
+                  method='rk4',
+                  namespace= Params_astroGT,
+                  name = 'Gap_junctions*'
+                  )
+    
+    
+    
+    
+    # ----- Connections -----
+    
+    Source_astro,Target_astro = unfold_ADJ(ADJ)
+    
+    GJ.connect(i = Source_astro,j= Target_astro)
+        
+        
+    return Astro, GJ
+    
+    
+    
+# ------ Gliotransmission ------
+def Gliotransmission(N_astro,ics,Astro):
+    
+    eqs_GT = Equations('''
+            # Gliotransmitter
+            C : mole (linked)
+            dx_A/dt = Omega_A * (1 - x_A) : 1 (clock-driven)  # Fraction of gliotransmitter resources available for release
+            dG_A/dt = -Omega_e*G_A (clock-driven) : mole  # gliotransmitter concentration in the extracellular space
+            ''')
+    gliot_release = '''
+    G_A += rho_e * G_T * U_A * x_A
+    x_A -= U_A *  x_A 
+    '''
+    threshold = 'C>C_Theta'
+    refractory = 'C>C_Theta'
+    
+    
+    Glio_release = NeuronGroup(N_astro, eqs_GT,
+                            # The following formulation makes sure that a "spike" is
+                            # only triggered at the first threshold crossing
+                            threshold=threshold,
+                            refractory=refractory,
+                            # The gliotransmitter release happens when the threshold
+                            # is crossed, in Brian terms it can therefore be
+                            # considered a "reset"
+                          
+                            reset=gliot_release,
+                            method='rk4',
+                            name='gliot_release*',
+                            namespace=Params_astroGT)
+    
+    # Assign initial conditions
+    Glio_release.x_A = 1
+    Glio_release.G_A = 0.0*mole
+    Glio_release.C = linked_var(Astro, 'C')
+    
+    # Random initialization of initial conditions
+    if ics=='rand':
+        synapses.x_A = 'rand()'
+        synapses.G_A = '1.2 * rho_e * G_T * rand()'
+        
+    return Glio_release
+
+
+# -------------- SYNAPSE-ASTRO LINK ---------------
+
+def Synapse_to_astro(synapse,Astro,ADJ):
+    # ---- Syn-astro ----
+    
+    Syn_Astro = Synapses(synapse,Astro,
+                        model='''
+                        # neurotransmitter concentration in the extracellular space
+                        Y_extra_post = Y_S_pre : mole (summed)
+                        ''',
+             
+                        
+                        name="ecs_syn_to_astro*")
+    
+    # ---- Connections ----
+    
+    Source_syn,Target_astro = unfold_ADJ(ADJ)
+    
+    Syn_Astro.connect(i = Source_syn, j = Target_astro)
+
+    return Syn_Astro
+
+
+
+def Astro_to_Syn(Glio_relaease,synapse,ADJ):
+    # ---- Astro-syn ----
+    # Glio_relaease is the reference neuronal group
+    Astro_Syn = Synapses(Glio_release,synapse,
+                             model='''
+                             # gliotransmitter concentration in the extracellular space
+                             G_A_post = G_A_pre : mole (summed)
+                             ''',
+                  
+                             name="ecs_astro_to_syn*"
+                             )
+    
+    # ---- Connections ----
+    
+    Source_astro,Target_syn = unfold_ADJ(ADJ)
+    
+    Astro_Syn.connect(i = Source_astro, j = Target_syn)
+    
+    return Astro_Syn
+
+
