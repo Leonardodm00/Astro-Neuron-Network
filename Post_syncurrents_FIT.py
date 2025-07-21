@@ -1,8 +1,3 @@
-"""
-Created on Thu Jul  3 16:40:23 2025
-
-@author: Admin
-"""
 
 '''
 
@@ -62,13 +57,15 @@ from sklearn.metrics import mean_squared_error
 import numpy as np
 # import torch
 import scipy.io
+from scipy.signal import find_peaks
 import pdb
 import os
+import pandas as pd
 
 
 from brian2 import *
 from brian2 import devices
-
+from brian2.core.functions import timestep
 
 
 def Synapse_simulation(Params):
@@ -488,9 +485,8 @@ def Synapse_wrapper(Params):
     # Upload the reference data that we're trying to fit.
     
     # Load data
-    os.chdir(r'C:\Users\leona\Desktop\Temp scripts\CURRENTS')
-    with open('I_AMPA.csv', 'r') as file:
-        Ref_data = file.read()
+    os.chdir(r'C:\Users\Admin\Desktop\CURRENTS')
+    Ref_data = np.squeeze(pd.read_csv('I_AMPA.csv',header=None).to_numpy())
     
     
     # ---------- Initial params -----------
@@ -504,8 +500,12 @@ def Synapse_wrapper(Params):
    
     
     # Tune the trace extracion window
-    Window_length = 300 * ms
-    Start_time = 1 * second
+    Pre_window = 50*ms
+    Post_window = 100*ms
+    
+    
+    
+    
     
     # ---- Paramter extraction ----
     
@@ -656,25 +656,40 @@ def Synapse_wrapper(Params):
     run(simtime)
      
      
-    # --- Extract trace ---
+    # --- Extract traces ---
+    Simulated_trace = state_monitor[0].I_ampa 
     
-    Simulated_trace = state_monitor[0].I_ampa
+    # --- Extract window ---
     
-    Simulated_trace = Simulated_trace[Start_time:Start_time + Window_length]
+    # Find the peaks
+    peaksRef, _ = find_peaks(abs(Ref_data))
+    peaksSim, _ = find_peaks(abs(Simulated_trace))
+    
+    
+    # Reference data
+    Start_idx = np.int16(peaksRef[0] - timestep(Pre_window, defaultclock.dt))
+    End_idx = np.int16(peaksRef[0] + timestep(Post_window, defaultclock.dt))
+    Ref_data_ = Ref_data[np.int16(Start_idx):np.int16(End_idx)]
+    
+    
+    Start_idx = np.int16(peaksSim[0] - timestep(Pre_window, defaultclock.dt))
+    End_idx = np.int16(peaksSim[0] + timestep(Post_window, defaultclock.dt))
+    Simulated_trace_ = Simulated_trace[np.int16(Start_idx):np.int16(End_idx)]
+    
     
     # Compare the two traces
      
-    NMSE = mean_squared_error(Ref_data,Simulated_trace) 
+    MSE = mean_squared_error(Ref_data_,Simulated_trace_) 
     
     
     # Normalize by the observed data's range 
-    Norm_factor = np.max(Ref_data) - np.min(Ref_data)
-    
+    # Norm_factor = np.max(Ref_data_) - np.min(Ref_data_)
+    Norm_factor = np.std(Ref_data_)
   
     # ---------- Retrun the  NMRE ----------
          
         
-    return NMSE_array / Norm_factor
+    return MSE / Norm_factor
 
 
 def get_newspace(res_gp,pers):
@@ -767,12 +782,15 @@ from skopt import gp_minimize
 
 # --------------------- FIRST RANDOM SEARCH --------------------- 
 
+# # Set the parameters' range
+# Y_T = Integer(200,700,name = 'Vescicle [Glu]')
+# alpha = Real(1e5,1e10, name = 'Alpha')
+# beta = Real(1e-4,1e3,'log-uniform', name = 'Beta')
+
 # Set the parameters' range
-Y_T = Integer(200,700,name = 'Vescicle [Glu]')
-alpha = Real(1e5,1e10, name = 'Alpha')
-beta = Real(1e-4,1e3,'log-uniform', name = 'Beta')
-
-
+Y_T = Integer(300,301,name = 'Vescicle [Glu]')
+alpha = Real(1e5,1.001e5, name = 'Alpha')
+beta = Real(800,801,'log-uniform', name = 'Beta')
 
 
 space = [Y_T,
