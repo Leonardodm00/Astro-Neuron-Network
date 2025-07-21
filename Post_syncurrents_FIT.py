@@ -1,3 +1,8 @@
+"""
+Created on Thu Jul  3 16:40:23 2025
+
+@author: Admin
+"""
 
 '''
 
@@ -82,9 +87,8 @@ def Synapse_simulation(Params):
     # Upload the reference data that we're trying to fit.
     
     # Load data
-    os.chdir(r'C:\Users\leona\Desktop\Temp scripts\CURRENTS')
-    with open('I_AMPA.csv', 'r') as file:
-        Ref_data = file.read()
+    os.chdir(r'C:\Users\Admin\Desktop\CURRENTS')
+    Ref_data = np.squeeze(pd.read_csv('I_AMPA.csv',header=None).to_numpy())
     
     
     # ---------- Initial params -----------
@@ -98,8 +102,15 @@ def Synapse_simulation(Params):
    
     
     # Tune the trace extracion window
-    Window_length = 300 * ms
-    Start_time = 1 * second
+    Pre_window = 50*ms
+    Post_window = 100*ms
+    
+    
+    
+    # ---------- Initial params -----------
+    start_scope()
+
+
     
     # ---- Paramter extraction ----
     
@@ -250,14 +261,29 @@ def Synapse_simulation(Params):
     run(simtime)
      
      
-    # --- Extract trace ---
+    Simulated_trace = state_monitor[0].I_ampa 
     
-    Simulated_trace = state_monitor[0].I_ampa
+    # --- Extract window ---
+    
+    # Find the peaks
+    peaksRef, _ = find_peaks(abs(Ref_data))
+    peaksSim, _ = find_peaks(abs(Simulated_trace))
+    
+    
+    # Reference data
+    Start_idx = np.int16(peaksRef[0] - timestep(Pre_window, defaultclock.dt))
+    End_idx = np.int16(peaksRef[0] + timestep(Post_window, defaultclock.dt))
+    Ref_data_ = Ref_data[np.int16(Start_idx):np.int16(End_idx)]
+    
+    
+    Start_idx = np.int16(peaksSim[0] - timestep(Pre_window, defaultclock.dt))
+    End_idx = np.int16(peaksSim[0] + timestep(Post_window, defaultclock.dt))
+    Simulated_trace_ = Simulated_trace[np.int16(Start_idx):np.int16(End_idx)]
 
     # ---------- Retrun the  NMRE ----------
          
         
-    return Simulated_trace,Ref_data
+    return Simulated_trace_,Ref_data_
 
 
 
@@ -678,18 +704,18 @@ def Synapse_wrapper(Params):
     
     
     # Compare the two traces
-     
-    MSE = mean_squared_error(Ref_data_,Simulated_trace_) 
+    # Given the small values is necessary to convert the traces in the correct scal# 
+    MSE = mean_squared_error(Ref_data_/pA,Simulated_trace_/pA) 
     
     
     # Normalize by the observed data's range 
     # Norm_factor = np.max(Ref_data_) - np.min(Ref_data_)
-    Norm_factor = np.std(Ref_data_)
+    Norm_factor = np.std(Ref_data_/pA)
   
     # ---------- Retrun the  NMRE ----------
          
         
-    return MSE / Norm_factor
+    return MSE / Norm_factor/amp
 
 
 def get_newspace(res_gp,pers):
@@ -752,7 +778,7 @@ def get_newspace(res_gp,pers):
     
     # Set HPs' range
     Y_T = Real(lower_bounds[0],upper_bounds[0],name='Vescicle [Glu]')
-    Alpha = Real(lower_bounds[1],upper_bounds[1],name = 'Alpha')
+    Alpha = Real(lower_bounds[1],upper_bounds[1],prior='log-uniform',name = 'Alpha')
     Beta  = Real(lower_bounds[2],upper_bounds[2],'log-uniform', name = 'Beta')
     
     
@@ -782,21 +808,19 @@ from skopt import gp_minimize
 
 # --------------------- FIRST RANDOM SEARCH --------------------- 
 
-# # Set the parameters' range
-# Y_T = Integer(200,700,name = 'Vescicle [Glu]')
-# alpha = Real(1e5,1e10, name = 'Alpha')
-# beta = Real(1e-4,1e3,'log-uniform', name = 'Beta')
-
 # Set the parameters' range
-Y_T = Integer(300,301,name = 'Vescicle [Glu]')
-alpha = Real(1e5,1.001e5, name = 'Alpha')
-beta = Real(800,801,'log-uniform', name = 'Beta')
+Y_T = Integer(250,500,  name = 'Vescicle [Glu]')
+alpha = Real(1e5,1e10,prior='log-uniform', name = 'Alpha')
+beta = Real(1,1e3,prior='log-uniform', name = 'Beta')
+
+
 
 
 space = [Y_T,
          alpha,
          beta,
              ]
+
 
 
 
@@ -813,19 +837,19 @@ res_gp = gp_minimize(Synapse_wrapper, space, n_calls=120, random_state=0,verbose
  #%%   
     
 from skopt.plots import plot_objective
-    
+%matplotlib   
 plt.figure()
 plot_objective(res_gp,n_points=20)
 plt.show()    
 
 
 
-
+#%%
 # ------- Narrow the search space -------
 
 # The search space is narrowed in base of the range covered by the first 10% of best points.
 # The space covered by Beta parameter is left untouched and optimized later on.
-pers = 10/100
+pers = 20/100
 Narrowed_space = get_newspace(res_gp,pers)
 
 
@@ -841,8 +865,28 @@ plt.figure()
 plot_objective(res_gp2,n_points=20)
 plt.show()  
 
+#%%
+# ------- Narrow the search space 2 -------
+
+# The search space is narrowed in base of the range covered by the first 10% of best points.
+# The space covered by Beta parameter is left untouched and optimized later on.
+pers = 20/100
+Narrowed_space2 = get_newspace(res_gp2,pers)
 
 
+
+#%% 
+# --------------------- SECOND RANDOM SEARCH ---------------------     
+res_gp3 = gp_minimize(Synapse_wrapper, Narrowed_space2, n_calls=120, random_state=0,verbose=True)    
+
+
+# --- PLOT ---
+    
+plt.figure()
+plot_objective(res_gp3,n_points=20)
+plt.show()  
+
+#%%
 # ----------- Step 5 ------------
 # Choose median or best HP values but the ridge
 
@@ -890,6 +934,13 @@ def HP_choice(res_gp2,method,n_hp,xbest):
     Sorted_funcval = res_gp.func_vals[Sorting_idx]
     #%%
     
-    
-
+Params = [res_gp3.x[0],res_gp3.x[1],res_gp3.x[2]]  
+ 
 Sim_timeseries,reference  = Synapse_simulation(Params)
+t_Vec = np.linspace(0,len(Sim_timeseries),len(Sim_timeseries))
+plt.figure()
+plt.plot(t_Vec,Sim_timeseries,'r',label='Fitted curve')
+plt.plot(t_Vec,reference,'b',label='Reference curve')
+plt.legend()
+plt.show()
+
