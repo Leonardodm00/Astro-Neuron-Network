@@ -1,4 +1,3 @@
-"
 
 import matplotlib.pyplot as plt
 from brian2 import *
@@ -15,23 +14,9 @@ devices.device.seed(sed)            # set the seed for all the random number rea
 
 # --- Parameters ---
 
-def Get_efficacy_scale(td,scaling_f,rho,Y_T):
-    
-    '''
-    This function calculates the Syanptic efficacy scaling factor. It is used to 
-    scale the post-synaptic currents gating variable.
-        
-    
-    Params:
-        td = decay time scale
-        rho = Vescicular versus mixing volume ratio
-        Y_T = Total vescicular glutamate concentration
-    '''
-    
-    return scaling_f / (rho * Y_T * td)
 
 
-def Get_amplitude_scale(tr,td,scaling_f):
+def Get_norm(tr,td):
     
     '''
     This function calculates the Syanptic amplitude scaling factor. It is used to 
@@ -45,20 +30,13 @@ def Get_amplitude_scale(tr,td,scaling_f):
 
     rise_ratio = tr / (td - tr)
     decay_ratio = td / (td - tr)
-    Numerator = scaling_f * ((1 / td) - (1 / tr))
+    Numerator = 1
     Denominator = ((tr / td) ** decay_ratio) - ((tr / td) ** rise_ratio)
     
-    Scaling_f_I = Numerator / Denominator
+    Norm = Numerator / Denominator
 
 
-    return Scaling_f_I
-
-
-
-
-
-
-
+    return Norm
 
 
 
@@ -147,7 +125,7 @@ def get_Neuronparam(Adaptation=False,delta = 0.5,**kwargs):
 
 
 
-def get_Synparam(synapse='depressing',**kwargs):
+def get_Synparam(synapse='depressing',Decay_type = 'Single_exp',**kwargs):
     
         
         
@@ -171,6 +149,9 @@ def get_Synparam(synapse='depressing',**kwargs):
         'tau_sic_r' : 30.*ms,      # SIC/SOC rise time constant
         'tau_sic' : 600.*ms,       # SIC/SOC decay time constant
         
+       # Neurotransmitter release time constants
+       'tau_rise_NT': 1*ms,
+       'tau_decay_NT': 50*ms, # 
         
        
        # Adaptation parameters (uncommented and added to dictionary)
@@ -215,6 +196,12 @@ def get_Synparam(synapse='depressing',**kwargs):
        'x0': 5, # x0 seems to be unitless here
     
     }
+    
+    # Define the norm factor for the double exponential decay used for the 
+    # neurotransmitter release.
+    
+    Norm_NT = Get_norm(params['tau_rise_NT'],params['tau_decay_NT'])
+    params.update({'Norm_NT':Norm_NT})
     
     
     # ------------------ SYNAPSES ------------------
@@ -322,9 +309,8 @@ eqs_Syn = Equations('''
     
     # Fraction of synaptic neurotransmitter resources available for release:
     dx_S/dt = Omega_d *(1 - x_S) : 1 (clock-driven)
-    dY_S/dt = -Omega_c * Y_S : mole (clock-driven)
-    
-    
+   
+  
     # Define the variables of the model
     G_A : mole  # gliotransmitter concentration in the extracellular space
     U_0 : 1
@@ -345,11 +331,51 @@ pre = '''
 
 U_0 =  U_0__star
 u_S += U_0 * (1 - u_S)
-r_S = u_S * x_S # released synaptic neurotransmitter resources
+r_S = u_S * x_S  # released synaptic neurotransmitter resources
 x_S -= r_S
-Y_S += rho * Y_T * r_S
+
+
 '''
 post = None
+
+
+if Decay_type == 'Single_exp':
+    
+    
+    eqs_Syn += Equations('''
+                         
+                         dY_S/dt = -Omega_c * Y_S : mole (clock-driven)
+                         
+                         ''')
+    
+    pre +=  '''
+    
+            Y_S += rho * Y_T * r_S
+    
+            ''' 
+
+if Decay_type == 'Double_exp':
+    
+    
+    eqs_Syn += Equations('''
+                         
+                         
+                         dY_S/dt = ((tau_decay_NT / tau_rise_NT) ** (tau_rise_NT / (tau_decay_NT - tau_rise_NT))*x_Y_S-Y_S)/tau_rise_NT : mole (clock-driven)
+                         dx_Y_S/dt = -x_Y_S/tau_decay_NT                                                 : mole (clock-driven)
+                         
+                        
+                         
+                         ''')
+    
+    
+    pre +=  '''
+    
+            x_Y_S += rho * Y_T * r_S
+    
+            ''' 
+
+
+
 
 
 ## NINA POST_SYNAPTIC MODEL
