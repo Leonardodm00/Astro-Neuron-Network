@@ -1,3 +1,5 @@
+
+
 # -*- coding: utf-8 -*-
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -13,7 +15,27 @@ from brian2 import *
 from brian2 import devices
 
 
+def Get_norm(tr,td):
+    
+    '''
+    This function calculates the Syanptic amplitude scaling factor. It is used to 
+    scale the post-synaptic currents amplitude
+    
+    Params:
+        td = decay time scale
+        tr = rise time scale
+       
+    '''
 
+    rise_ratio = tr / (td - tr)
+    decay_ratio = td / (td - tr)
+    Numerator = 1
+    Denominator = ((tr / td) ** decay_ratio) - ((tr / td) ** rise_ratio)
+    
+    Norm = Numerator / Denominator
+
+
+    return Norm
 
 
 def unfold_ADJ(ADJ):
@@ -226,11 +248,8 @@ def get_Neuronparam(Adaptation=False,delta = 0.5,**kwargs):
 
 
 
-def get_Synparam(synapse='depressing',**kwargs):
+def get_Synparam(synapse_type='depressing',**kwargs):
     
-    # std_pers = persentage of mean value used as standard deviation for introducing some
-    #   variability
-        
     params = {
         
         'area' : 300*umetre**2,  
@@ -241,7 +260,7 @@ def get_Synparam(synapse='depressing',**kwargs):
         # U_0__star (see below)    # Basal synaptic release probability
         'Omega_c': 40./second,     # Neurotransmitter clearance rate
         'rho': 0.005,            # synaptic vesicle-to-extracellular space volume ratio
-        'Y_T': 500.*mmole,         # Total neurotransmitter synaptic resource (in terms of vesicular concentration)
+        'Y_T': 300.*mmole,         # Total neurotransmitter synaptic resource (in terms of vesicular concentration)
         # --- Presynaptic receptors
         'O_G': 1.5/umole/second,   # Agonist binding rate (activating)
         'Omega_G': 0.5/(60*second),# Agonist release rate (inactivating)
@@ -251,6 +270,9 @@ def get_Synparam(synapse='depressing',**kwargs):
         'tau_sic_r' : 30.*ms,      # SIC/SOC rise time constant
         'tau_sic' : 600.*ms,       # SIC/SOC decay time constant
         
+       # Neurotransmitter release time constants
+       'tau_rise_NT': 1*ms,
+       'tau_decay_NT': 25*ms, # 
         
        
        # Adaptation parameters (uncommented and added to dictionary)
@@ -278,12 +300,22 @@ def get_Synparam(synapse='depressing',**kwargs):
         
         'w':1,
         
-        # Params of the upgrated model
+        # Params of the kinetic model post-syn
         'alpha_ampa_kin' : 1.1e6 * 1/mole * 1/second,
         'alpha_nmda_kin' : 7.2e4 * 1/mole * 1/second,
         'beta_ampa_kin' : 190 * 1/second,
         'beta_nmda_kin' :  6.6 * 1/second,
         'epsilon': 1e-40 * Hz,
+        
+        # Params of the kinetic model post-syn
+        'tau_rise_ampa': 1*ms,
+        'tau_decay_ampa': 10*ms,
+        'tau_rise_nmda': 2*ms,
+        'tau_decay_nmda': 100*ms,
+        
+        
+        
+        
         
        
     
@@ -296,23 +328,29 @@ def get_Synparam(synapse='depressing',**kwargs):
     
     }
     
+    # Define the norm factor for the double exponential decay used for the 
+    # neurotransmitter release.
     
+    Norm_NT = Get_norm(params['tau_rise_NT'],params['tau_decay_NT'])
+    params.update({'Norm_NT':Norm_NT})
+    
+
     # ------------------ SYNAPSES ------------------
-    if synapse == 'depressing':
+    if synapse_type == 'depressing':
         params.update({
             'Omega_d': 2./second,
             'Omega_f': 3.33/second,
             'U_0__star': 0.6,
             'alpha': 0.,
         })
-    elif synapse == 'facilitating':
+    elif synapse_type == 'facilitating':
         params.update({
             'Omega_d': 2./second,
             'Omega_f': 2./second,
             'U_0__star': 0.15,
             'alpha': 1.,
         })
-    elif synapse == 'neutral':
+    elif synapse_type == 'neutral':
         params.update({
             'Omega_d': 3./second,
             'Omega_f': 3./second,
@@ -357,7 +395,8 @@ def get_Synparam(synapse='depressing',**kwargs):
 
 def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
                      Syn_Currents_model = 'Kinetic',add_delay= False,delay_mode= 'random',
-                     Max_delay = 10*ms,ics = True,std_pers = 0.01, Simulated_network = True):
+                     Max_delay = 10*ms,ics = True,std_pers = 0.01, Simulated_network = 'Neuronal',
+                     Decay_type = 'Double_exp',synapse_type = 'neutral'):
     
 # std_pers = persentage of mean value used as standard deviation for introducing some
 #   variability
@@ -418,46 +457,6 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
     
     
     if Simulated_network == 'Neuronal':
-        eqs_Syn = Equations('''
-            # Fraction of activated presynaptic receptors
-            dGamma_S/dt = O_G * G_A * (1 - Gamma_S) - Omega_G * Gamma_S : 1
-    
-            
-            # Usage of releasable neurotransmitter per single action potential:
-            du_S/dt = -Omega_f * u_S : 1 (clock-driven)
-            
-            # Fraction of synaptic neurotransmitter resources available for release:
-            dx_S/dt = Omega_d *(1 - x_S) : 1 (clock-driven)
-            dY_S/dt = -Omega_c * Y_S : mole (clock-driven)
-            
-            
-            # Define the variables of the model
-            G_A : mole  # gliotransmitter concentration in the extracellular space
-            U_0 : 1
-            r_S : 1     # Because r_S is the product of u_S and x_S that are event-driven, it is itself event-driven too
-            
-            
-         
-            # Astrocyte ID for connection
-            astro_index : integer
-            # Per-synapse gliotransmitter-effect parameter
-            # alpha  : 1
-            ''')
-        
-        # -------------- Event based update --------------
-        
-        
-        pre = '''
-        
-        U_0 =  (1 - Gamma_S) * U_0__star + alpha * Gamma_S
-        u_S += U_0 * (1 - u_S)
-        r_S = u_S * x_S # released synaptic neurotransmitter resources
-        x_S -= r_S
-        Y_S += rho * Y_T * r_S
-        '''
-        post = None
-        
-    else:
         
         eqs_Syn = Equations('''
         
@@ -466,7 +465,7 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
             
             # Fraction of synaptic neurotransmitter resources available for release:
             dx_S/dt = Omega_d *(1 - x_S) : 1 (clock-driven)
-            dY_S/dt = -Omega_c * Y_S : mole (clock-driven)
+            
             
             
             # Define the variables of the model
@@ -491,11 +490,97 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
         u_S += U_0 * (1 - u_S)
         r_S = u_S * x_S # released synaptic neurotransmitter resources
         x_S -= r_S
-        Y_S += rho * Y_T * r_S
+        
         '''
         post = None
         
+        
+        
+        
+        
+    else:
+        
+        eqs_Syn = Equations('''
+            # Fraction of activated presynaptic receptors
+            dGamma_S/dt = O_G * G_A * (1 - Gamma_S) - Omega_G * Gamma_S : 1 (clock-driven)
     
+            
+            # Usage of releasable neurotransmitter per single action potential:
+            du_S/dt = -Omega_f * u_S : 1 (clock-driven)
+            
+            # Fraction of synaptic neurotransmitter resources available for release:
+            dx_S/dt = Omega_d *(1 - x_S) : 1 (clock-driven)
+           
+            
+            
+            # Define the variables of the model
+            G_A : mole  # gliotransmitter concentration in the extracellular space
+            U_0 : 1
+            r_S : 1     # Because r_S is the product of u_S and x_S that are event-driven, it is itself event-driven too
+            
+            
+         
+            # Astrocyte ID for connection
+            astro_index : integer
+            # Per-synapse gliotransmitter-effect parameter
+            # alpha  : 1
+            ''')
+        
+        # -------------- Event based update --------------
+        
+        
+        pre = '''
+        
+        U_0 =  (1 - Gamma_S) * U_0__star + alpha * Gamma_S
+        u_S += U_0 * (1 - u_S)
+        r_S = u_S * x_S # released synaptic neurotransmitter resources
+        x_S -= r_S
+        
+        '''
+        post = None
+        
+        
+        
+        
+        
+        
+    # ---------- Syn glutamate model ----------
+    
+    if Decay_type == 'Single_exp':
+        
+        
+        eqs_Syn += Equations('''
+                             
+                             dY_S/dt = -Omega_c * Y_S : mole (clock-driven)
+                             
+                             ''')
+        
+        pre +=  '''
+        
+                Y_S += rho * Y_T * r_S
+        
+                ''' 
+
+    if Decay_type == 'Double_exp':
+        
+        
+        eqs_Syn += Equations('''
+                             
+                             
+                             dY_S/dt = ((tau_decay_NT / tau_rise_NT) ** (tau_rise_NT / (tau_decay_NT - tau_rise_NT))*x_Y_S-Y_S)/tau_rise_NT : mole (clock-driven)
+                             dx_Y_S/dt = -x_Y_S/tau_decay_NT                                                 : mole (clock-driven)
+                             
+                            
+                             
+                             ''')
+        
+        
+        pre +=  '''
+        
+                x_Y_S += rho * Y_T * r_S
+        
+                ''' 
+
     
     # ----------- SYNAPTIC CURRENTS MODEL -------------
     
@@ -548,7 +633,43 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
     
     
     
- 
+    elif Syn_Currents_model == 'Double_exp':
+        
+        eqs_Syn += Equations('''
+                             
+                                   
+                                dr_ampa/dt = ((tau_decay_ampa  / tau_rise_ampa) ** (tau_rise_ampa / (tau_decay_ampa  - tau_rise_ampa))*x_r_ampa-r_ampa)/tau_rise_ampa : 1 (clock-driven)
+                                dx_r_ampa/dt = -x_r_ampa/tau_decay_ampa                                                  : 1 (clock-driven)
+                                
+                                dr_nmda/dt = ((tau_decay_nmda / tau_rise_nmda) ** (tau_rise_nmda / (tau_decay_nmda - tau_rise_nmda))*x_r_nmda-r_nmda)/tau_rise_nmda : 1 (clock-driven)
+                                dx_r_nmda/dt = -x_r_nmda/tau_decay_nmda   : 1 (clock-driven)
+                                
+                               
+                                r_ampa_tot_post = r_ampa : 1 (summed)
+                                r_nmda_tot_post = r_nmda : 1 (summed)
+                             
+                             
+                            ''')
+                            
+                            
+        pre += '''           
+                x_r_ampa +=  (alpha_ampa_kin * rho * Y_T * r_S)/(alpha_ampa_kin * rho * Y_T * r_S + beta_ampa_kin) 
+                x_r_nmda +=  (alpha_nmda_kin * rho * Y_T * r_S)/(alpha_nmda_kin * rho * Y_T * r_S + beta_nmda_kin) 
+               
+                        '''          
+
+        
+        
+        eqs_NN += Equations(''' 
+                            I_syn =  I_ampa + I_nmda: amp
+                            I_ampa = g_ampa*(V-E_ampa)*(r_ampa_tot) : amp
+                            I_nmda = g_nmda*(V-E_nmda)*(r_nmda_tot)/(1+exp(-0.062*V/mV)/3.57) : amp
+                            r_nmda_tot :1
+                            r_ampa_tot :1
+                            
+                        
+                            ''')
+
     
     else:
         
@@ -584,7 +705,7 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
     
     
     # ----------- SYNAPTIC PARAMETERS ------------
-    params_Syn = get_Synparam()
+    params_Syn = get_Synparam(synapse_type=synapse_type)
     
     
     
@@ -664,7 +785,7 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
     params_NN = get_Neuronparam(Adaptation)
     
     
-    P = NeuronGroup(Nn, model=eqs_NN, name='Neuron*',namespace= params_NN, threshold='V>0*mV', refractory=2 * ms,
+    P = NeuronGroup(Nn, model=eqs_NN, name='Neuron*',namespace= params_NN, threshold='V>20*mV', refractory=2 * ms,
                         method='exponential_euler')
     
     # Initialize neuron parameters
@@ -922,7 +1043,6 @@ def Astro_to_Syn(Glio_relaease,synapse,ADJ):
     Astro_Syn.connect(i = Source_astro, j = Target_syn)
     
     return Astro_Syn
-
 
 
 
