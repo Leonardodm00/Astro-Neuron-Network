@@ -1,8 +1,10 @@
+# -*- coding: utf-8 -*-
 """
-Created on Sun Jul 20 11:01:09 2025
+Created on Tue Jul 22 17:06:17 2025
 
-@author: paolo
+@author: leona
 """
+
 
 import matplotlib.pyplot as plt
 from brian2 import *
@@ -11,8 +13,8 @@ from brian2 import *
 import os
 
 
-os.chdir(r'C:\Users\paolo\Desktop\PYTHON DATA')
-import ANS_fun
+os.chdir(r'C:\Users\Admin\Desktop\CURRENTS')
+import ASN_fun
 
 
 '''
@@ -57,18 +59,19 @@ start_scope()
 # ------------------------- SET OPTIONS -------------------------
 
 # ------- Synapses -------
-synapse='neutral'
+synapse_type='neutral'
 ics=None 
 dt=None            
 
 postc_sic='double-exp'
+Decay_type = 'Double_exp'
 sic=None 
 delay=None
 RandomKinetics = False 
 OnlyExc = True
 std_pers =0.01
 
-Syn_Currents_model = 'Nina' # 'Kinetic','Nina
+Syn_Currents_model = 'Double_exp' # 'Kinetic','Nina','Double_exp'
 
 Max_delay = 25 *ms
 add_delay = False
@@ -76,7 +79,7 @@ delay_mode = 'random'
 
 
 # ------- Neurons -------
-Adaptation = True
+Adaptation = False
 
 
 # ------- Astrocytes -------
@@ -155,9 +158,11 @@ ADJ_AstroSyn = np.array(([1,0,0],
 
 if Simulated_network == 'Full':
     # --------- NEURON and SYNAPSE -----------
-    N,S = Neuronal_Network(Nn,ADJ_neuro, RandomKinetics, OnlyExc,
-                           Syn_Currents_model,add_delay,delay_mode,Max_delay,ics,
-                           std_pers, Simulated_network)
+    N,S = Neuronal_Network(Nn,ADJ_neuro, RandomKinetics=RandomKinetics, OnlyExc=OnlyExc,
+                           Syn_Currents_model=Syn_Currents_model,add_delay=add_delay,
+                           delay_mode=delay_mode,Max_delay=Max_delay,ics=ics,
+                           std_pers=std_pers, Simulated_network=Simulated_network,Decay_type=Decay_type,
+                           synapse_type=synapse_type)
     
     
     # --------- ASTROCYTE -----------
@@ -181,9 +186,10 @@ if Simulated_network == 'Full':
 elif Simulated_network == 'Neuronal':
 
     # --------- NEURON and SYNAPSE -----------
-    N,S = Neuronal_Network(Nn,ADJ_neuro, RandomKinetics, OnlyExc,
-                           Syn_Currents_model,add_delay,delay_mode,Max_delay,ics,
-                           std_pers, Simulated_network)
+    N,S = Neuronal_Network(Nn,ADJ_neuro, RandomKinetics=RandomKinetics, OnlyExc=OnlyExc,
+                           Syn_Currents_model=Syn_Currents_model,add_delay=add_delay,
+                           delay_mode=delay_mode,Max_delay=Max_delay,ics=ics,
+                           std_pers=std_pers, Simulated_network=Simulated_network,Decay_type=Decay_type,synapse_type = synapse_type)
     
     
     
@@ -243,8 +249,8 @@ net_.run(simtime,report='text', profile=True)
 spike_trains = SpikesN.spike_trains()
 # --------------------- PLOTS ---------------------
 # ------- NEURONS -------
-
-fig, (ax1, ax2, ax3,ax4) = plt.subplots(4, 1,figsize=[10,12]) # Added figsize for better viewing
+%matplotlib
+fig, (ax1, ax2, ax3,ax4) = plt.subplots(4, 1) # Added figsize for better viewing
 
 
 
@@ -264,18 +270,18 @@ ax3.set_ylabel('Voltage [mV]')
 ax4.plot(MonitorN.t / second, MonitorN[3].V / mV, 'k', linewidth=0.7)
 ax4.set_xlabel('Time [s]')
 ax4.set_ylabel('Voltage [mV]')
-fig.show()
+# fig.show()
 
-plt.figure(dpi=200)
-plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
+# plt.figure(dpi=200)
+# plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
 
-show()
+# show()
 
 #%%
 
 # ------- SYNAPSES -------
 
-fig, (ax1, ax2, ax3) = plt.subplots(3, 1,figsize=[10,12]) # Added figsize for better viewing
+fig, (ax1, ax2, ax3) = plt.subplots(3, 1) # Added figsize for better viewing
 
 
 # ax1.plot(SpikesN.t/second,spike_trains[0],'.g', ms=5,label='Spikes')
@@ -300,18 +306,18 @@ ax3.plot(MonitorS.t / second, MonitorS[2].u_S, 'r', linewidth=0.7)
 ax3.plot(MonitorS.t / second, MonitorS[2].x_S, 'c', linewidth=0.7)
 
 ax3.set_xlabel('Time [s]')
-# fig.show()
+fig.show()
 
-# plt.figure(dpi=200)
-# plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
+plt.figure(dpi=200)
+plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
 
-# show()
+show()
 
 #%%
 
 # Synaptically released glutamate 
 
-fig, (ax1, ax2, ax3) = plt.subplots(3, 1,figsize=[10,12]) # Added figsize for better viewing
+fig, (ax1, ax2, ax3) = plt.subplots(3, 1) # Added figsize for better viewing
 
 
 
@@ -343,7 +349,7 @@ show()
 
 
 
-fig, (ax1, ax2, ax3) = plt.subplots(3, 1,figsize=[10,12]) # Added figsize for better viewing
+fig, (ax1, ax2, ax3) = plt.subplots(3, 1) # Added figsize for better viewing
 
 
 
@@ -373,5 +379,4 @@ ax3.set_xlabel('Time [s]')
 # plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
 
 show()
-
 
