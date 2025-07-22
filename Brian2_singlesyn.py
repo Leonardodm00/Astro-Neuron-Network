@@ -6,8 +6,7 @@ start_scope()
 
 
 # simulation parameters
-simtime = 100 * second               # simulation time
-transient = 3 * second              # time omitted as transient
+simtime = 2 * second               # simulation time
 sed = 39                             # random number seed
 devices.device.seed(sed)            # set the seed for all the random number realisations
 
@@ -125,7 +124,7 @@ def get_Neuronparam(Adaptation=False,delta = 0.5,**kwargs):
 
 
 
-def get_Synparam(synapse='depressing',Decay_type = 'Single_exp',**kwargs):
+def get_Synparam(synapse='depressing',**kwargs):
     
         
         
@@ -150,8 +149,8 @@ def get_Synparam(synapse='depressing',Decay_type = 'Single_exp',**kwargs):
         'tau_sic' : 600.*ms,       # SIC/SOC decay time constant
         
        # Neurotransmitter release time constants
-       'tau_rise_NT': 1*ms,
-       'tau_decay_NT': 50*ms, # 
+       'tau_rise_NT': 2*ms,
+       'tau_decay_NT': 25*ms, # 
         
        
        # Adaptation parameters (uncommented and added to dictionary)
@@ -179,12 +178,22 @@ def get_Synparam(synapse='depressing',Decay_type = 'Single_exp',**kwargs):
         
         'w':1,
         
-        # Params of the upgrated model
-        'alpha_ampa_new' : 1.1e6 * 1/mole * 1/second,
-        'alpha_nmda_new' : 7.2e4 * 1/mole * 1/second,
-        'beta_ampa_new' : 190 * 1/second,
-        'beta_nmda_new' :  6.6 * 1/second,
+        # Params of the kinetic model post-syn
+        'alpha_ampa_kin' : 1.1e6 * 1/mole * 1/second,
+        'alpha_nmda_kin' : 7.2e4 * 1/mole * 1/second,
+        'beta_ampa_kin' : 190 * 1/second,
+        'beta_nmda_kin' :  6.6 * 1/second,
         'epsilon': 1e-40 * Hz,
+        
+        # Params of the kinetic model post-syn
+        'tau_rise_ampa': 1*ms,
+        'tau_decay_ampa': 10*ms,
+        'tau_rise_nmda': 2*ms,
+        'tau_decay_nmda': 100*ms,
+        
+        
+        
+        
         
        
     
@@ -296,8 +305,8 @@ y : meter
 
 # Basic synaptic equations are the same. what changes is how the post synaptic current behaves.
 
-
-Syn_model = 'Nin'
+Decay_type = 'Double_exp'
+Syn_model = 'Nina' # Can take also 'Kinetic','Double_exp'
 
 
 eqs_Syn = Equations('''
@@ -424,24 +433,58 @@ if Syn_model == 'Nina':
                         ''')
 
 
+elif Syn_model == 'Double_exp':
+    
+    eqs_Syn += Equations('''
+                         
+                               
+                            dr_ampa/dt = ((tau_decay_ampa  / tau_rise_ampa) ** (tau_rise_ampa / (tau_decay_ampa  - tau_rise_ampa))*x_r_ampa-r_ampa)/tau_rise_ampa : 1 (clock-driven)
+                            dx_r_ampa/dt = -x_r_ampa/tau_decay_ampa                                                  : 1 (clock-driven)
+                            
+                            dr_nmda/dt = ((tau_decay_nmda / tau_rise_nmda) ** (tau_rise_nmda / (tau_decay_nmda - tau_rise_nmda))*x_r_nmda-r_nmda)/tau_rise_nmda : 1 (clock-driven)
+                            dx_r_nmda/dt = -x_r_nmda/tau_decay_nmda   : 1 (clock-driven)
+                            
+                           
+                            r_ampa_tot_post = r_ampa : 1 (summed)
+                            r_nmda_tot_post = r_nmda : 1 (summed)
+                         
+                         
+                        ''')
+                        
+                        
+    pre += '''           
+            x_r_ampa +=  (alpha_ampa_kin * rho * Y_T * r_S)/(alpha_ampa_kin * rho * Y_T * r_S + beta_ampa_kin) 
+            x_r_nmda +=  (alpha_nmda_kin * rho * Y_T * r_S)/(alpha_nmda_kin * rho * Y_T * r_S + beta_nmda_kin) 
+           
+                    '''          
 
-# ----------- UPGRADED MODEL -------------
+    
+    
+    eqs_NN += Equations(''' 
+                        I_syn =  I_ampa + I_nmda: amp
+                        I_ampa = g_ampa*(V-E_ampa)*(r_ampa_tot) : amp
+                        I_nmda = g_nmda*(V-E_nmda)*(r_nmda_tot)/(1+exp(-0.062*V/mV)/3.57) : amp
+                        r_nmda_tot :1
+                        r_ampa_tot :1
+                        
+                    
+                        ''')
 
 else:
     
     eqs_Syn += Equations('''
                          
                          
-                            # r_SS_ampa = (alpha_ampa_new * Y_S)/(alpha_ampa_new * Y_S + beta_ampa_new) : 1
-                            # r_SS_nmda = (alpha_nmda_new * Y_S)/(alpha_nmda_new * Y_S + beta_nmda_new ) : 1
-                            # tau_ampa = 1/(alpha_ampa_new * Y_S + beta_ampa_new ) : second
-                            # tau_nmda = 1/(alpha_nmda_new * Y_S + beta_nmda_new ) : second
+                            # r_SS_ampa = (alpha_ampa_kin * Y_S)/(alpha_ampa_kin * Y_S + beta_ampa_kin) : 1
+                            # r_SS_nmda = (alpha_nmda_kin * Y_S)/(alpha_nmda_kin * Y_S + beta_nmda_kin ) : 1
+                            # tau_ampa = 1/(alpha_ampa_kin * Y_S + beta_ampa_kin ) : second
+                            # tau_nmda = 1/(alpha_nmda_kin * Y_S + beta_nmda_kin ) : second
                                
-                            dr_ampa/dt = alpha_ampa_new * Y_S * (1 - r_ampa) - beta_ampa_new * r_ampa: 1 (clock-driven)
-                            dr_nmda/dt =  alpha_nmda_new * Y_S * (1 - r_nmda) - beta_nmda_new * r_nmda : 1 (clock-driven)
+                            dr_ampa/dt = alpha_ampa_kin * Y_S * (1 - r_ampa) - beta_ampa_kin * r_ampa: 1 (clock-driven)
+                            dr_nmda/dt =  alpha_nmda_kin * Y_S * (1 - r_nmda) - beta_nmda_kin * r_nmda : 1 (clock-driven)
                             
-                            # dr_ampa/dt =  -beta_ampa_new* r_ampa: 1 (clock-driven)
-                            # dr_nmda/dt =  - beta_nmda_new * r_nmda : 1 (clock-driven)
+                            # dr_ampa/dt =  -beta_ampa_kin* r_ampa: 1 (clock-driven)
+                            # dr_nmda/dt =  - beta_nmda_kin * r_nmda : 1 (clock-driven)
                             
                             r_ampa_tot_post = r_ampa : 1 (summed)
                             r_nmda_tot_post = r_nmda : 1 (summed)
@@ -451,8 +494,8 @@ else:
                         
                         
     # pre += '''           
-    #         r_ampa += alpha_ampa_new * Y_S * (1 - r_ampa)
-    #         r_nmda +=  alpha_nmda_new * Y_S * (1 - r_nmda)
+    #         r_ampa += alpha_ampa_kin * Y_S * (1 - r_ampa)
+    #         r_nmda +=  alpha_nmda_kin * Y_S * (1 - r_nmda)
            
     #                '''          
 
@@ -472,8 +515,8 @@ else:
 
 
 params_NN = get_Neuronparam(sigma = 0*mV)
-params_Syn = get_Synparam(Y_T = 300.*mmole,alpha_ampa_new = 1.1e4 * 1/mole * 1/second,beta_ampa_new = 800 * 1/second )
-
+# params_Syn = get_Synparam('neutral',Y_T = 300.*mmole,alpha_ampa_kin = 2e5 * 1/mole * 1/second,beta_ampa_kin = 800 * 1/second )
+params_Syn = get_Synparam('neutral',Y_T = 300.*mmole)
 
 
 poisson_rate = 1*Hz
@@ -494,7 +537,7 @@ synapse.connect(i=0, j=0) # Connect the single input "neuron" to the single targ
 synapse.x_S = 1.0
 # --- Monitoring ---
 state_monitor = StateMonitor(neuron, ['V','I_syn','I_ampa','I_nmda'], record=0)
-# state_monitorsynapse = StateMonitor(synapse, ['Y_S','r_ampa','r_nmda'], record=0)
+state_monitorsynapse = StateMonitor(synapse, ['Y_S'], record=0)
 spike_monitor_neuron = SpikeMonitor(neuron)
 spike_monitor_input = SpikeMonitor(P)
 #
@@ -549,7 +592,8 @@ xlim(0, 1)
 show()
 
 #%%
-
+%matplotlib
+IY_S = synapse.Y_S.unit
 
 plt.figure(dpi=200)
 plt.plot(state_monitorsynapse.t /ms, state_monitorsynapse[0].Y_S, 'k')
