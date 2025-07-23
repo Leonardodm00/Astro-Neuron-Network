@@ -1,5 +1,3 @@
-
-
 # -*- coding: utf-8 -*-
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -313,7 +311,8 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         'tau_rise_nmda': 2*ms,
         'tau_decay_nmda': 100*ms,
         
-        
+        # Synaptic efficacy
+        'Xi': 0.75,
         
         
         
@@ -653,8 +652,8 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
                             
                             
         pre += '''           
-                x_r_ampa +=  (alpha_ampa_kin * rho * Y_T * r_S)/(alpha_ampa_kin * rho * Y_T * r_S + beta_ampa_kin) 
-                x_r_nmda +=  (alpha_nmda_kin * rho * Y_T * r_S)/(alpha_nmda_kin * rho * Y_T * r_S + beta_nmda_kin) 
+                x_r_ampa +=  (alpha_ampa_kin * rho * Y_T * r_S * Xi)/(alpha_ampa_kin * rho * Y_T * r_S * Xi + beta_ampa_kin) 
+                x_r_nmda +=  (alpha_nmda_kin * rho * Y_T * r_S * Xi)/(alpha_nmda_kin * rho * Y_T * r_S * Xi + beta_nmda_kin) 
                
                         '''          
 
