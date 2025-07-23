@@ -1,3 +1,9 @@
+ -*- coding: utf-8 -*-
+"""
+Created on Wed Jul 23 10:26:17 2025
+
+@author: leona
+"""
 
 import matplotlib.pyplot as plt
 from brian2 import *
@@ -64,10 +70,10 @@ def get_Neuronparam(Adaptation=False,delta = 0.5,**kwargs):
     'El': -39.2 * mV,                    # Nernst potential of leaky ions
     'EK': -80 * mV,                      # Nernst potential of potassium
     'ENa': 70 * mV,                      # Nernst potential of sodium
-    'g_na': 1.6 * 50 * msiemens * cm**-2 * Neuron_area, # maximal conductance of sodium channels (calculated with area)
-    'g_kd': 1.3 * 5 * msiemens * cm**-2 * Neuron_area,  # maximal conductance of potassium (calculated with area)
-    'gl': (0.3*msiemens*cm**-2) * Neuron_area, # maximal leak conductance (calculated with area)
-    'g_m': g_m, # maximal conductance of AHP currents
+    'g_na': 1.6 * 50 * msiemens * cm**-2 * Neuron_area, # maXi_mal conductance of sodium channels (calculated with area)
+    'g_kd': 1.3 * 5 * msiemens * cm**-2 * Neuron_area,  # maXi_mal conductance of potassium (calculated with area)
+    'gl': (0.3*msiemens*cm**-2) * Neuron_area, # maXi_mal leak conductance (calculated with area)
+    'g_m': g_m, # maXi_mal conductance of AHP currents
     'VT': -30.4*mV,                      # alters firing threshold of neurons
     'sigma': 6 * mV,                     # standard deviation of the noisy voltage fluctuations
     'Tau_max': 4000 * ms,                # Decay factor of AHP
@@ -186,12 +192,13 @@ def get_Synparam(synapse='depressing',**kwargs):
         'epsilon': 1e-40 * Hz,
         
         # Params of the kinetic model post-syn
-        'tau_rise_ampa': 1*ms,
-        'tau_decay_ampa': 10*ms,
+        'tau_rise_ampa': 0.5*ms,
+        'tau_decay_ampa': 3*ms,
         'tau_rise_nmda': 2*ms,
         'tau_decay_nmda': 100*ms,
         
-        
+        # Synaptic efficacy
+        'Xi_': 0.75,
         
         
         
@@ -453,8 +460,8 @@ elif Syn_model == 'Double_exp':
                         
                         
     pre += '''           
-            x_r_ampa +=  (alpha_ampa_kin * rho * Y_T * r_S)/(alpha_ampa_kin * rho * Y_T * r_S + beta_ampa_kin) 
-            x_r_nmda +=  (alpha_nmda_kin * rho * Y_T * r_S)/(alpha_nmda_kin * rho * Y_T * r_S + beta_nmda_kin) 
+            x_r_ampa +=  (alpha_ampa_kin * rho * Y_T * r_S * Xi_)/(alpha_ampa_kin * rho * Y_T * r_S * Xi_ + beta_ampa_kin) 
+            x_r_nmda +=  (alpha_nmda_kin * rho * Y_T * r_S * Xi_)/(alpha_nmda_kin * rho * Y_T * r_S * Xi_ + beta_nmda_kin) 
            
                     '''          
 
@@ -480,11 +487,11 @@ else:
                             # tau_ampa = 1/(alpha_ampa_kin * Y_S + beta_ampa_kin ) : second
                             # tau_nmda = 1/(alpha_nmda_kin * Y_S + beta_nmda_kin ) : second
                                
-                            dr_ampa/dt = alpha_ampa_kin * Y_S * (1 - r_ampa) - beta_ampa_kin * r_ampa: 1 (clock-driven)
-                            dr_nmda/dt =  alpha_nmda_kin * Y_S * (1 - r_nmda) - beta_nmda_kin * r_nmda : 1 (clock-driven)
+                            dr_ampa/dt = alpha_ampa_kin * Y_S * Xi_ * (1 - r_ampa) - beta_ampa_kin * r_ampa: 1 (clock-driven)
+                            dr_nmda/dt = alpha_nmda_kin * Y_S * Xi_ * (1 - r_nmda) - beta_nmda_kin * r_nmda : 1 (clock-driven)
                             
                             # dr_ampa/dt =  -beta_ampa_kin* r_ampa: 1 (clock-driven)
-                            # dr_nmda/dt =  - beta_nmda_kin * r_nmda : 1 (clock-driven)
+                            # dr_nmda/dt =  -beta_nmda_kin * r_nmda : 1 (clock-driven)
                             
                             r_ampa_tot_post = r_ampa : 1 (summed)
                             r_nmda_tot_post = r_nmda : 1 (summed)
