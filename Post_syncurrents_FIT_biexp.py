@@ -121,13 +121,18 @@ def Synapse_simulation(Params):
 
 
     
-    # ---- Paramter extraction ----
-    
-    Xi_ = Params[0]
-    rise = Params[1]
-    decay = Params[2]
-    alpha_t = Params[3]
-    beta_t = Params[4]
+   # ---- Paramter extraction ----
+    if syn_type == 'nmda':
+        Xi_ = Params[0]
+        rise = Params[1]
+        decay = Params[2]
+        alpha_t = Params[3]
+        beta_t = Params[4]
+    elif syn_type == 'ampa':
+        Xi_ = Params[0]
+        alpha_t = Params[1]
+        beta_t = Params[2]
+
     
     
     # ----------------- NEURONAL EQUATIONS ----------------------
@@ -212,8 +217,7 @@ def Synapse_simulation(Params):
     eqs_Syn += Equations('''
                          
                                
-                            dr_ampa/dt = ((tau_decay_ampa  / tau_rise_ampa) ** (tau_rise_ampa / (tau_decay_ampa  - tau_rise_ampa))*x_r_ampa-r_ampa)/tau_rise_ampa : 1 (clock-driven)
-                            dx_r_ampa/dt = -x_r_ampa/tau_decay_ampa                                                  : 1 (clock-driven)
+                            dr_ampa/dt = -r_ampa/tau_decay_ampa : 1 (clock-driven)
                             
                             dr_nmda/dt = ((tau_decay_nmda / tau_rise_nmda) ** (tau_rise_nmda / (tau_decay_nmda - tau_rise_nmda))*x_r_nmda-r_nmda)/tau_rise_nmda : 1 (clock-driven)
                             dx_r_nmda/dt = -x_r_nmda/tau_decay_nmda   : 1 (clock-driven)
@@ -227,7 +231,7 @@ def Synapse_simulation(Params):
                         
                         
     pre += '''           
-            x_r_ampa +=  (alpha_ampa_new * rho * Y_T * r_S * Xi_)/(alpha_ampa_new * rho * Y_T * r_S * Xi_ + beta_ampa_new) 
+            r_ampa +=  (alpha_ampa_new * rho * Y_T * r_S * Xi_)/(alpha_ampa_new * rho * Y_T * r_S * Xi_ + beta_ampa_new) 
             x_r_nmda +=  (alpha_nmda_new * rho * Y_T * r_S * Xi_)/(alpha_nmda_new * rho * Y_T * r_S * Xi_ + beta_nmda_new) 
            
                     '''          
@@ -251,10 +255,16 @@ def Synapse_simulation(Params):
     # ----------- Network build -----------
     
     params_NN = get_Neuronparam(sigma = 0*mV)
-    params_Syn = get_Synparam(synapse = 'neutral', alpha_ampa_new = alpha_t * 1/mmole * 1/ms, beta_ampa_new = beta_t * 1/ms,Xi_=Xi_,
-                             tau_rise_ampa = rise*ms, tau_decay_ampa = decay*ms)
+    
+    
+    if syn_type == 'ampa':
+        params_Syn = get_Synparam(synapse = 'neutral', alpha_ampa_new = alpha_t * 1/mmole * 1/ms, beta_ampa_new = beta_t * 1/ms,Xi_=Xi_,tau_decay_ampa = 2*ms)
    
 
+    elif syn_type == 'nmda':
+        params_Syn = get_Synparam(synapse = 'neutral', alpha_nmda_new = alpha_t * 1/mmole * 1/ms, beta_nmda_new = beta_t * 1/ms,Xi_=Xi_,
+                             tau_rise_nmda = rise*ms, tau_decay_nmda = decay*ms)
+    
     
     
     poisson_rate = 1*Hz
@@ -541,11 +551,15 @@ def Synapse_wrapper(Params):
  
     
     '''
-
+    
+    
+    #TODO:change
+    syn_type = 'ampa'
     # ----------- Load and preprocess data -----------
     # Upload the reference data that we're trying to fit.
     
     # Load data
+    #TODO:change
     os.chdir(r'C:\Users\Admin\Desktop\CURRENTS')
     Ref_data = np.squeeze(pd.read_csv('I_AMPA.csv',header=None).to_numpy())
     
@@ -569,12 +583,16 @@ def Synapse_wrapper(Params):
     
     
     # ---- Paramter extraction ----
-    
-    Xi_ = Params[0]
-    rise = Params[1]
-    decay = Params[2]
-    alpha_t = Params[3]
-    beta_t = Params[4]
+    if syn_type == 'nmda':
+        Xi_ = Params[0]
+        rise = Params[1]
+        decay = Params[2]
+        alpha_t = Params[3]
+        beta_t = Params[4]
+    elif syn_type == 'ampa':
+        Xi_ = Params[0]
+        alpha_t = Params[1]
+        beta_t = Params[2]
     
     # ----------------- NEURONAL EQUATIONS ----------------------
     
@@ -657,8 +675,7 @@ def Synapse_wrapper(Params):
     eqs_Syn += Equations('''
                          
                                
-                            dr_ampa/dt = ((tau_decay_ampa  / tau_rise_ampa) ** (tau_rise_ampa / (tau_decay_ampa  - tau_rise_ampa))*x_r_ampa-r_ampa)/tau_rise_ampa : 1 (clock-driven)
-                            dx_r_ampa/dt = -x_r_ampa/tau_decay_ampa                                                  : 1 (clock-driven)
+                            dr_ampa/dt =-r_ampa/tau_decay_ampa : 1 (clock-driven)
                             
                             dr_nmda/dt = ((tau_decay_nmda / tau_rise_nmda) ** (tau_rise_nmda / (tau_decay_nmda - tau_rise_nmda))*x_r_nmda-r_nmda)/tau_rise_nmda : 1 (clock-driven)
                             dx_r_nmda/dt = -x_r_nmda/tau_decay_nmda   : 1 (clock-driven)
@@ -672,7 +689,7 @@ def Synapse_wrapper(Params):
                         
                         
     pre += '''           
-            x_r_ampa +=  (alpha_ampa_new * rho * Y_T * r_S * Xi_)/(alpha_ampa_new * rho * Y_T * r_S * Xi_ + beta_ampa_new) 
+            r_ampa +=  (alpha_ampa_new * rho * Y_T * r_S * Xi_)/(alpha_ampa_new * rho * Y_T * r_S * Xi_ + beta_ampa_new) 
             x_r_nmda +=  (alpha_nmda_new * rho * Y_T * r_S * Xi_)/(alpha_nmda_new * rho * Y_T * r_S * Xi_ + beta_nmda_new) 
            
                     '''          
@@ -695,11 +712,15 @@ def Synapse_wrapper(Params):
     # ----------- Network build -----------
     
     params_NN = get_Neuronparam(sigma = 0*mV)
-    params_Syn = get_Synparam(synapse = 'neutral', alpha_ampa_new = alpha_t * 1/mmole * 1/ms, beta_ampa_new = beta_t * 1/ms,Xi_=Xi_,
-                             tau_rise_ampa = rise*ms, tau_decay_ampa = decay*ms)
+    
+    
+    if syn_type == 'ampa':
+        params_Syn = get_Synparam(synapse = 'neutral', alpha_ampa_new = alpha_t * 1/mmole * 1/ms, beta_ampa_new = beta_t * 1/ms,Xi_=Xi_,tau_decay_ampa = 2*ms)
    
 
-    
+    elif syn_type == 'nmda':
+        params_Syn = get_Synparam(synapse = 'neutral', alpha_nmda_new = alpha_t * 1/mmole * 1/ms, beta_nmda_new = beta_t * 1/ms,Xi_=Xi_,
+                             tau_rise_nmda = rise*ms, tau_decay_nmda = decay*ms)
     
     poisson_rate = 1*Hz
     P = PoissonGroup(1, poisson_rate)
@@ -727,7 +748,7 @@ def Synapse_wrapper(Params):
     # --- Run Simulation ---
     run(simtime)
      
-     
+    #TODO: change 
     # --- Extract traces ---
     Simulated_trace = state_monitor[0].I_ampa 
     
@@ -772,7 +793,7 @@ def Synapse_wrapper(Params):
     
   
     # ---------- Build the Loss function ----------
-    b_factor = 0.2
+    b_factor = 0.5
     Loss = b_factor*(MSE / Norm_factor/amp) + (1-b_factor)* Area_discrepancy
          
         
@@ -838,25 +859,38 @@ def get_newspace(res_gp,pers):
     
     # Define the new space
     
-    # Set HPs' range
-    Xi_ = Real(lower_bounds[0],upper_bounds[0],name='Syn_efficacy')
-    Rise = Real(lower_bounds[1],upper_bounds[1],name='Rise Time')
-    Decay = Real(lower_bounds[2],upper_bounds[2],name='Decay Time')
-    Alpha = Real(lower_bounds[3],upper_bounds[3],prior='log-uniform',name = 'Alpha')
-    Beta  = Real(lower_bounds[4],upper_bounds[4],'log-uniform', name = 'Beta')
+    if syn_type == 'nmda':
+        # Set HPs' range
+        Xi_ = Real(lower_bounds[0],upper_bounds[0],name='Syn_efficacy')
+        Rise = Real(lower_bounds[1],upper_bounds[1],name='Rise Time')
+        Decay = Real(lower_bounds[2],upper_bounds[2],name='Decay Time')
+        Alpha = Real(lower_bounds[3],upper_bounds[3],prior='log-uniform',name = 'Alpha')
+        Beta  = Real(lower_bounds[4],upper_bounds[4],'log-uniform', name = 'Beta')
     
+    elif syn_type == 'ampa':
+        # Set HPs' range
+        Xi_ = Real(lower_bounds[0],upper_bounds[0],name='Syn_efficacy')
+        Alpha = Real(lower_bounds[3],upper_bounds[3],prior='log-uniform',name = 'Alpha')
+        Beta  = Real(lower_bounds[4],upper_bounds[4],'log-uniform', name = 'Beta')
     
 
 
-
-
-    space = [Xi_,
-             Rise,
-             Decay,
-             Alpha,
-             Beta
-        
-        ]
+    if syn_type == 'nmda':
+        # -------- NMDA --------
+        space = [Xi_,
+                 Rise,
+                 Decay,
+                 Alpha,
+                 Beta
+            
+            ]
+    elif syn_type == 'ampa':
+        # -------- AMPA --------
+        space = [Xi_,
+                 Alpha,
+                 Beta
+            
+            ]
     
     return space
 
@@ -872,31 +906,48 @@ from skopt import gp_minimize
 
 # --------------------- FIRST RANDOM SEARCH --------------------- 
 
-# Set the parameters' range
-Xi_ = Real(0.7,1,name='Syn_efficacy')
-Rise = Real(1,2,name='Rise Time')
-Decay = Real(8,10,name='Decay Time')
-Alpha = Real(0.001,100,prior='log-uniform',name = 'Alpha')
-Beta  = Real(0.001,10,'log-uniform', name = 'Beta')
+syn_type = 'ampa'
 
-
-
-
-space = [Xi_,
-         Rise,
-         Decay,
-         Alpha,
-         Beta
+if syn_type == 'nmda':
+# ------------ NMDA ------------
+    # Set the parameters' range
+    Xi_ = Real(0.7,1,name='Syn_efficacy')
+    Rise = Real(1,2,name='Rise Time')
+    Decay = Real(8,10,name='Decay Time')
+    Alpha = Real(0.001,100,prior='log-uniform',name = 'Alpha')
+    Beta  = Real(0.001,10,'log-uniform', name = 'Beta')
     
-    ]
+    
+    
+    
+    space = [Xi_,
+             Rise,
+             Decay,
+             Alpha,
+             Beta
+        
+        ]
 
-
+elif syn_type == 'ampa':
+# ------------ AMPA ------------# Set the parameters' range
+    Xi_ = Real(0.7,1,name='Syn_efficacy')
+    Alpha = Real(0.001,100,prior='log-uniform',name = 'Alpha')
+    Beta  = Real(0.001,10,'log-uniform', name = 'Beta')
+    
+    
+    
+    
+    space = [Xi_,
+             Alpha,
+             Beta
+        
+        ]
 
 
 
 # ------- Run the gp -------
 
-res_gp = gp_minimize(Synapse_wrapper, space, n_calls=100, random_state=0,verbose=True)
+res_gp = gp_minimize(Synapse_wrapper, space, n_calls=50, random_state=0,verbose=True)
 
   
 # ------- Plot the Partial Dependence Plots (PDP) -------
@@ -960,7 +1011,7 @@ plt.show()
     #%%
     
 # Params = [res_gp3.x[0],res_gp3.x[1],res_gp3.x[2],res_gp3.x[3],res_gp3.x[4]]  
-Params = [res_gp.x[0],res_gp.x[1],res_gp.x[2],res_gp.x[3],res_gp.x[4]] 
+Params = [res_gp.x[0],res_gp.x[1],res_gp.x[2]] 
 # Params = [0.5,1,10,res_gp.x[3],res_gp.x[4]] 
  
 Sim_timeseries,reference  = Synapse_simulation(Params)
