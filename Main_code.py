@@ -379,4 +379,3 @@ ax3.set_xlabel('Time [s]')
 # plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
 
 show()
-
