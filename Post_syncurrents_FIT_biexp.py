@@ -1,3 +1,10 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Jul 23 15:00:05 2025
+
+@author: Admin
+"""
+
 """
 Created on Thu Jul  3 16:40:23 2025
 
@@ -200,22 +207,32 @@ def Synapse_simulation(Params):
     
     # ----------- UPGRADED MODEL -------------
     
+   
     
     eqs_Syn += Equations('''
                          
-                         
-                            dr_ampa/dt = alpha_ampa_new * Y_S * (1 - r_ampa) - beta_ampa_new * r_ampa: 1 (clock-driven)
-                            dr_nmda/dt =  alpha_nmda_new * Y_S * (1 - r_nmda) - beta_nmda_new * r_nmda : 1 (clock-driven)
+                               
+                            dr_ampa/dt = ((tau_decay_ampa  / tau_rise_ampa) ** (tau_rise_ampa / (tau_decay_ampa  - tau_rise_ampa))*x_r_ampa-r_ampa)/tau_rise_ampa : 1 (clock-driven)
+                            dx_r_ampa/dt = -x_r_ampa/tau_decay_ampa                                                  : 1 (clock-driven)
                             
-              
+                            dr_nmda/dt = ((tau_decay_nmda / tau_rise_nmda) ** (tau_rise_nmda / (tau_decay_nmda - tau_rise_nmda))*x_r_nmda-r_nmda)/tau_rise_nmda : 1 (clock-driven)
+                            dx_r_nmda/dt = -x_r_nmda/tau_decay_nmda   : 1 (clock-driven)
                             
+                           
                             r_ampa_tot_post = r_ampa : 1 (summed)
                             r_nmda_tot_post = r_nmda : 1 (summed)
                          
                          
                         ''')
                         
+                        
+    pre += '''           
+            x_r_ampa +=  (alpha_ampa_new * rho * Y_T * r_S * Xi_)/(alpha_ampa_new * rho * Y_T * r_S * Xi_ + beta_ampa_new) 
+            x_r_nmda +=  (alpha_nmda_new * rho * Y_T * r_S * Xi_)/(alpha_nmda_new * rho * Y_T * r_S * Xi_ + beta_nmda_new) 
+           
+                    '''          
 
+    
     
     eqs_NN += Equations(''' 
                         I_syn =  I_ampa + I_nmda: amp
@@ -234,8 +251,8 @@ def Synapse_simulation(Params):
     # ----------- Network build -----------
     
     params_NN = get_Neuronparam(sigma = 0*mV)
-    params_Syn = get_Synparam(synapse = 'neutral', alpha_ampa_new = alpha_t * 1/mole * 1/second, beta_ampa_new = beta_t * 1/second,Xi_=Xi_,
-                              tau_rise_ampa = rise, tau_decay_ampa = decay)
+    params_Syn = get_Synparam(synapse = 'neutral', alpha_ampa_new = alpha_t * 1/mmole * 1/ms, beta_ampa_new = beta_t * 1/ms,Xi_=Xi_,
+                             tau_rise_ampa = rise*ms, tau_decay_ampa = decay*ms)
    
 
     
@@ -655,8 +672,8 @@ def Synapse_wrapper(Params):
                         
                         
     pre += '''           
-            x_r_ampa +=  (alpha_ampa_kin * rho * Y_T * r_S * Xi_)/(alpha_ampa_kin * rho * Y_T * r_S * Xi_ + beta_ampa_kin) 
-            x_r_nmda +=  (alpha_nmda_kin * rho * Y_T * r_S * Xi_)/(alpha_nmda_kin * rho * Y_T * r_S * Xi_ + beta_nmda_kin) 
+            x_r_ampa +=  (alpha_ampa_new * rho * Y_T * r_S * Xi_)/(alpha_ampa_new * rho * Y_T * r_S * Xi_ + beta_ampa_new) 
+            x_r_nmda +=  (alpha_nmda_new * rho * Y_T * r_S * Xi_)/(alpha_nmda_new * rho * Y_T * r_S * Xi_ + beta_nmda_new) 
            
                     '''          
 
@@ -678,8 +695,8 @@ def Synapse_wrapper(Params):
     # ----------- Network build -----------
     
     params_NN = get_Neuronparam(sigma = 0*mV)
-    params_Syn = get_Synparam(synapse = 'neutral', alpha_ampa_new = alpha_t * 1/mole * 1/second, beta_ampa_new = beta_t * 1/second,Xi_=Xi_,
-                             tau_rise_ampa = rise, tau_decay_ampa = decay)
+    params_Syn = get_Synparam(synapse = 'neutral', alpha_ampa_new = alpha_t * 1/mmole * 1/ms, beta_ampa_new = beta_t * 1/ms,Xi_=Xi_,
+                             tau_rise_ampa = rise*ms, tau_decay_ampa = decay*ms)
    
 
     
@@ -740,11 +757,26 @@ def Synapse_wrapper(Params):
     # Normalize by the observed data's range 
     # Norm_factor = np.max(Ref_data_) - np.min(Ref_data_)
     Norm_factor = np.std(Ref_data_/pA)
+    
+    
+    # ----------- AREA UNDER THE CURVE -----------
+    
+    support = np.linspace(0,End_idx-Start_idx,End_idx-Start_idx)
+    
+    Area_ref = np.trapz(Ref_data_,support)
+    Area_sim = np.trapz(Simulated_trace_,support)
+    
+    Area_discrepancy = ((Area_ref - Area_sim/nA)**2) # To both penalize the outliers and to 
+                                                # keep abs values
+    
+    
   
-    # ---------- Retrun the  NMRE ----------
+    # ---------- Build the Loss function ----------
+    b_factor = 0.2
+    Loss = b_factor*(MSE / Norm_factor/amp) + (1-b_factor)* Area_discrepancy
          
         
-    return MSE / Norm_factor/amp
+    return Loss
 
 
 def get_newspace(res_gp,pers):
@@ -760,7 +792,8 @@ def get_newspace(res_gp,pers):
         space = [Xi_,
                 rise,
                 decay,
-                alpha ]
+                alpha 
+                beta]
     
     
     '''
@@ -806,7 +839,7 @@ def get_newspace(res_gp,pers):
     # Define the new space
     
     # Set HPs' range
-    Xi_ = Real(lower_bounds[0],upper_bounds[0],name='Vescicle [Glu]')
+    Xi_ = Real(lower_bounds[0],upper_bounds[0],name='Syn_efficacy')
     Rise = Real(lower_bounds[1],upper_bounds[1],name='Rise Time')
     Decay = Real(lower_bounds[2],upper_bounds[2],name='Decay Time')
     Alpha = Real(lower_bounds[3],upper_bounds[3],prior='log-uniform',name = 'Alpha')
@@ -835,18 +868,16 @@ def get_newspace(res_gp,pers):
 
 
 
-
-
 from skopt import gp_minimize
 
 # --------------------- FIRST RANDOM SEARCH --------------------- 
 
 # Set the parameters' range
-Xi_ = Real(0.5,1,name='Vescicle [Glu]')
-Rise = Real(2,10,name='Rise Time')
-Decay = Real(2,100,name='Decay Time')
-Alpha = Real(1e5,1e10,prior='log-uniform',name = 'Alpha')
-Beta  = Real(1,1e3,'log-uniform', name = 'Beta')
+Xi_ = Real(0.7,1,name='Syn_efficacy')
+Rise = Real(1,2,name='Rise Time')
+Decay = Real(8,10,name='Decay Time')
+Alpha = Real(0.001,100,prior='log-uniform',name = 'Alpha')
+Beta  = Real(0.001,10,'log-uniform', name = 'Beta')
 
 
 
@@ -865,7 +896,7 @@ space = [Xi_,
 
 # ------- Run the gp -------
 
-res_gp = gp_minimize(Synapse_wrapper, space, n_calls=120, random_state=0,verbose=True)
+res_gp = gp_minimize(Synapse_wrapper, space, n_calls=100, random_state=0,verbose=True)
 
   
 # ------- Plot the Partial Dependence Plots (PDP) -------
@@ -887,14 +918,14 @@ plt.show()
 
 # The search space is narrowed in base of the range covered by the first 10% of best points.
 # The space covered by Beta parameter is left untouched and optimized later on.
-pers = 20/100
+pers = 10/100
 Narrowed_space = get_newspace(res_gp,pers)
 
 
 
 #%% 
 # --------------------- SECOND RANDOM SEARCH ---------------------     
-res_gp2 = gp_minimize(Synapse_wrapper, Narrowed_space, n_calls=120, random_state=0,verbose=True)    
+res_gp2 = gp_minimize(Synapse_wrapper, Narrowed_space, n_calls=60, random_state=0,verbose=True)    
 
 
 # --- PLOT ---
@@ -908,14 +939,14 @@ plt.show()
 
 # The search space is narrowed in base of the range covered by the first 10% of best points.
 # The space covered by Beta parameter is left untouched and optimized later on.
-pers = 20/100
+pers = 10/100
 Narrowed_space2 = get_newspace(res_gp2,pers)
 
 
 
 #%% 
 # --------------------- SECOND RANDOM SEARCH ---------------------     
-res_gp3 = gp_minimize(Synapse_wrapper, Narrowed_space2, n_calls=120, random_state=0,verbose=True)    
+res_gp3 = gp_minimize(Synapse_wrapper, Narrowed_space2, n_calls=50, random_state=0,verbose=True)    
 
 
 # --- PLOT ---
@@ -924,55 +955,13 @@ plt.figure()
 plot_objective(res_gp3,n_points=20)
 plt.show()  
 
-#%%
-# ----------- Step 5 ------------
-# Choose median or best HP values but the ridge
 
-
-
-
-def HP_choice(res_gp2,method,n_hp,xbest):
     
-    '''
-    The function chooses the best set of n_hp parameters given the method opted.
-    The method used should depend on the type of distribution arises in the parameter space
-    from the x% best values.
-    
-    method: 'median', 'best','automatic'
-    
-    xbest: persentage (0-1) of best points in the HP space used to declare the best values. 
-    
-    n_hp: number of hyperparameters to select. It follows the HP order firmly set 
-        throughout all the code. 
-        Space parameters are set as follow:
-            space = [SR,
-                     LR,
-                     W,
-                     Win,
-                     Beta
-                         ]
-         
-    
-    
-    '''
-
-    # --- Best points ---
-    n_bp = np.int16(len(res_gp.func_vals[:]) * pers)
-    
-    
-    
-    # --- Objective Function Evaluations ---
-    # Draw out and sort them.
-    
-    # np.argsort() does not sort the array itself. Instead, it returns an array of integer indices that, 
-    # if used to index the original array, would produce a sorted version of the array.
-    Sorting_idx = np.argsort(res_gp.func_vals[:])
-    
-    # Sort function values
-    Sorted_funcval = res_gp.func_vals[Sorting_idx]
     #%%
     
-Params = [res_gp3.x[0],res_gp3.x[1],res_gp3.x[2],res_gp3.x[3],res_gp3.x[4]]  
+# Params = [res_gp3.x[0],res_gp3.x[1],res_gp3.x[2],res_gp3.x[3],res_gp3.x[4]]  
+Params = [res_gp.x[0],res_gp.x[1],res_gp.x[2],res_gp.x[3],res_gp.x[4]] 
+# Params = [0.5,1,10,res_gp.x[3],res_gp.x[4]] 
  
 Sim_timeseries,reference  = Synapse_simulation(Params)
 t_Vec = np.linspace(0,len(Sim_timeseries),len(Sim_timeseries))
