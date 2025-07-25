@@ -97,13 +97,13 @@ oscillations = 'AM'
 # ------------------------- PARAMETERS -------------------------
 
 # --------- SIMULATION -----------
-simtime = 2 * second               # simulation time
+simtime = 40 * second               # simulation time
 # transient = 3 * second              # time omitted as transient
 sed = 39                             # random number seed
 devices.device.seed(sed)            # set the seed for all the random number realisations
 
 
-Simulated_network = 'Neuronal' # Astrocytic/Neuronal/Full
+Simulated_network = 'Astrocytic' # Astrocytic/Neuronal/Full
 
 
 # --------- NEURON -----------
@@ -196,10 +196,9 @@ elif Simulated_network == 'Neuronal':
 elif Simulated_network == 'Astrocytic':   
     
     # --------- ASTROCYTE -----------
-    A,GJ = Astrocyte_Group(N_astro,ADJ_astro)
+    Astro, GJ,P,Glu_Input = Astrocyte_Group(Na,ADJ_astro,Simulated_network)
     
-    # Add some external stimulation through Y_bias
-    A.Y_bias[0] = 1 * mmolar 
+    
     
     
     
@@ -220,11 +219,13 @@ recording_stringGT = ['G_A','x_A']
 
 
 if Simulated_network == 'Full':
+    
     MonitorS = StateMonitor(S, recording_stringS, record=True)
-    MonitorA = StateMonitor(A, recording_stringA, record=True)
+    MonitorA = StateMonitor(Astro, recording_stringA, record=True)
     MonitorN = StateMonitor(N, recording_stringN, record=True)
     SpikesN = SpikeMonitor(N)
     SpikesA = SpikeMonitor(A)
+    
 
 elif Simulated_network == 'Neuronal':
     MonitorS = StateMonitor(S, recording_stringS, record=True)
@@ -233,8 +234,10 @@ elif Simulated_network == 'Neuronal':
     
     
 elif Simulated_network == 'Astrocytic': 
-    MonitorA = StateMonitor(A, recording_stringA, record=True)
-    SpikesA = SpikeMonitor(A)
+    MonitorG = StateMonitor(Glu_Input, ['Y_bias_in'], record=True)
+    MonitorA = StateMonitor(Astro, recording_stringA, record=True)
+    SpikesP = SpikeMonitor(Astro)
+    SpikesP = SpikeMonitor(P)
 
 
 # --- Collect and add monitors ---
@@ -377,5 +380,54 @@ ax3.set_ylabel('A')
 ax3.set_xlabel('Time [s]')
 # plt.figure(dpi=200)
 # plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
+
+show()
+
+#%%
+
+# ASTROCYTIC NETWORK
+
+color1 = [0.4196078431372549, 0.47843137254901963, 0.5607843137254902] 
+color2 =[0.9686274509803922, 0.9333333333333333, 0.4980392156862745]
+color3 = [0.7411764705882353, 0.30980392156862746, 0.4235294117647059]
+
+fig, (ax1, ax2, ax3) = plt.subplots(3, 1) # Added figsize for better viewing
+
+maxC = np.max(MonitorA[0].C)
+maxI = np.max(MonitorA[0].I)
+ax1.plot(MonitorA.t/second, MonitorA[0].C/maxC, 'k', label='Calcium',color=color1)
+ax1.plot(MonitorA.t/second, MonitorA[0].I/maxI, 'r', label='IP_3',color=color2)
+ax1.plot(MonitorA.t/second, MonitorA[0].Gamma_A, 'b', label='Fraq. bounded receptors',color=color3)
+# ax1.plot(SpikesN.t/second, SpikesN[0].i+1e-11, '.g', ms=5, label='Spikes') # Or a more descriptive label like 'Neuron SpikesN'
+ax1.set_ylabel('A')
+ax1.legend()
+
+
+ax2.plot(MonitorA.t/second, MonitorA[1].C/maxC, 'k',color=color1)
+ax2.plot(MonitorA.t/second, MonitorA[1].I/maxI, 'r',color=color2)
+ax2.plot(MonitorA.t/second, MonitorA[1].Gamma_A, 'b',color=color3)
+# ax2.plot(SpikesN.t/second,SpikesN[1].i+1e-11,'.g', ms=5)
+ax2.set_ylabel('A')
+
+
+ax3.plot(MonitorA.t/second, MonitorA[2].C/maxC, 'k',color=color1)
+ax3.plot(MonitorA.t/second, MonitorA[2].I/maxI, 'r',color=color2)
+ax3.plot(MonitorA.t/second, MonitorA[2].Gamma_A, 'b',color=color3)
+# ax3.plot(SpikesN.t/second,SpikesN[2].i+1e-11,'.g', ms=5)
+# fig.show()
+ax3.set_ylabel('')
+ax3.set_xlabel('Time [s]')
+# plt.figure(dpi=200)
+# plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
+
+show()
+
+
+#%%
+
+fig.show()
+
+plt.figure(dpi=200)
+plt.plot(SpikesA.t / second, SpikesA.i, '.k', ms=0.7)
 
 show()
