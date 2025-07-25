@@ -95,9 +95,11 @@ def Synapse_simulation(Params):
     # ----------- Load and preprocess data -----------
     # Upload the reference data that we're trying to fit.
     
+    #TODO:change 
+    syn_type = 'nmda'
     # Load data
     os.chdir(r'C:\Users\Admin\Desktop\CURRENTS')
-    Ref_data = np.squeeze(pd.read_csv('I_AMPA.csv',header=None).to_numpy())
+    Ref_data = np.squeeze(pd.read_csv('I_NMDA.csv',header=None).to_numpy())
     
     
     # ---------- Initial params -----------
@@ -111,8 +113,10 @@ def Synapse_simulation(Params):
    
     
     # Tune the trace extracion window
-    Pre_window = 50*ms
-    Post_window = 100*ms
+    #TODO:change window
+    # Tune the trace extracion window
+    Pre_window = 20*ms
+    Post_window = 300*ms
     
     
     
@@ -123,11 +127,11 @@ def Synapse_simulation(Params):
     
    # ---- Paramter extraction ----
     if syn_type == 'nmda':
-        Xi_ = Params[0]
-        rise = Params[1]
-        decay = Params[2]
-        alpha_t = Params[3]
-        beta_t = Params[4]
+        
+        rise = Params[0]
+        decay = Params[1]
+        alpha_t = Params[2]
+        beta_t = Params[3]
     elif syn_type == 'ampa':
         Xi_ = Params[0]
         alpha_t = Params[1]
@@ -258,11 +262,11 @@ def Synapse_simulation(Params):
     
     
     if syn_type == 'ampa':
-        params_Syn = get_Synparam(synapse = 'neutral', alpha_ampa_new = alpha_t * 1/mmole * 1/ms, beta_ampa_new = beta_t * 1/ms,Xi_=Xi_,tau_decay_ampa = 2*ms)
+        params_Syn = get_Synparam(synapse = 'neutral', alpha_ampa_new = alpha_t * 1/mmole * 1/ms, beta_ampa_new = beta_t * 1/ms,Xi_=0.8,tau_decay_ampa = 2*ms)
    
 
     elif syn_type == 'nmda':
-        params_Syn = get_Synparam(synapse = 'neutral', alpha_nmda_new = alpha_t * 1/mmole * 1/ms, beta_nmda_new = beta_t * 1/ms,Xi_=Xi_,
+        params_Syn = get_Synparam(synapse = 'neutral', alpha_nmda_new = alpha_t * 1/mmole * 1/ms, beta_nmda_new = beta_t * 1/ms,Xi_=0.8,
                              tau_rise_nmda = rise*ms, tau_decay_nmda = decay*ms)
     
     
@@ -293,8 +297,8 @@ def Synapse_simulation(Params):
     # --- Run Simulation ---
     run(simtime)
      
-     
-    Simulated_trace = state_monitor[0].I_ampa 
+    #TODO:change 
+    Simulated_trace = state_monitor[0].I_nmda
     
     # --- Extract window ---
     
@@ -323,7 +327,7 @@ def Synapse_simulation(Params):
 
 
 
-def get_Neuronparam(Adaptation=False,delta = 0.5,**kwargs):
+def get_Neuronparam(Adaptation=False,delta = 0,**kwargs):
     
     
     Neuron_area =  300*umetre**2
@@ -356,8 +360,10 @@ def get_Neuronparam(Adaptation=False,delta = 0.5,**kwargs):
      # Synaptic contribution
      'we_AMPA' : 0.5, # Relative contribution of AMPA channels to the total syn weight
      'we_NMDA' : 0.5, # Relative contribution of NMDA channels to the total syn weight
-     'g_ampa': (1 + delta) * nS, # Note: if delta is a direct value, not a key lookup, it should be 0.6
-     'g_nmda': (1 - delta) * nS, # Note: if delta is a direct value, not a key lookup, it should be 0.6
+    'g_ampa': (1 + delta) * nS, # Note: if delta is a direct value, not a key lookup, it should be 0.6
+    'g_nmda': (1 - delta) * nS, # Note: if delta is a direct value, not a key lookup, it should be 0.6
+      # 'g_ampa': (25) * nS, # Note: if delta is a direct value, not a key lookup, it should be 0.6
+      # 'g_nmda': (25) * nS, # Note: if delta is a direct value, not a key lookup, it should be 0.6
      'E_ampa': 0 * mV,
      'E_nmda': 0 * mV,
     
@@ -472,7 +478,7 @@ def get_Synparam(synapse='depressing',**kwargs):
         
         
         # Syn efficacy
-        'Xi_': 0.75,
+        'Xi_': 0.8,
         
         
        
@@ -554,14 +560,14 @@ def Synapse_wrapper(Params):
     
     
     #TODO:change
-    syn_type = 'ampa'
+    syn_type = 'nmda'
     # ----------- Load and preprocess data -----------
     # Upload the reference data that we're trying to fit.
     
     # Load data
     #TODO:change
     os.chdir(r'C:\Users\Admin\Desktop\CURRENTS')
-    Ref_data = np.squeeze(pd.read_csv('I_AMPA.csv',header=None).to_numpy())
+    Ref_data = np.squeeze(pd.read_csv('I_NMDA.csv',header=None).to_numpy())
     
     
     # ---------- Initial params -----------
@@ -569,14 +575,14 @@ def Synapse_wrapper(Params):
 
 
     # simulation parameters
-    simtime = 6 * second               # simulation time
+    simtime = 4 * second               # simulation time
     sed = 39                             # random number seed
     devices.device.seed(sed)            # set the seed for all the random number realisations
    
-    
+    #TODO:change window
     # Tune the trace extracion window
-    Pre_window = 50*ms
-    Post_window = 100*ms
+    Pre_window = 20*ms
+    Post_window = 300*ms
     
     
     
@@ -584,11 +590,11 @@ def Synapse_wrapper(Params):
     
     # ---- Paramter extraction ----
     if syn_type == 'nmda':
-        Xi_ = Params[0]
-        rise = Params[1]
-        decay = Params[2]
-        alpha_t = Params[3]
-        beta_t = Params[4]
+        
+        rise = Params[0]
+        decay = Params[1]
+        alpha_t = Params[2]
+        beta_t = Params[3]
     elif syn_type == 'ampa':
         Xi_ = Params[0]
         alpha_t = Params[1]
@@ -715,11 +721,11 @@ def Synapse_wrapper(Params):
     
     
     if syn_type == 'ampa':
-        params_Syn = get_Synparam(synapse = 'neutral', alpha_ampa_new = alpha_t * 1/mmole * 1/ms, beta_ampa_new = beta_t * 1/ms,Xi_=Xi_,tau_decay_ampa = 2*ms)
+        params_Syn = get_Synparam(synapse = 'neutral', alpha_ampa_new = alpha_t * 1/mmole * 1/ms, beta_ampa_new = beta_t * 1/ms,Xi_=0.8,tau_decay_ampa = 2*ms)
    
 
     elif syn_type == 'nmda':
-        params_Syn = get_Synparam(synapse = 'neutral', alpha_nmda_new = alpha_t * 1/mmole * 1/ms, beta_nmda_new = beta_t * 1/ms,Xi_=Xi_,
+        params_Syn = get_Synparam(synapse = 'neutral', alpha_nmda_new = alpha_t * 1/mmole * 1/ms, beta_nmda_new = beta_t * 1/ms,Xi_=0.8,
                              tau_rise_nmda = rise*ms, tau_decay_nmda = decay*ms)
     
     poisson_rate = 1*Hz
@@ -750,7 +756,7 @@ def Synapse_wrapper(Params):
      
     #TODO: change 
     # --- Extract traces ---
-    Simulated_trace = state_monitor[0].I_ampa 
+    Simulated_trace = state_monitor[0].I_nmda 
     
     # --- Extract window ---
     
@@ -810,7 +816,7 @@ def get_newspace(res_gp,pers):
     pers = between 0 and 1  
     
     Space parameters are set as follow:
-        space = [Xi_,
+        space = [
                 rise,
                 decay,
                 alpha 
@@ -861,11 +867,11 @@ def get_newspace(res_gp,pers):
     
     if syn_type == 'nmda':
         # Set HPs' range
-        Xi_ = Real(lower_bounds[0],upper_bounds[0],name='Syn_efficacy')
-        Rise = Real(lower_bounds[1],upper_bounds[1],name='Rise Time')
-        Decay = Real(lower_bounds[2],upper_bounds[2],name='Decay Time')
-        Alpha = Real(lower_bounds[3],upper_bounds[3],prior='log-uniform',name = 'Alpha')
-        Beta  = Real(lower_bounds[4],upper_bounds[4],'log-uniform', name = 'Beta')
+        
+        Rise = Real(lower_bounds[0],upper_bounds[0],name='Rise Time')
+        Decay = Real(lower_bounds[1],upper_bounds[1],name='Decay Time')
+        Alpha = Real(lower_bounds[2],upper_bounds[2],prior='log-uniform',name = 'Alpha')
+        Beta  = Real(lower_bounds[3],upper_bounds[3],'log-uniform', name = 'Beta')
     
     elif syn_type == 'ampa':
         # Set HPs' range
@@ -877,7 +883,7 @@ def get_newspace(res_gp,pers):
 
     if syn_type == 'nmda':
         # -------- NMDA --------
-        space = [Xi_,
+        space = [
                  Rise,
                  Decay,
                  Alpha,
@@ -905,22 +911,22 @@ def get_newspace(res_gp,pers):
 from skopt import gp_minimize
 
 # --------------------- FIRST RANDOM SEARCH --------------------- 
-
-syn_type = 'ampa'
+#TODO=change
+syn_type = 'nmda'
 
 if syn_type == 'nmda':
 # ------------ NMDA ------------
     # Set the parameters' range
-    Xi_ = Real(0.7,1,name='Syn_efficacy')
+
     Rise = Real(1,2,name='Rise Time')
-    Decay = Real(8,10,name='Decay Time')
-    Alpha = Real(0.001,100,prior='log-uniform',name = 'Alpha')
-    Beta  = Real(0.001,10,'log-uniform', name = 'Beta')
+    Decay = Real(99,100,name='Decay Time')
+    Alpha = Real(0.001,2,prior='log-uniform',name = 'Alpha')
+    Beta  = Real(0.001,2,'log-uniform', name = 'Beta')
     
     
     
     
-    space = [Xi_,
+    space = [
              Rise,
              Decay,
              Alpha,
@@ -930,9 +936,9 @@ if syn_type == 'nmda':
 
 elif syn_type == 'ampa':
 # ------------ AMPA ------------# Set the parameters' range
-    Xi_ = Real(0.7,1,name='Syn_efficacy')
-    Alpha = Real(0.001,100,prior='log-uniform',name = 'Alpha')
-    Beta  = Real(0.001,10,'log-uniform', name = 'Beta')
+    Xi_ = Real(0.8,name='Syn_efficacy')
+    Alpha = Real(0.5,4,name = 'Alpha')
+    Beta  = Real(0.01,2, name = 'Beta')
     
     
     
@@ -944,10 +950,10 @@ elif syn_type == 'ampa':
         ]
 
 
-
+#%
 # ------- Run the gp -------
 
-res_gp = gp_minimize(Synapse_wrapper, space, n_calls=50, random_state=0,verbose=True)
+res_gp = gp_minimize(Synapse_wrapper, space, n_calls=150, random_state=0,verbose=True)
 
   
 # ------- Plot the Partial Dependence Plots (PDP) -------
@@ -969,7 +975,7 @@ plt.show()
 
 # The search space is narrowed in base of the range covered by the first 10% of best points.
 # The space covered by Beta parameter is left untouched and optimized later on.
-pers = 10/100
+pers = 20/100
 Narrowed_space = get_newspace(res_gp,pers)
 
 
@@ -1009,10 +1015,10 @@ plt.show()
 
     
     #%%
-    
-# Params = [res_gp3.x[0],res_gp3.x[1],res_gp3.x[2],res_gp3.x[3],res_gp3.x[4]]  
-Params = [res_gp.x[0],res_gp.x[1],res_gp.x[2]] 
-# Params = [0.5,1,10,res_gp.x[3],res_gp.x[4]] 
+%matplotlib   
+Params = [res_gp.x[0],res_gp.x[1],res_gp.x[2],res_gp.x[3]]  
+# Params = [0.5,res_gp.x[2],res_gp.x[1]] 
+# Params = [0.4,2,1]
  
 Sim_timeseries,reference  = Synapse_simulation(Params)
 t_Vec = np.linspace(0,len(Sim_timeseries),len(Sim_timeseries))
