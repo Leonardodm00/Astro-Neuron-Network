@@ -77,7 +77,7 @@ def unfold_ADJ(ADJ):
         
         
         
-    return np.squeeze(np.array(Source)), np.squeeze(np.array(Target))
+    return np.concatenate(Source), np.concatenate(Target)
         
 
 
@@ -139,18 +139,19 @@ def get_Astroparam(oscillations = 'AM',**kwargs):
         'G_T': 200.*mmole,         # Total vesicular gliotransmitter
         'rho_e': 6.5e-4,           # Ratio of astrocytic vesicle volume/ESS volume
         'Omega_e': 5./second,      # Gliotransmitter clearance rate (think about distributed release)
+        'spill_over': 0.75,         # Spill over parameter
       
     }
 
     if oscillations == 'AM':
-        parameters.update({
+        params.update({
             'K_P': 0.1*umole,
             'O_delta': 0.01*umole/second,
             'Omega_5P': 0.1/second,
             'I_bias': 0.8*umole
         })
     elif oscillations == 'FM':
-        parameters.update({
+        params.update({
             'K_P': 0.05*umole,
             'O_delta': 0.05*umole/second,
             'Omega_5P': 0.1/second,
@@ -258,7 +259,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         # U_0__star (see below)    # Basal synaptic release probability
         'Omega_c': 40./second,     # Neurotransmitter clearance rate
         'rho': 0.005,            # synaptic vesicle-to-extracellular space volume ratio
-        'Y_T': 300.*mmole,         # Total neurotransmitter synaptic resource (in terms of vesicular concentration)
+        'Y_T': 500.*mmole,         # Total neurotransmitter synaptic resource (in terms of vesicular concentration)
         # --- Presynaptic receptors
         'O_G': 1.5/umole/second,   # Agonist binding rate (activating)
         'Omega_G': 0.5/(60*second),# Agonist release rate (inactivating)
@@ -312,7 +313,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         'tau_decay_nmda': 100*ms,
         
         # Synaptic efficacy
-        'Xi': 0.75,
+        'Xi': 0.8,
         
         
         
@@ -863,42 +864,42 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
 # -------------- ASTROCYTE GROUP --------------
 
 
-def Astrocyte_Group(N_astro,ADJ):
+def Astrocyte_Group(N_astro,ADJ,Simulated_network):
 # ------ Astrocyte core equations ------
 
     eqs_A = Equations('''
-       # Fraction of activated astrocyte receptors:
-       dGamma_A/dt = O_N * (Y_bias+Y_extra)**n * (1 - Gamma_A) -
-                     Omega_N*(1 + zeta * C/(C + K_KC)) * Gamma_A : 1 (clock-driven)
+        # Fraction of activated astrocyte receptors:
+        dGamma_A/dt = O_N * (Y_bias+Y_extra*spill_over)**n * (1 - Gamma_A) -
+                      Omega_N*(1 + zeta * C/(C + K_KC)) * Gamma_A : 1 
     
-       # IP_3 dynamics:
-       dI/dt = O_beta * Gamma_A + O_delta/(1 + I/K_delta) * C**2/(C**2 + K_delta**2) -
-               O_3K * C**4/(C**4 + K_D**4) * I/(I + K_3K) - Omega_5P*I +
-               I_coupling_tot : mole (clock-driven)
+        # IP_3 dynamics:
+        dI/dt = O_beta * Gamma_A + O_delta/(1 + I/K_delta) * C**2/(C**2 + K_delta**2) -
+                O_3K * C**4/(C**4 + K_D**4) * I/(I + K_3K) - Omega_5P*I +
+                I_coupling_tot : mole 
     
       
-       # diffusion between astrocytes:
-       I_coupling_tot : mole/second
+        # diffusion between astrocytes:
+        I_coupling_tot : mole/second
        
     
-       # Ca^2+-induced Ca^2+ release:
-       dC/dt = (Omega_C * m_inf**3 * h**3 + Omega_L) * (C_T - (1 + rho_A)*C) -
-               O_P * C**2/(C**2 + K_P**2) : mole (clock-driven)
-       dh/dt = (h_inf - h)/tau_h : 1  (clock-driven) # IP3R de-inactivation probability
-       m_inf = I/(I + d_1) * C/(C + d_5) : 1
-       h_inf = Q_2/(Q_2 + C) : 1
-       tau_h = 1/(O_2 * (Q_2 + C)) : second
-       Q_2 = d_2 * (I + d_1)/(I + d_3) : mole
+        # Ca^2+-induced Ca^2+ release:
+        dC/dt = (Omega_C * m_inf**3 * h**3 + Omega_L) * (C_T - (1 + rho_A)*C) -
+                O_P * C**2/(C**2 + K_P**2) : mole 
+        dh/dt = (h_inf - h)/tau_h : 1  
+        m_inf = I/(I + d_1) * C/(C + d_5) : 1
+        h_inf = Q_2/(Q_2 + C) : 1
+        tau_h = 1/(O_2 * (Q_2 + C)) : second
+        Q_2 = d_2 * (I + d_1)/(I + d_3) : mole
     
-       # External neurotransmitter stimulation
-       Y_bias : mole
-       # Neurotransmitter concentration in the extracellular space
-       Y_extra : mole
+        # External neurotransmitter stimulation
+        Y_bias : mole
+        # Neurotransmitter concentration in the extracellular space
+        Y_extra : mole
     
-       # Additional (optional) coordinates (for spatial network implementation)
-       x : meter
-       y : meter
-       ''')
+        # Additional (optional) coordinates (for spatial network implementation)
+        x : meter
+        y : meter
+        ''')
        
        
        
@@ -909,7 +910,7 @@ def Astrocyte_Group(N_astro,ADJ):
     Astro = NeuronGroup(N_astro, eqs_A,
                         threshold='C>C_osc',
                         refractory='C>C_osc',
-                        method='exponential_euler',
+                        method='rk4',
                         namespace=Params_astroGT,
                         name='astrocyte*')
     
@@ -921,22 +922,21 @@ def Astrocyte_Group(N_astro,ADJ):
         Astro.h = 'rand()'
         
         
-        
-        
     # ----- Gap-junction based astro links -----
     
     Gap_Eq = Equations('''
                      
             
-                       delta_I = I_post - I_pre: mole
-                       I_coupling = -F/2*(1 + tanh((abs(delta_I) - I_Theta)/omega_I))*sign(delta_I) : mole/second (Clock-driven)
-                       I_coupling_tot_post = I_coupling : mole/second (summed)
+                        delta_I = I_post - I_pre: mole
+                        I_coupling = -F/2*(1 + tanh((abs(delta_I) - I_Theta)/omega_I))*sign(delta_I) : mole/second 
+                        I_coupling_tot_post = I_coupling : mole/second (summed)
+                        
                        
-                       ''')
+                        ''')
     
     GJ = Synapses(Astro,Astro,
                   model=Gap_Eq,
-                  method='rk4',
+                  method='exponential_euler',
                   namespace= Params_astroGT,
                   name = 'Gap_junctions*'
                   )
@@ -947,11 +947,57 @@ def Astrocyte_Group(N_astro,ADJ):
     # ----- Connections -----
     
     Source_astro,Target_astro = unfold_ADJ(ADJ)
-    print(Source_astro)
+    
     GJ.connect(i = Source_astro,j= Target_astro)
+    
+    
+    
+    
+    
+    if Simulated_network == 'Astrocytic':
+    # ---------- EXTERNAL STIMULATION ----------
+        Params_astroGT.update({'tau_glustim' :25*ms}) # As for synapse params
+        Params_astroGT.update({'Y_bias_max' : 1*mmole}) # Maximum glutamate concentration
+        Params_astroGT.update({'poisson_rate' : 2*Hz}) # Lambda parameter of the poisson process
         
         
-    return Astro, GJ
+        # --- Poisson process ---
+        P = PoissonGroup(1, Params_astroGT['poisson_rate'])
+        
+        
+        # --- Equations ---
+        Glu_stim_Eq = Equations('''
+                                
+                                dY_bias_in/dt = -Y_bias_in/tau_glustim : mole (clock-driven)
+                                Y_bias_post = Y_bias_in : mole (summed)
+                                
+                                ''') 
+        pre = '''
+        
+            Y_bias_in += Y_bias_max  
+        
+        
+            '''
+            
+        post = None
+        
+        
+        
+        Glu_Input = Synapses(P, Astro, model=Glu_stim_Eq,
+                       on_pre=pre, on_post=post,namespace=Params_astroGT,method='exponential_euler')
+    
+        Glu_Input.connect(i=0, j=0)
+    
+    
+        
+        
+        
+        
+        
+        return Astro, GJ,P,Glu_Input
+    
+    else:
+        return Astro, GJ
     
     
     
@@ -1042,5 +1088,3 @@ def Astro_to_Syn(Glio_relaease,synapse,ADJ):
     Astro_Syn.connect(i = Source_astro, j = Target_syn)
     
     return Astro_Syn
-
-
