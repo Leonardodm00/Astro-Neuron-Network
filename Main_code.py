@@ -1,9 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Jul 22 17:06:17 2025
-
-@author: leona
-"""
 
 
 import matplotlib.pyplot as plt
@@ -71,11 +65,12 @@ RandomKinetics = False
 OnlyExc = True
 std_pers =0.01
 
-Syn_Currents_model = 'Double_exp' # 'Kinetic','Nina','Double_exp'
+Syn_Currents_model = 'TM-coupled' # 'Kinetic','Nina','TM-coupled'
 
 Max_delay = 25 *ms
 add_delay = False
 delay_mode = 'random'
+
 
 
 # ------- Neurons -------
@@ -103,16 +98,18 @@ sed = 39                             # random number seed
 devices.device.seed(sed)            # set the seed for all the random number realisations
 
 
-Simulated_network = 'Astrocytic' # Astrocytic/Neuronal/Full
+Simulated_network = 'Neuronal' # Astrocytic/Neuronal/Full
 
 
 # --------- NEURON -----------
-Nn = 4
+Nn = 250
 
 
 # --------- SYNAPTIC -----------
 
 # ----- Connectivity -----
+#TODO: for now is not needed connections will be
+#   randomly set
 ADJ_neuro = np.array(([0,1,0,0],
                       [0,0,1,0],
                       [0,0,0,1],
@@ -165,6 +162,17 @@ if Simulated_network == 'Full':
                            synapse_type=synapse_type)
     
     
+    # ----- SET POSITIONS AND CONNECTIONS -----
+    # Position neurons on a grid
+    grid_dist = 45 * umeter
+    N.x = '(i % Nn) * grid_dist'
+    N.y = '(i // Nn) * grid_dist'
+    
+    
+    
+    
+    
+    
     # --------- ASTROCYTE -----------
     A,GJ = Astrocyte_Group(N_astro,ADJ_astro)
     
@@ -190,6 +198,15 @@ elif Simulated_network == 'Neuronal':
                            Syn_Currents_model=Syn_Currents_model,add_delay=add_delay,
                            delay_mode=delay_mode,Max_delay=Max_delay,ics=ics,
                            std_pers=std_pers, Simulated_network=Simulated_network,Decay_type=Decay_type,synapse_type = synapse_type)
+    
+    
+    # ----- SET POSITIONS AND CONNECTIONS -----
+    # Position neurons on a grid
+    grid_dist = 45 * umeter
+    N.x = '(i % Nn) * grid_dist'
+    N.y = '(i // Nn) * grid_dist'
+    
+
     
     
     
@@ -228,7 +245,7 @@ if Simulated_network == 'Full':
     
 
 elif Simulated_network == 'Neuronal':
-    MonitorS = StateMonitor(S, recording_stringS, record=True)
+    # MonitorS = StateMonitor(S, recording_stringS, record=True)
     MonitorN = StateMonitor(N, recording_stringN, record=True)
     SpikesN = SpikeMonitor(N)
     
@@ -273,12 +290,12 @@ ax3.set_ylabel('Voltage [mV]')
 ax4.plot(MonitorN.t / second, MonitorN[3].V / mV, 'k', linewidth=0.7)
 ax4.set_xlabel('Time [s]')
 ax4.set_ylabel('Voltage [mV]')
-# fig.show()
+fig.show()
 
-# plt.figure(dpi=200)
-# plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
+plt.figure(dpi=200)
+plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
 
-# show()
+show()
 
 #%%
 
