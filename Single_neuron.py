@@ -64,18 +64,18 @@ def Neuronal_Network(Adaptation,I_inj):
  
     return P
         
-def get_Neuronparam(Adaptation=False,delta = 0,**kwargs):
+def get_Neuronparam(Adaptation=True,delta = 0,**kwargs):
     
     
     Neuron_area =  300*umetre**2
     
     if Adaptation == True:
             
-            g_AHP= (0.1*msiemens*cm**-2) * Neuron_area
+            g_AHP= (0.12*msiemens*cm**-2) * Neuron_area
             
             
     else:
-            g_AHP = 0
+            g_AHP = (0*msiemens*cm**-2) * Neuron_area
 
     
     
@@ -92,7 +92,7 @@ def get_Neuronparam(Adaptation=False,delta = 0,**kwargs):
     'g_AHP': g_AHP, # maximal conductance of AHP currents
     'VT': -30.4*mV,                      # alters firing threshold of neurons
     'sigma': 6 * mV,                     # standard deviation of the noisy voltage fluctuations
-    'Tau_max': 4000 * ms,                # Decay factor of AHP
+    'Tau_max': 608 * ms,                # Decay factor of AHP
     
     'I_inj': 15*pA, # Injected current
  
@@ -172,3 +172,4 @@ plt.plot(MonitorN.t / second, MonitorN[0].V / mV, 'k', linewidth=0.7)
 plt.ylabel('Voltage [mV]')
 
 plt.show()
+
