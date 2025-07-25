@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error
@@ -163,18 +162,19 @@ def get_Astroparam(oscillations = 'AM',**kwargs):
     
     
 
-def get_Neuronparam(Adaptation=False,delta = 0.5,**kwargs):
+def get_Neuronparam(Adaptation=True,delta = 0,**kwargs):
+    
     
     
     Neuron_area =  300*umetre**2
     
     if Adaptation == True:
             
-            g_m= (0.4*msiemens*cm**-2) * Neuron_area
+            g_AHP= (0.2*msiemens*cm**-2) * Neuron_area
             
             
     else:
-            g_m = 0
+            g_AHP = (0*msiemens*cm**-2) * Neuron_area
 
     
     
@@ -188,12 +188,12 @@ def get_Neuronparam(Adaptation=False,delta = 0.5,**kwargs):
     'g_na': 1.6 * 50 * msiemens * cm**-2 * Neuron_area, # maximal conductance of sodium channels (calculated with area)
     'g_kd': 1.3 * 5 * msiemens * cm**-2 * Neuron_area,  # maximal conductance of potassium (calculated with area)
     'gl': (0.3*msiemens*cm**-2) * Neuron_area, # maximal leak conductance (calculated with area)
-    'g_m': g_m, # maximal conductance of AHP currents
+    'g_AHP': g_AHP, # maximal conductance of AHP currents
     'VT': -30.4*mV,                      # alters firing threshold of neurons
-    'sigma': 6 * mV,                     # standard deviation of the noisy voltage fluctuations
-    'Tau_max': 4000 * ms,                # Decay factor of AHP
+    'sigma': 4.1 * mV,                     # standard deviation of the noisy voltage fluctuations
+    'Tau_max': 608 * ms,                # Decay factor of AHP
     
-    'I_inj': 15*pA, # Injected current
+    'I_inj': 10*pA, # Injected current
  
      # Synaptic contribution
      'we_AMPA' : 0.5, # Relative contribution of AMPA channels to the total syn weight
@@ -300,22 +300,23 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         'w':1,
         
         # Params of the kinetic model post-syn
-        'alpha_ampa_kin' : 1.1e6 * 1/mole * 1/second,
-        'alpha_nmda_kin' : 7.2e4 * 1/mole * 1/second,
-        'beta_ampa_kin' : 190 * 1/second,
-        'beta_nmda_kin' :  6.6 * 1/second,
+        'alpha_ampa_kin' : 1 * 1/mmole * 1/ms,
+        'alpha_nmda_kin' : 0.013 * 1/mmole * 1/ms,
+        'beta_ampa_kin'  : 2 * 1/ms,
+        'beta_nmda_kin'  :  0.36 * 1/ms,
         'epsilon': 1e-40 * Hz,
         
         # Params of the kinetic model post-syn
         'tau_rise_ampa': 1*ms,
-        'tau_decay_ampa': 10*ms,
+        'tau_decay_ampa': 2*ms,
         'tau_rise_nmda': 2*ms,
         'tau_decay_nmda': 100*ms,
         
         # Synaptic efficacy
         'Xi': 0.8,
         
-        
+        # COnnection probability
+        'connprob' : 0.1,
         
        
     
@@ -403,27 +404,29 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
 # ---------------------- NEURONAL GROUP ----------------------
      # neuron model
     eqs_NN = Equations('''
-    # dV/dt = noise + ((-gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK)+I+I_AHP)/Cm) : volt
-    dV/dt = noise + (-gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK)+I-I_syn)/Cm  : volt
+    
+    dV/dt = noise + (-gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK)-g_AHP*p*(V-EK)+I-I_syn)/Cm  : volt
     dm/dt = alpha_m*(1-m)-beta_m*m : 1
     dh/dt = alpha_h*(1-h)-beta_h*h : 1
     dn/dt = (alpha_n*(1-n)-beta_n*n) : 1
-    dhp/dt = 0.128*exp((17.*mV-V+VT)/(18.*mV))/ms*(1.-hp)-4./(1+exp((30.*mV-V+VT)/(5.*mV)))/ms*h : 1
+    dp/dt = (p_ss - p)/tau_p : 1
+    # dhp/dt = 0.128*exp((17.*mV-V+VT)/(18.*mV))/ms*(1.-hp)-4./(1+exp((30.*mV-V+VT)/(5.*mV)))/ms*h : 1
     alpha_m = 0.32*(mV**-1)*4*mV/exprel((13*mV-V+VT)/(4*mV))/ms : Hz
     beta_m = 0.28*(mV**-1)*5*mV/exprel((V-VT-40*mV)/(5*mV))/ms : Hz
     alpha_h = 0.128*exp((17*mV-V+VT)/(18*mV))/ms : Hz
     beta_h = 4./(1+exp((40*mV-V+VT)/(5*mV)))/ms : Hz
     alpha_n = 0.032*(mV**-1)*5*mV/exprel((15*mV-V+VT)/(5*mV))/ms : Hz
     beta_n = .5*exp((10*mV-V+VT)/(40*mV))/ms : Hz
+    p_ss = (1./(exp(-(V + 35*mV)/(10*mV))+1)) : 1
+    tau_p = Tau_max / (3.3*exp( (V + 35*mV)/(20*mV) ) + exp( -( V + 35*mV )/(20*mV) )) : second
+    
     noise = sigma*(2*gl/Cm)**.5*randn()/sqrt(dt) : volt/second (constant over dt)
     I : amp
-    
-    
+    # I_syn : amp
+    # I_AHP = g_AHP*p*(V-EK) : volt * siemens 
     x : meter
     y : meter
     ''')
-    
-    
     
     
     #%
@@ -633,13 +636,12 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
     
     
     
-    elif Syn_Currents_model == 'Double_exp':
+    elif Syn_Currents_model == 'TM-coupled':
         
         eqs_Syn += Equations('''
                              
                                    
-                                dr_ampa/dt = ((tau_decay_ampa  / tau_rise_ampa) ** (tau_rise_ampa / (tau_decay_ampa  - tau_rise_ampa))*x_r_ampa-r_ampa)/tau_rise_ampa : 1 (clock-driven)
-                                dx_r_ampa/dt = -x_r_ampa/tau_decay_ampa                                                  : 1 (clock-driven)
+                                dr_ampa/dt = -r_ampa/tau_decay_ampa : 1 (clock-driven)
                                 
                                 dr_nmda/dt = ((tau_decay_nmda / tau_rise_nmda) ** (tau_rise_nmda / (tau_decay_nmda - tau_rise_nmda))*x_r_nmda-r_nmda)/tau_rise_nmda : 1 (clock-driven)
                                 dx_r_nmda/dt = -x_r_nmda/tau_decay_nmda   : 1 (clock-driven)
@@ -653,7 +655,7 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
                             
                             
         pre += '''           
-                x_r_ampa +=  (alpha_ampa_kin * rho * Y_T * r_S * Xi)/(alpha_ampa_kin * rho * Y_T * r_S * Xi + beta_ampa_kin) 
+                r_ampa +=  (alpha_ampa_kin * rho * Y_T * r_S * Xi)/(alpha_ampa_kin * rho * Y_T * r_S * Xi + beta_ampa_kin) 
                 x_r_nmda +=  (alpha_nmda_kin * rho * Y_T * r_S * Xi)/(alpha_nmda_kin * rho * Y_T * r_S * Xi + beta_nmda_kin) 
                
                         '''          
@@ -769,10 +771,10 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
         
             params_Syn.update({
                 
-                'alpha_ampa_kin' :  alpha_ampa_ * 1/mole * 1/second,
-                'alpha_nmda_kin' :  alpha_nmda_ * 1/mole * 1/second,
-                'beta_ampa_kin'  :   beta_ampa_ * 1/second,
-                'beta_nmda_kin'  :   beta_nmda_ * 1/second
+                'alpha_ampa_kin' :  alpha_ampa_ * 1/mmole * 1/ms,
+                'alpha_nmda_kin' :  alpha_nmda_ * 1/mmole * 1/ms,
+                'beta_ampa_kin'  :   beta_ampa_ * 1/ms,
+                'beta_nmda_kin'  :   beta_nmda_ * 1/ms
                 
                 })
     
@@ -798,7 +800,7 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
     
     
     
-    #!!! TO CHECK
+    
     S = Synapses(P, model=eqs_Syn,
                         on_pre=pre,
                         on_post=post,
@@ -809,11 +811,12 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
     
     
     # -------------- Connections --------------
+    #TODO: UNDO THIS
+    # Source_neuron,Target_neuron = unfold_ADJ(ADJ)
     
-    Source_neuron,Target_neuron = unfold_ADJ(ADJ)
+    # S.connect(i=Source_neuron, j=Target_neuron)
     
-    S.connect(i=Source_neuron, j=Target_neuron)
-    
+    S.connect(p=params_Syn['connprob'])
     
     
     
