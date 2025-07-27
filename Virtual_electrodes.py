@@ -1,13 +1,7 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Sat Jul 26 15:27:33 2025
-
-@author: Admin
-"""
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-
+from scipy.spatial import KDTree
 
 
 def generate_grid_points(n_rows, n_cols, pitch,x0,y0):
@@ -35,6 +29,41 @@ def generate_grid_points(n_rows, n_cols, pitch,x0,y0):
             points.append((x, y))
 
     return np.array(points)
+
+
+
+def Electrode_recording(MEA_dict,Neuron_group,State_Monitor,electrode_dist):
+    
+    # Generate the KDTree form the neuronal position data
+    x_pos = np.array(Neuron_group[:].x)
+    y_pos = np.array(Neuron_group[:].y)
+    
+    pos = np.column_stack((x_pos, y_pos))
+
+    # Generate the KDTree
+    Neuron_positions = KDTree(pos)
+    
+    
+    Electrode_recordings = {}
+    
+    for key in MEA_dict.keys():
+        
+        rec_sites = MEA_dict[key]
+        
+        Electrode_rec = Electrode_trace(rec_sites,Neuron_group,Neuron_positions,State_Monitor,electrode_dist) 
+
+        Electrode_recordings[key] = Electrode_rec
+        
+        
+    return Electrode_recordings
+    
+    
+    
+    
+    
+    
+    
+
 
 
 def Electrode_trace(rec_sites,Neuron_group,Neuron_positions,State_Monitor,electrode_dist):
@@ -196,7 +225,11 @@ for point in Grid:
     el = el+1
     
     
-Rec_sites = np.vstack(Rec_sites)   
+Rec_sites = np.vstack(Rec_sites)  
+
+
+
+ 
 # ------------- GRID PLOT complete -------------
 fig, ax = plt.subplots() # This creates both a figure and an axes for you
 
@@ -224,6 +257,40 @@ plt.xlabel("[um]")
 plt.ylabel("[um]")
 plt.show()  
         
+    
+    
+    
+    
+    
+    
+    
+    #%%
+    
+    # Functionf
+    
+def Recording_sites(pitch_recsites,shift):
+    MEA_dict = {}
+    
+    el = 0
+    for point in Grid:  
+        
+        # The x0 and y0 are the bottom left coordinates of the first rec site.
+        # the 'point' coordinate is the center. A shift in coordinates is needed.
+        # The 'point' coordinates are shifted along the diagonal about half the diameter.
+        # Both x and y of the 'point' are shifted about sqrt(2)*radius
+        
+        x0 = point[0]-shift
+        y0 = point[1]-shift
+        rec_points = generate_grid_points(4, 4, pitch_recsites,x0,y0)
+        MEA_dict[el] = np.array(rec_points)
+        
+        Rec_sites.append(rec_points)
+        el = el+1
+        
+        
+    return MEA_dict
+        
+    
     
     
     
