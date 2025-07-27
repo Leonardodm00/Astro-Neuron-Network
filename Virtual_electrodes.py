@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Created on Sat Jul 26 15:27:33 2025
 
@@ -34,6 +35,73 @@ def generate_grid_points(n_rows, n_cols, pitch,x0,y0):
             points.append((x, y))
 
     return np.array(points)
+
+
+def Electrode_trace(rec_sites,Neuron_group,Neuron_positions,State_Monitor,electrode_dist):
+
+    '''
+    Dipole approximation.
+    
+    Two contributes for background noise: 1) distant neurons, 2) White noise
+    
+    For each recording site the sum of all the contributing neurons is taken and 
+    for the whole electrode the mean across the recording sites.
+    
+    electrode_dist = max senstivity distance of the electrode
+    Neuron_psoitions = sklearn.neighbors.NearestNeighbors object
+    
+    '''
+    
+    # For each recording site extract the recorded neurons
+
+    
+    Site_voltages = {}
+    s = 0
+    for site in rec_sites:
+        # For each recording site extract the recorded neurons
+        NN_idx,NN_dist = Neuron_positions.radius_neighbors(site, radius=electrode_dist, return_distance=True)
+       
+        Voltages = State_Monitor[NN_idx].V/mV * 1/np.sqrt( (site[0] - Neuron_group[NN_idx].x)**2 + (site[1] - Neuron_group[NN_idx].y)**2)
+        
+        # Sum column-wise
+        # ....
+        # Voltages_sum
+        
+        # Save
+        Site_voltages[s] = Voltages_sum
+        s = s+1
+                                          
+
+    # --- MEAN ---
+    
+    # Extract traces
+    rec_list = [Site_voltages[key] for key in Site_voltages.keys()]   
+    rec_list_ = np.vstack(rec_list)
+    
+    # Take the mean
+    Electrode_trace = np.mean(rec_list_, axis=0)
+    
+    return Electrode_trace
+                 
+                                        
+        
+        
+        
+    
+    
+        
+        
+    
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -108,8 +176,10 @@ plt.show()
 # ------------- REC SITES -------------    
     
 Rec_sites = []
+MEA_dict = {}
 pitch_recsites = 7.5 # [um]  
 shift = 11.25
+el = 0
 for point in Grid:  
     
     # The x0 and y0 are the bottom left coordinates of the first rec site.
@@ -120,9 +190,10 @@ for point in Grid:
     x0 = point[0]-shift
     y0 = point[1]-shift
     rec_points = generate_grid_points(4, 4, pitch_recsites,x0,y0)
+    MEA_dict[el] = np.array(rec_points)
     
     Rec_sites.append(rec_points)
-    
+    el = el+1
     
     
 Rec_sites = np.vstack(Rec_sites)   
@@ -153,6 +224,9 @@ plt.xlabel("[um]")
 plt.ylabel("[um]")
 plt.show()  
         
+    
+    
+    
     
     
     
