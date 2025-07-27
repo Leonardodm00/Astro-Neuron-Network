@@ -1,8 +1,15 @@
 
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Jul 22 17:06:17 2025
+
+@author: leona
+"""
+
 
 import matplotlib.pyplot as plt
 from brian2 import *
-
+from scipy.spatial import KDTree
 
 import os
 
@@ -144,11 +151,14 @@ ADJ_AstroSyn = np.array(([1,0,0],
                          [0,0,1]))
 
 
+# --------- ELECTRODE RECORDINGS ----------- 
+pitch = 300 #[um] 
+radius = 15 #[um]
 
+pitch_recsites = 7.5 # [um]  
+shift = 11.25 # [um]
 
-
-
-
+electrode_dist = 300 # [um]
 
 
 # ------------------------- GROUPS BUILD-UP -------------------------
@@ -448,3 +458,23 @@ plt.figure(dpi=200)
 plt.plot(SpikesA.t / second, SpikesA.i, '.k', ms=0.7)
 
 show()
+
+#%%
+
+# --------------- ELECTRODE RECORDINGS ---------------
+
+Grid = Get_12grid(pitch)
+
+MEA_dict = Recording_sites(pitch_recsites,shift)
+
+Traces = Electrode_recording(MEA_dict,N,MonitorN,electrode_dist)
+
+
+
+
+
+
+
+
+
+
