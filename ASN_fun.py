@@ -1122,7 +1122,7 @@ def generate_grid_points(n_rows, n_cols, pitch,x0,y0):
 
 
 
-def Electrode_recording(MEA_dict,Neuron_group,State_Monitor,electrode_dist):
+def Electrode_recording(MEA_dict,Neuron_group,State_Monitor,electrode_dist,neuron_radius,electrode_radius):
     
     # Generate the KDTree form the neuronal position data
     x_pos = np.array(Neuron_group[:].x/um)
@@ -1140,7 +1140,7 @@ def Electrode_recording(MEA_dict,Neuron_group,State_Monitor,electrode_dist):
         
         rec_sites = MEA_dict[key]
         
-        Electrode_rec = Electrode_trace(rec_sites,Neuron_group,Neuron_positions,State_Monitor,electrode_dist) 
+        Electrode_rec = Electrode_trace(rec_sites,Neuron_group,Neuron_positions,State_Monitor,electrode_dist,neuron_radius,electrode_radius) 
 
         Electrode_recordings[key] = Electrode_rec
         
@@ -1156,7 +1156,7 @@ def Electrode_recording(MEA_dict,Neuron_group,State_Monitor,electrode_dist):
 
 
 
-def Electrode_trace(rec_sites,Neuron_group,Neuron_positions,State_Monitor,electrode_dist):
+def Electrode_trace(rec_sites,Neuron_group,Neuron_positions,State_Monitor,electrode_dist,neuron_radius,electrode_radius):
 
     '''
     For neurons below d_lim a simplyfied EEI model is used
@@ -1171,7 +1171,9 @@ def Electrode_trace(rec_sites,Neuron_group,Neuron_positions,State_Monitor,electr
     
     electrode_dist = max senstivity distance of the electrode
     Neuron_psoitions = sklearn.neighbors.NearestNeighbors object
-    
+    neuron_radius = radiu of the neurons expressed in micrometers.
+            it is used to because the distance is calculated between centers
+    electrode_radius = radius of the electrode  
     # --- Papers:
         
         1) Multi-program approach for simulating recorded extracellular signals
@@ -1182,7 +1184,7 @@ def Electrode_trace(rec_sites,Neuron_group,Neuron_positions,State_Monitor,electr
     '''
     
     # For each recording site extract the recorded neurons
-    d_lim = 100 # [um]
+    d_lim = 1 # [um]
     White_noise = 1e-3 # [mV]
     Site_voltages = {}
     s = 0
@@ -1200,7 +1202,7 @@ def Electrode_trace(rec_sites,Neuron_group,Neuron_positions,State_Monitor,electr
            
         # First evaluate which model to use
         
-            if NN_dist[neu] >= d_lim:
+            if NN_dist[neu] >= d_lim+neuron_radius+electrode_radius:
                 
 
                 V  = State_Monitor[NN_idx[neu]].V/mV * 1/np.sqrt( (site[0] - Neuron_group[NN_idx[neu]].x/um)**2 + (site[1] - Neuron_group[NN_idx[neu]].y/um)**2)
@@ -1214,6 +1216,7 @@ def Electrode_trace(rec_sites,Neuron_group,Neuron_positions,State_Monitor,electr
                 # Evaluate the voltage seen by the electrode
                 V = Voltage_trace(alpha_,beta_, State_Monitor[NN_idx[neu]].V/mV,dt_)
                 
+                Voltages.append(V)
                 
                 
                 
@@ -1247,14 +1250,19 @@ def Electrode_trace(rec_sites,Neuron_group,Neuron_positions,State_Monitor,electr
     return Electrode_trace
                  
 
-def Voltage_trace(alpha,beta,V,dt):
+def Voltage_trace(alpha,beta,V,dt_):
     
     '''
     V is in millivolt
     
     returns the Convolved trace. SHould be in [mV]
     
+    alpha and beta parameters are defined so that the integration constant is 
+    expressed in ms.
+    
     '''
+    dt_ = dt_/ms
+    
     V_dot = np.zeros(len(V))
     
     # First define the derivative vector of the intracellular membrane voltage
@@ -1265,9 +1273,10 @@ def Voltage_trace(alpha,beta,V,dt):
     # Integrate with a simple first-order Euler
     V_convolved = np.zeros(len(V))
     
+     
     for t in np.arange(1,len(V)):
         
-        V_convolved[t] = V_convolved[t-1] + (-alpha*V_convolved[t-1] - beta*V_dot[t])*dt
+        V_convolved[t] = V_convolved[t-1] + (-alpha*V_convolved[t-1]  - beta*V_dot[t])*(dt_)
     
     
     return V_convolved
@@ -1287,19 +1296,26 @@ def TF_params(d):
     Evaluates the transfer function parameters in base of the neuronal proximity
     
     d = distance in micrometers
+    
+    1 ms = 1 MOhm * 1 nF
     '''  
     
-    C_e = 1.14 * 1e-9 # [F]
-    C_hd = 17.45 * 1e-12 # [F]
-    R_e = 0.14 * 1e6 # [Ohm]
+    # C_e = 1.14 * 1e-9 # [F]
+    # C_hd = 17.45 * 1e-12 # [F]
+    # R_e = 0.14 * 1e6 # [Ohm]
     
-    rho_s = 0.7 # [Ohm * m] Saline bath resistance
+    
+    C_e = 1.14 # [nF]
+    C_hd = 17.45 * 1e-3 # [nF]
+    R_e = 0.14 # [MOhm]
+    
+    rho_s = 0.7*1e-6 # [MOhm * m] Saline bath resistance
     
     Area_ratio = 0.5 # Approx the electrode is twice the somata.
     
-    d = d * 1e-3
+    d_ = d * 1e-6 #[m]
     
-    R_seal = (rho_s/d) * Area_ratio
+    R_seal = (rho_s/d_) * Area_ratio
     
     
     alpha = (R_e + R_seal) / ( (R_e*R_seal)  *  (C_hd + C_e) )
@@ -1418,6 +1434,16 @@ def Plot_NeuroDevice(Grid,Neuron_group,Nn):
     plt.xlabel("[um]")
     plt.ylabel("[um]")
     plt.show()  
+
+
+
+
+
+
+
+
+
+
 
 
 
