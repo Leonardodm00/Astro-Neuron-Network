@@ -1,5 +1,5 @@
 
-# -*- coding: utf-8 -*-
+ -*- coding: utf-8 -*-
 """
 Created on Tue Jul 22 17:06:17 2025
 
@@ -9,7 +9,7 @@ Created on Tue Jul 22 17:06:17 2025
 
 import matplotlib.pyplot as plt
 from brian2 import *
-from scipy.spatial import KDTree
+
 
 import os
 
@@ -81,7 +81,7 @@ delay_mode = 'random'
 
 
 # ------- Neurons -------
-Adaptation = False
+Adaptation = True
 
 
 # ------- Astrocytes -------
@@ -99,7 +99,7 @@ oscillations = 'AM'
 # ------------------------- PARAMETERS -------------------------
 
 # --------- SIMULATION -----------
-simtime = 40 * second               # simulation time
+simtime = 30 * second               # simulation time
 # transient = 3 * second              # time omitted as transient
 sed = 39                             # random number seed
 devices.device.seed(sed)            # set the seed for all the random number realisations
@@ -109,9 +109,8 @@ Simulated_network = 'Neuronal' # Astrocytic/Neuronal/Full
 
 
 # --------- NEURON -----------
-Nn = 250
-
-
+Nn = 150
+neuron_radius = 9 #[um]
 # --------- SYNAPTIC -----------
 
 # ----- Connectivity -----
@@ -153,12 +152,15 @@ ADJ_AstroSyn = np.array(([1,0,0],
 
 # --------- ELECTRODE RECORDINGS ----------- 
 pitch = 300 #[um] 
-radius = 15 #[um]
+electrode_radius = 15 #[um]
 
 pitch_recsites = 7.5 # [um]  
 shift = 11.25 # [um]
 
 electrode_dist = 300 # [um]
+
+c_min = 0 #[um]
+c_max = 1100 #[um]
 
 
 # ------------------------- GROUPS BUILD-UP -------------------------
@@ -174,9 +176,9 @@ if Simulated_network == 'Full':
     
     # ----- SET POSITIONS AND CONNECTIONS -----
     # Position neurons on a grid
-    grid_dist = 45 * umeter
-    N.x = '(i % Nn) * grid_dist'
-    N.y = '(i // Nn) * grid_dist'
+    Coordinates = get2D_rnd_coordinates(Nn,c_min,c_max,sed)
+    N.x = Coordinates[:,0]*um
+    N.y = Coordinates[:,1]*um
     
     
     
@@ -212,9 +214,10 @@ elif Simulated_network == 'Neuronal':
     
     # ----- SET POSITIONS AND CONNECTIONS -----
     # Position neurons on a grid
-    grid_dist = 45 * umeter
-    N.x = '(i % Nn) * grid_dist'
-    N.y = '(i // Nn) * grid_dist'
+
+    Coordinates = get2D_rnd_coordinates(Nn,c_min,c_max,sed)
+    N.x = Coordinates[:,0]*um
+    N.y = Coordinates[:,1]*um
     
 
     
@@ -225,15 +228,8 @@ elif Simulated_network == 'Astrocytic':
     # --------- ASTROCYTE -----------
     Astro, GJ,P,Glu_Input = Astrocyte_Group(Na,ADJ_astro,Simulated_network)
     
-    
-    
-    
-    
-    
 
-
-
-
+#%%
 
 
 # ------------------------- NETWORK SIMULATION -------------------------
@@ -467,7 +463,32 @@ Grid = Get_12grid(pitch)
 
 MEA_dict = Recording_sites(pitch_recsites,shift)
 
-Traces = Electrode_recording(MEA_dict,N,MonitorN,electrode_dist)
+# --- Plot Device + Neurons
+%matplotlib
+
+Plot_NeuroDevice(Grid,N,Nn)
+
+
+#%%
+# Fit NN algorithm
+
+Traces = Electrode_recording(MEA_dict,N,MonitorN,electrode_dist,neuron_radius,electrode_radius)
+
+#%%
+el = 5
+t_vec = np.linspace(0,len(Traces[0]),len(Traces[0]))
+
+plt.figure()
+
+plt.plot(t_vec,Traces[el]-np.mean(Traces[el]))
+
+plt.show
+
+
+
+
+
+
 
 
 
