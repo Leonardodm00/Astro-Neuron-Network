@@ -1313,7 +1313,7 @@ def TF_params(d):
     
     Area_ratio = 0.5 # Approx the electrode is twice the somata.
     
-    d_ = d * 1e-6 #[m]
+    d_ = 70 * 1e-9 #[m]
     
     R_seal = (rho_s/d_) * Area_ratio
     
