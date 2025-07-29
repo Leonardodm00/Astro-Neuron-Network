@@ -1,5 +1,4 @@
-
- -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Created on Tue Jul 22 17:06:17 2025
 
@@ -99,7 +98,7 @@ oscillations = 'AM'
 # ------------------------- PARAMETERS -------------------------
 
 # --------- SIMULATION -----------
-simtime = 30 * second               # simulation time
+simtime = 60 * second               # simulation time
 # transient = 3 * second              # time omitted as transient
 sed = 39                             # random number seed
 devices.device.seed(sed)            # set the seed for all the random number realisations
@@ -109,7 +108,7 @@ Simulated_network = 'Neuronal' # Astrocytic/Neuronal/Full
 
 
 # --------- NEURON -----------
-Nn = 150
+Nn = 300
 neuron_radius = 9 #[um]
 # --------- SYNAPTIC -----------
 
@@ -229,13 +228,13 @@ elif Simulated_network == 'Astrocytic':
     Astro, GJ,P,Glu_Input = Astrocyte_Group(Na,ADJ_astro,Simulated_network)
     
 
-#%%
 
 
 # ------------------------- NETWORK SIMULATION -------------------------
 
 # --- Monitors ---
-recording_stringN = ['V','I_syn','I_ampa','I_nmda']
+# recording_stringN = ['V','I_syn','I_ampa','I_nmda','I_cell']
+recording_stringN = ['V','I_cell']
 recording_stringS = ['u_S','x_S','Y_S']
 recording_stringA = ['C','I','Gamma_A','I_coupling_tot']
 recording_stringGT = ['G_A','x_A']
@@ -475,14 +474,46 @@ Plot_NeuroDevice(Grid,N,Nn)
 Traces = Electrode_recording(MEA_dict,N,MonitorN,electrode_dist,neuron_radius,electrode_radius)
 
 #%%
-el = 5
+el = 3
 t_vec = np.linspace(0,len(Traces[0]),len(Traces[0]))
 
 plt.figure()
+tertiary_color_palette = [
+    # Warm Tones
+    (1.0, 0.647, 0.0),    # Orange (RGB 255, 165, 0)
+    (1.0, 0.498, 0.314),  # Coral (RGB 255, 127, 80)
+    (0.8, 0.0, 0.0),      # Dark Red / Maroon-ish (RGB 204, 0, 0) - Not pure Red (1,0,0)
+    (0.627, 0.322, 0.176),# Sienna (RGB 160, 82, 45) - Earthy Brown
+    (1.0, 0.753, 0.796),  # Pink (RGB 255, 192, 203)
 
-plt.plot(t_vec,Traces[el]-np.mean(Traces[el]))
+    # Cool Tones
+    (0.294, 0.0, 0.510),  # Indigo (RGB 75, 0, 130) - Deep Blue-Purple
+    (0.502, 0.0, 0.502),  # Purple (RGB 128, 0, 128) - More vibrant Purple
+    (0.251, 0.878, 0.816),# Turquoise (RGB 64, 224, 208) - Blue-Green
+    (0.0, 0.502, 0.502),  # Teal (RGB 0, 128, 128)
 
-plt.show
+    # Earthy/Muted Tones
+    (0.502, 0.502, 0.0),  # Olive (RGB 128, 128, 0) - Muted Yellow-Green
+    (0.439, 0.502, 0.565),# Slate Gray (RGB 112, 128, 144) - Muted Blue-Gray
+    (0.753, 0.753, 0.0)   # Chartreuse (RGB 192, 192, 0) - Muted Yellow-Green
+]
+
+col = 0
+for ch in range(12):
+    
+    # if ch == 9:
+    #     plt.plot(t_vec,Traces[ch]*0.1-np.mean(Traces[el])+ch*0.1,color = tertiary_color_palette[col])
+    #     col = col+1
+        
+    # else:
+        plt.plot(t_vec,Traces[ch]-np.mean(Traces[el])+ch*0.1,color = tertiary_color_palette[col])
+        col = col+1
+plt.show()
+
+
+#%%
+# --------- SAVE RAW TRACES ----------
+
 
 
 
