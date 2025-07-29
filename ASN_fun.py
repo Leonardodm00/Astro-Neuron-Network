@@ -312,7 +312,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         'Xi': 0.8,
         
         # COnnection probability
-        'connprob' : 0.195,
+        'connprob' : 0.107,
         
        
     
@@ -418,6 +418,7 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
     
     noise = sigma*(2*gl/Cm)**.5*randn()/sqrt(dt) : volt/second (constant over dt)
     I : amp
+    I_cell = -gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK)-g_AHP*p*(V-EK) : amp
     # I_syn : amp
     # I_AHP = g_AHP*p*(V-EK) : volt * siemens 
     x : meter
@@ -1184,8 +1185,9 @@ def Electrode_trace(rec_sites,Neuron_group,Neuron_positions,State_Monitor,electr
     '''
     
     # For each recording site extract the recorded neurons
-    d_lim = 1 # [um]
+    d_lim = 50 # [um]
     White_noise = 1e-3 # [mV]
+    Rho_s = 0.7 * 1e6 #[ Ohm * um ] Saline bath resistivity 
     Site_voltages = {}
     s = 0
     dt_ = defaultclock.dt
@@ -1204,17 +1206,27 @@ def Electrode_trace(rec_sites,Neuron_group,Neuron_positions,State_Monitor,electr
         
             if NN_dist[neu] >= d_lim+neuron_radius+electrode_radius:
                 
-
-                V  = State_Monitor[NN_idx[neu]].V/mV * 1/np.sqrt( (site[0] - Neuron_group[NN_idx[neu]].x/um)**2 + (site[1] - Neuron_group[NN_idx[neu]].y/um)**2)
+                # continue
+                
+                V  = State_Monitor[NN_idx[neu]].V/mV * 1/(NN_dist[neu]**2)
             
                 Voltages.append(V)
                 
             else:
                 
-                alpha_,beta_ = TF_params(NN_dist[neu])
+                
+                # alpha_,beta_ = TF_params(NN_dist[neu])
+                
+                
+                alpha_ = 1
+                beta_ = 1
+                
+                # Monopole
+                V = (Rho_s*State_Monitor[NN_idx[neu]].I_cell/mA)/(4*np.pi*NN_dist[neu])
+                # V = Voltage_trace(alpha_,beta_, State_Monitor[NN_idx[neu]].V/mV* 1/(NN_dist[neu]**2) ,dt_)
                 
                 # Evaluate the voltage seen by the electrode
-                V = Voltage_trace(alpha_,beta_, State_Monitor[NN_idx[neu]].V/mV,dt_)
+               
                 
                 Voltages.append(V)
                 
@@ -1303,19 +1315,41 @@ def TF_params(d):
     # C_e = 1.14 * 1e-9 # [F]
     # C_hd = 17.45 * 1e-12 # [F]
     # R_e = 0.14 * 1e6 # [Ohm]
+    # eps_IHP = 6
+    # eps_OHP = 32
+    # eps_0  = 8.85*1e-12 # [F/m]
+    # d_IHP = 0.3 *1e-9 # [m]
+    # d_OHP = 0.7 *1e-9 # [m]
+    # eps_D = 50 
+    # N = 6.022 *1e23 # [1/mol]
+    # q = 1.6021 *1e-19 # [C]
+    # n_0 = 150 * 1e-3 #[mol]
+    # k= 1.38064 *1e-23 # [J/K]
+    # T= 300 # [K]
     
     
-    C_e = 1.14 # [nF]
-    C_hd = 17.45 * 1e-3 # [nF]
-    R_e = 0.14 # [MOhm]
     
-    rho_s = 0.7*1e-6 # [MOhm * m] Saline bath resistance
+    # C_e = 1.14 # [nF]
+    # C_hd = 17.45 * 1e-3 # [nF]
+    # R_e = 0.14 # [MOhm]
     
-    Area_ratio = 0.5 # Approx the electrode is twice the somata.
+    # rho_s = 0.7*1e-6 # [MOhm * m] Saline bath resistance
     
-    d_ = 70 * 1e-9 #[m]
+    # Area_ratio = 0.5 # Approx the electrode is twice the somata.
     
-    R_seal = (rho_s/d_) * Area_ratio
+    # d_ = 70 * 1e-9 #[m]
+    
+    # R_seal = (rho_s/d_) * Area_ratio
+    
+    # C_h1 = (eps_0*eps_IHP*Area)/(d_IHP)
+    # C_h2 = (eps_0*eps_OHP*Area)/(d_OHP-d_IHP)
+    # C_d = (q*np.sqrt(2*eps_0*eps_D*k*T*n_0*N)*Area)/(k*T)
+    
+    # C_hd_inv = (1/C_h1) + (1/C_h2) + (1/C_d)
+    # C_hd = 1/C_hd_inv
+    
+    
+    
     
     
     alpha = (R_e + R_seal) / ( (R_e*R_seal)  *  (C_hd + C_e) )
@@ -1338,9 +1372,9 @@ def Get_12grid(pitch):
  
     '''
     
-    
-    x0 = 0
-    y0 = 0
+    shift = 100 # [um]
+    x0 = 0 + shift
+    y0 = 0 + shift
     pitch = 300 # [um]
     
     Grid_raw = generate_grid_points(4, 4, pitch,x0,y0)
@@ -1405,28 +1439,57 @@ def get2D_rnd_coordinates(N,c_min,c_max,sed):
 
 def Plot_NeuroDevice(Grid,Neuron_group,Nn):
     
+    tertiary_color_palette = [
+    # Warm Tones
+    (1.0, 0.647, 0.0),    # Orange (RGB 255, 165, 0)
+    (1.0, 0.498, 0.314),  # Coral (RGB 255, 127, 80)
+    (0.8, 0.0, 0.0),      # Dark Red / Maroon-ish (RGB 204, 0, 0) - Not pure Red (1,0,0)
+    (0.627, 0.322, 0.176),# Sienna (RGB 160, 82, 45) - Earthy Brown
+    (1.0, 0.753, 0.796),  # Pink (RGB 255, 192, 203)
+
+    # Cool Tones
+    (0.294, 0.0, 0.510),  # Indigo (RGB 75, 0, 130) - Deep Blue-Purple
+    (0.502, 0.0, 0.502),  # Purple (RGB 128, 0, 128) - More vibrant Purple
+    (0.251, 0.878, 0.816),# Turquoise (RGB 64, 224, 208) - Blue-Green
+    (0.0, 0.502, 0.502),  # Teal (RGB 0, 128, 128)
+
+    # Earthy/Muted Tones
+    (0.502, 0.502, 0.0),  # Olive (RGB 128, 128, 0) - Muted Yellow-Green
+    (0.439, 0.502, 0.565),# Slate Gray (RGB 112, 128, 144) - Muted Blue-Gray
+    (0.753, 0.753, 0.0)   # Chartreuse (RGB 192, 192, 0) - Muted Yellow-Green
+]
+    
+    
     fig, ax = plt.subplots() # This creates both a figure and an axes for you
     # %matplotlib
     deep_pink = (1.0000, 0.0784, 0.5765)
     normalized_gold_rgb = (1.0, 215 / 255, 0.0)
     radius_el = 15 #[um]
     radius_cell = 9 #[um]
+    
+    
+    col = 0
     for point in Grid:
         # point will be an array like [x, y]
-        circle = plt.Circle((point[0], point[1]), radius_el, color=normalized_gold_rgb, fill=True)
+        circle = plt.Circle((point[0], point[1]), radius_el, color=tertiary_color_palette[col], fill=True)
+        
         ax.add_patch(circle) # Add each circle patch to the axes
+        col = col+1
+        
+        
+        
     x = Neuron_group.x
     y = Neuron_group.y
     for neu in range(Nn):
         
-        circle = plt.Circle((x[neu]/um, y[neu]/um), radius_cell, color=deep_pink, fill=True)
+        circle = plt.Circle((x[neu]/um, y[neu]/um), radius_cell, color='k', fill=True)
         ax.add_patch(circle) # Add each circle patch to the axes
         
     ax.set_aspect('equal', adjustable='box')
-    min_x = np.min(Grid[:, 0]) - radius * 1.2 # Add some buffer
-    max_x = np.max(Grid[:, 0]) + radius * 1.2
-    min_y = np.min(Grid[:, 1]) - radius * 1.2
-    max_y = np.max(Grid[:, 1]) + radius * 1.2
+    min_x = np.min(Grid[:, 0]) - radius_el * 1.2 # Add some buffer
+    max_x = np.max(Grid[:, 0]) + radius_el * 1.2
+    min_y = np.min(Grid[:, 1]) - radius_el * 1.2
+    max_y = np.max(Grid[:, 1]) + radius_el * 1.2
 
     ax.set_xlim(min_x, max_x)
     ax.set_ylim(min_y, max_y)
@@ -1434,6 +1497,13 @@ def Plot_NeuroDevice(Grid,Neuron_group,Nn):
     plt.xlabel("[um]")
     plt.ylabel("[um]")
     plt.show()  
+
+
+
+
+
+
+
 
 
 
