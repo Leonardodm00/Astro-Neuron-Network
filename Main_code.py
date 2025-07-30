@@ -104,7 +104,7 @@ sed = 39                             # random number seed
 devices.device.seed(sed)            # set the seed for all the random number realisations
 
 
-Simulated_network = 'Neuronal' # Astrocytic/Neuronal/Full
+Simulated_network = 'Astrocytic' # Astrocytic/Neuronal/Full
 
 
 # --------- NEURON -----------
@@ -126,7 +126,11 @@ ADJ_neuro = np.array(([0,1,0,0],
 Given the nature of the link hte adjency matrix is ALWAYS symmetric
 
 '''
-Na = 3
+Na = 120
+
+# ----- Connectivity -----
+#TODO: for now is not needed connections will be
+#   randomly set
 ADJ_astro = np.array(([0,1,0],
                       [1,0,1],
                       [0,1,0]))
@@ -173,7 +177,7 @@ if Simulated_network == 'Full':
                            synapse_type=synapse_type)
     
     
-    # ----- SET POSITIONS AND CONNECTIONS -----
+    # ----- SET POSITIONS -----
     # Position neurons on a grid
     Coordinates = get2D_rnd_coordinates(Nn,c_min,c_max,sed)
     N.x = Coordinates[:,0]*um
@@ -185,7 +189,9 @@ if Simulated_network == 'Full':
     
     
     # --------- ASTROCYTE -----------
-    A,GJ = Astrocyte_Group(N_astro,ADJ_astro)
+    A,GJ = Astrocyte_Group(N_astro,ADJ_astro,sed)
+    
+    
     
     
     # --------- GLIOTRANSMISSION ----------- 
@@ -223,9 +229,13 @@ elif Simulated_network == 'Neuronal':
     
     
 elif Simulated_network == 'Astrocytic':   
-    
+ 
+    '''
+    Glutamate stimulation is delivered to randomly choosen astrocytes in number 
+    N_stim in the parameters.
+    '''
     # --------- ASTROCYTE -----------
-    Astro, GJ,P,Glu_Input = Astrocyte_Group(Na,ADJ_astro,Simulated_network)
+    Astro, GJ,P,Glu_Input = Astrocyte_Group(Na,ADJ_astro,Simulated_network,sed)
     
 
 
@@ -258,7 +268,7 @@ elif Simulated_network == 'Neuronal':
 elif Simulated_network == 'Astrocytic': 
     MonitorG = StateMonitor(Glu_Input, ['Y_bias_in'], record=True)
     MonitorA = StateMonitor(Astro, recording_stringA, record=True)
-    SpikesP = SpikeMonitor(Astro)
+    SpikesA = SpikeMonitor(Astro)
     SpikesP = SpikeMonitor(P)
 
 
@@ -446,17 +456,80 @@ show()
 
 
 #%%
+# --------- ASTROCYTE RASTER ---------
 
-fig.show()
+%matplotlib
+plt.figure()
+plt.plot(SpikesA.t / second, SpikesA.i, '.k', ms=4)
+plt.title("Astro Raster Plot")
+plt.xlabel("Time [s]")
+plt.ylabel("Astrocyte")
+plt.show()
 
-plt.figure(dpi=200)
-plt.plot(SpikesA.t / second, SpikesA.i, '.k', ms=0.7)
+#%%
+# --------- ASTROCYTE CALCIUM ---------
+# Get stimulated astrocytes idx
+Stim_astro = list(Glu_Input.j)
 
-show()
+# plt.figure()
+
+# for astro in range(Astro.N):
+#     if astro in Stim_astro:
+      
+#         plt.plot(MonitorA.t/second,MonitorA[astro].C/mmole + astro*0.0001,c='r')
+
+        
+#     else:    
+        
+#         plt.plot(MonitorA.t/second,MonitorA[astro].C/mmole + astro*0.0001,c='k')
+    
+# plt.show()    
+    
+
+# Generate the array of traces
+Trace_astro = []
+
+for astro in range(Astro.N):
+    
+    Trace_astro.append(list(MonitorA[astro].C/mmole))
+    
+Trace_astro = np.vstack(Trace_astro)    
+
+#
+min_trace = np.min(Trace_astro)
+max_trace = np.max(Trace_astro)
+
+Trace_astro_norm= normalize_to_range(Trace_astro, min_trace, max_trace, 0, 1)
+#
+from matplotlib.collections import LineCollection
+import resampy
+import matplotlib.colors as mcolors
+downs_factor = 100
+# Resample (for comp. feasability)
+Trace_astro_norm_res = resampy.resample(Trace_astro_norm, len(Trace_astro_norm[0,:]), len(Trace_astro_norm[0,:])/downs_factor,axis=1)
+
+#%%
+# Create color map
+colors = [(0, 0, 0), (1, 0, 0)] # This defines the start and end colors
+%matplotlib
+t_vec = np.linspace(0,len(Trace_astro_norm_res[0,:]),len(Trace_astro_norm_res[0,:]))
+# Create the colormap from this list of colors
+my_cmap = mcolors.LinearSegmentedColormap.from_list("BlackRed", colors)
+plt.figure()
+for astro in range(Astro.N):
+    plt.scatter(t_vec, np.ones(len(t_vec))*astro, c=Trace_astro_norm_res[astro,:], cmap='inferno', s=7,
+                vmin=np.min(Trace_astro_norm_res),  # Set the global minimum for the color scale
+                vmax=np.max(Trace_astro_norm_res))
+plt.title("Calcium traces")
+plt.xlabel("Time [ms]")
+plt.yticks([])
+plt.colorbar(label="Normalized [C]")
+plt.show()
+
 
 #%%
 
-# --------------- ELECTRODE RECORDINGS ---------------
+# --------------- ELECTRODE RECORDINGS NEURONAL CULTURE ---------------
 
 Grid = Get_12grid(pitch)
 
@@ -465,16 +538,11 @@ MEA_dict = Recording_sites(pitch_recsites,shift)
 # --- Plot Device + Neurons
 %matplotlib
 
-Plot_NeuroDevice(Grid,N,Nn)
-
-
-#%%
-# Fit NN algorithm
+Plot_CultureDevice(Grid,N,Nn)
 
 Traces = Electrode_recording(MEA_dict,N,MonitorN,electrode_dist,neuron_radius,electrode_radius)
 
-#%%
-el = 3
+
 t_vec = np.linspace(0,len(Traces[0]),len(Traces[0]))
 
 plt.figure()
@@ -510,9 +578,38 @@ for ch in range(12):
         col = col+1
 plt.show()
 
-
 #%%
-# --------- SAVE RAW TRACES ----------
+
+# --------------- ELECTRODE RECORDINGS NEURONAL CULTURE ---------------
+
+Grid = Get_12grid(pitch)
+
+MEA_dict = Recording_sites(pitch_recsites,shift)
+
+# --- Plot Device + Neurons
+%matplotlib
+
+Plot_CultureDevice(Grid,A,Na)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
