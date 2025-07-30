@@ -98,17 +98,17 @@ oscillations = 'AM'
 # ------------------------- PARAMETERS -------------------------
 
 # --------- SIMULATION -----------
-simtime = 60 * second               # simulation time
+simtime = 100 * second               # simulation time
 # transient = 3 * second              # time omitted as transient
 sed = 39                             # random number seed
 devices.device.seed(sed)            # set the seed for all the random number realisations
 
 
-Simulated_network = 'Astrocytic' # Astrocytic/Neuronal/Full
+Simulated_network = 'Full' # Astrocytic/Neuronal/Full
 
 
 # --------- NEURON -----------
-Nn = 300
+Nn = 4
 neuron_radius = 9 #[um]
 # --------- SYNAPTIC -----------
 
@@ -126,7 +126,7 @@ ADJ_neuro = np.array(([0,1,0,0],
 Given the nature of the link hte adjency matrix is ALWAYS symmetric
 
 '''
-Na = 120
+Na = 3
 
 # ----- Connectivity -----
 #TODO: for now is not needed connections will be
@@ -177,11 +177,11 @@ if Simulated_network == 'Full':
                            synapse_type=synapse_type)
     
     
-    # ----- SET POSITIONS -----
-    # Position neurons on a grid
-    Coordinates = get2D_rnd_coordinates(Nn,c_min,c_max,sed)
-    N.x = Coordinates[:,0]*um
-    N.y = Coordinates[:,1]*um
+    # # ----- SET POSITIONS -----
+    # # Position neurons on a grid
+    # Coordinates = get2D_rnd_coordinates(Nn,c_min,c_max,sed)
+    # N.x = Coordinates[:,0]*um
+    # N.y = Coordinates[:,1]*um
     
     
     
@@ -189,18 +189,18 @@ if Simulated_network == 'Full':
     
     
     # --------- ASTROCYTE -----------
-    A,GJ = Astrocyte_Group(N_astro,ADJ_astro,sed)
+    Astro,GJ = Astrocyte_Group(Na,ADJ_astro,Simulated_network,sed)
     
     
     
     
     # --------- GLIOTRANSMISSION ----------- 
-    GT = Gliotransmission(N_astro,ics,Astro)
+    GT = Gliotransmission(Na,ics,Astro)
     
     
     # --------- ASTRO-NEURON LINKS ----------- 
     # --- Synapse to astro ---
-    StoA = Synapse_to_astro(S,A,ADJ_SynAstro)
+    StoA = Synapse_to_astro(S,Astro,ADJ_SynAstro)
     
     # --- Astro to synapse ---
     AtoS = Astro_to_Syn(GT,S,ADJ_AstroSyn)
@@ -246,17 +246,18 @@ elif Simulated_network == 'Astrocytic':
 # recording_stringN = ['V','I_syn','I_ampa','I_nmda','I_cell']
 recording_stringN = ['V','I_cell']
 recording_stringS = ['u_S','x_S','Y_S']
-recording_stringA = ['C','I','Gamma_A','I_coupling_tot']
+recording_stringA = ['C','I','Gamma_A','I_coupling_tot','Y_extra']
 recording_stringGT = ['G_A','x_A']
 
 
 if Simulated_network == 'Full':
     
-    MonitorS = StateMonitor(S, recording_stringS, record=True)
+    MonitorS2 = StateMonitor(S, recording_stringS, record=True)
     MonitorA = StateMonitor(Astro, recording_stringA, record=True)
     MonitorN = StateMonitor(N, recording_stringN, record=True)
+    MonitorGT = StateMonitor(GT, recording_stringGT, record=True)
     SpikesN = SpikeMonitor(N)
-    SpikesA = SpikeMonitor(A)
+    SpikesA = SpikeMonitor(Astro)
     
 
 elif Simulated_network == 'Neuronal':
@@ -380,6 +381,36 @@ show()
 
 #%%
 
+# ASTROCYTIC released glutamate 
+
+fig, (ax1, ax2, ax3) = plt.subplots(3, 1) # Added figsize for better viewing
+
+
+
+
+ax1.plot(MonitorGT.t / second, MonitorGT[0].G_A, 'k', linewidth=0.7,label='[Glu]')
+# ax1.plot(SpikesN.t/second,SpikesN[0].i+3,'.g', ms=5,label='Spikes')
+ax1.set_ylabel('Mol')
+ax1.legend()
+
+
+ax2.plot(MonitorGT.t / second, MonitorGT[1].G_A, 'k', linewidth=0.7)
+# ax2.plot(SpikesN.t/second,SpikesN[1].i+3,'.g', ms=5)
+ax2.set_ylabel('Mol')
+
+
+ax3.plot(MonitorGT.t / second, MonitorGT[2].G_A, 'k', linewidth=0.7)
+# ax3.plot(SpikesN.t/second,SpikesN[2].i+3,'.g', ms=5)
+# fig.show()
+ax3.set_ylabel('Mol')
+ax3.set_xlabel('Time [s]')
+# plt.figure(dpi=200)
+# plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
+
+show()
+
+#%%
+
 # SYNAPTIC CURRENTS
 
 
@@ -427,23 +458,23 @@ fig, (ax1, ax2, ax3) = plt.subplots(3, 1) # Added figsize for better viewing
 
 maxC = np.max(MonitorA[0].C)
 maxI = np.max(MonitorA[0].I)
-ax1.plot(MonitorA.t/second, MonitorA[0].C/maxC, 'k', label='Calcium',color=color1)
-ax1.plot(MonitorA.t/second, MonitorA[0].I/maxI, 'r', label='IP_3',color=color2)
+ax1.plot(MonitorA.t/second, MonitorA[0].C/umole, 'k', label='Calcium',color=color1)
+# ax1.plot(MonitorA.t/second, MonitorA[0].I/maxI, 'r', label='IP_3',color=color2)
 ax1.plot(MonitorA.t/second, MonitorA[0].Gamma_A, 'b', label='Fraq. bounded receptors',color=color3)
 # ax1.plot(SpikesN.t/second, SpikesN[0].i+1e-11, '.g', ms=5, label='Spikes') # Or a more descriptive label like 'Neuron SpikesN'
 ax1.set_ylabel('A')
 ax1.legend()
 
 
-ax2.plot(MonitorA.t/second, MonitorA[1].C/maxC, 'k',color=color1)
-ax2.plot(MonitorA.t/second, MonitorA[1].I/maxI, 'r',color=color2)
+ax2.plot(MonitorA.t/second, MonitorA[1].C/umole, 'k',color=color1)
+# ax2.plot(MonitorA.t/second, MonitorA[1].I/maxI, 'r',color=color2)
 ax2.plot(MonitorA.t/second, MonitorA[1].Gamma_A, 'b',color=color3)
 # ax2.plot(SpikesN.t/second,SpikesN[1].i+1e-11,'.g', ms=5)
 ax2.set_ylabel('A')
 
 
-ax3.plot(MonitorA.t/second, MonitorA[2].C/maxC, 'k',color=color1)
-ax3.plot(MonitorA.t/second, MonitorA[2].I/maxI, 'r',color=color2)
+ax3.plot(MonitorA.t/second, MonitorA[2].C/umole, 'k',color=color1)
+# ax3.plot(MonitorA.t/second, MonitorA[2].I/maxI, 'r',color=color2)
 ax3.plot(MonitorA.t/second, MonitorA[2].Gamma_A, 'b',color=color3)
 # ax3.plot(SpikesN.t/second,SpikesN[2].i+1e-11,'.g', ms=5)
 # fig.show()
@@ -469,7 +500,7 @@ plt.show()
 #%%
 # --------- ASTROCYTE CALCIUM ---------
 # Get stimulated astrocytes idx
-Stim_astro = list(Glu_Input.j)
+# Stim_astro = list(Glu_Input.j)
 
 # plt.figure()
 
@@ -590,6 +621,42 @@ MEA_dict = Recording_sites(pitch_recsites,shift)
 %matplotlib
 
 Plot_CultureDevice(Grid,A,Na)
+
+#%%
+
+# ----------- FULL -------------
+# Comparison between coupled and decopuled Neuron-Astro networks i synaptic release Y_S
+
+fig, (ax1, ax2, ax3) = plt.subplots(3, 1) # Added figsize for better viewing
+
+
+
+
+ax1.plot(MonitorS1.t / second, MonitorS1[0].Y_S/umole, 'k', linewidth=3,label='Coupled')
+ax1.plot(MonitorS2.t / second, MonitorS2[0].Y_S/umole, '--','c', linewidth=2,label='Decoupled')
+# ax1.plot(SpikesN.t/second,SpikesN[0].i+3,'.g', ms=5,label='Spikes')
+ax1.set_ylabel('Mol')
+ax1.legend()
+
+
+ax2.plot(MonitorS1.t / second, MonitorS1[1].Y_S/umole, 'k', linewidth=3)
+ax2.plot(MonitorS2.t / second, MonitorS2[1].Y_S/umole, '--','c', 'k', linewidth=2)
+# ax2.plot(SpikesN.t/second,SpikesN[1].i+3,'.g', ms=5)
+ax2.set_ylabel('Mol')
+
+
+ax3.plot(MonitorS1.t / second, MonitorS1[2].Y_S/umole, 'k', linewidth=3)
+ax3.plot(MonitorS2.t / second, MonitorS2[2].Y_S/umole, '--','c', 'k', linewidth=2)
+# ax3.plot(SpikesN.t/second,SpikesN[2].i+3,'.g', ms=5)
+# fig.show()
+ax3.set_ylabel('Mol')
+ax3.set_xlabel('Time [s]')
+# plt.figure(dpi=200)
+# plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
+
+show()
+
+
 
 
 
