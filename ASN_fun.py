@@ -14,6 +14,34 @@ from brian2 import devices
 
 from sklearn.neighbors import KDTree
 # clear_cache('cython')
+def normalize_to_range(data, min_old, max_old, min_new, max_new):
+    """
+    Normalizes data from an old range [min_old, max_old]
+    to a new range [min_new, max_new].
+
+    Args:
+        data (numpy.ndarray or list): The input data to normalize.
+        min_old (float): The minimum value of the original data range.
+        max_old (float): The maximum value of the original data range.
+        min_new (float): The desired minimum value of the normalized data.
+        max_new (float): The desired maximum value of the normalized data.
+
+    Returns:
+        numpy.ndarray: The normalized data.
+    """
+    # Handle the case where min_old == max_old to avoid division by zero
+    if max_old == min_old:
+        # If all data points are the same, they should all map to the midpoint of the new range
+        # Or, if you want them all to be min_new, use min_new directly.
+        # Here, we map to the midpoint.
+        return np.full_like(data, (min_new + max_new) / 2.0, dtype=float)
+
+    # Convert data to numpy array for consistent operations
+    data = np.asarray(data, dtype=float)
+
+    # Apply the normalization formula
+    normalized_data = (data - min_old) * ((max_new - min_new) / (max_old - min_old)) + min_new
+    return normalized_data
 def Get_norm(tr,td):
     
     '''
@@ -141,6 +169,14 @@ def get_Astroparam(oscillations = 'AM',**kwargs):
         'rho_e': 6.5e-4,           # Ratio of astrocytic vesicle volume/ESS volume
         'Omega_e': 5./second,      # Gliotransmitter clearance rate (think about distributed release)
         'spill_over': 0.75,         # Spill over parameter
+        
+        # Connection probability
+        'conn_dist' : 150, # [um]
+        'c_min' : 0, #[um]
+        'c_max' : 1100, # [um]
+        
+        # Stimulation
+        
       
     }
 
@@ -311,7 +347,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         # Synaptic efficacy
         'Xi': 0.8,
         
-        # COnnection probability
+        # Connection probability
         'connprob' : 0.107,
         
        
@@ -862,9 +898,56 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
 
 
 # -------------- ASTROCYTE GROUP --------------
+def astrocyte_connections(Astrocyte_group,Connection_dist):
+    
+    '''
+    This function aims to define pre and post astrocyte for connections
+    '''
+    Na = Astrocyte_group.N
+    
+    # Generate the KDTree form the neuronal position data
+    x_pos = np.array(Astrocyte_group[:].x/um)
+    y_pos = np.array(Astrocyte_group[:].y/um)
+    
+    pos = np.column_stack((x_pos, y_pos))
 
+    # Generate the KDTree
+    Astro_positions = KDTree(pos)
+    
+    Source = []
+    Target = []
+    
+    astro_idx = 0
+    for astro in pos:
+        
+        # Extract indicies
+        A_idx = Astro_positions.query_radius(astro.reshape(1, -1), r=Connection_dist)
+        A_idx = np.array(A_idx[0])
+        
+        if A_idx.size == 0: # Empty array....no post units
+            continue
+        
+        # Construct pre vector
+        source_astro = np.full(len(A_idx), astro_idx)
+        
+        # Update variables 
+        Source.append(source_astro)
+        Target.append(A_idx)
+        
+        astro_idx = astro_idx+1
+        
+        
+        
+    
+        
+    return np.concatenate(Source),np.concatenate(Target)  
+    
+    
+    
+    
+    
 
-def Astrocyte_Group(N_astro,ADJ,Simulated_network):
+def Astrocyte_Group(N_astro,ADJ,Simulated_network,sed):
 # ------ Astrocyte core equations ------
 
     eqs_A = Equations('''
@@ -922,6 +1005,13 @@ def Astrocyte_Group(N_astro,ADJ,Simulated_network):
         Astro.h = 'rand()'
         
         
+    # ----- SET POSITIONS -----
+    # Position neurons on a grid
+    Coordinates = get2D_rnd_coordinates(N_astro,Params_astroGT['c_min'],Params_astroGT['c_max'],sed)
+    Astro.x = Coordinates[:,0]*um
+    Astro.y = Coordinates[:,1]*um
+        
+        
     # ----- Gap-junction based astro links -----
     
     Gap_Eq = Equations('''
@@ -945,24 +1035,34 @@ def Astrocyte_Group(N_astro,ADJ,Simulated_network):
     
     
     # ----- Connections -----
+    '''
+    Astros are connected by gap-junctions within distance of 100 um
     
-    Source_astro,Target_astro = unfold_ADJ(ADJ)
+    Paper: A Computational Model of Interactions Between Neuronal and 
+        Astrocytic Networks: The Role of Astrocytes in the Stability of the Neuronal Firing Rate
     
-    GJ.connect(i = Source_astro,j= Target_astro)
+    '''
+    Source,Target = astrocyte_connections(Astro,Params_astroGT['conn_dist'])
     
-    
+    GJ.connect(i=Source , j= Target)
     
     
     
     if Simulated_network == 'Astrocytic':
+        
+        import random
+        random.seed(sed)    
+        
+        
     # ---------- EXTERNAL STIMULATION ----------
         Params_astroGT.update({'tau_glustim' :25*ms}) # As for synapse params
         Params_astroGT.update({'Y_bias_max' : 1*mmole}) # Maximum glutamate concentration
         Params_astroGT.update({'poisson_rate' : 2*Hz}) # Lambda parameter of the poisson process
+        Params_astroGT.update({'N_stim' : 40}) # Lambda parameter of the poisson process
         
         
         # --- Poisson process ---
-        P = PoissonGroup(1, Params_astroGT['poisson_rate'])
+        P = PoissonGroup(Params_astroGT['N_stim'], Params_astroGT['poisson_rate'])
         
         
         # --- Equations ---
@@ -986,7 +1086,10 @@ def Astrocyte_Group(N_astro,ADJ,Simulated_network):
         Glu_Input = Synapses(P, Astro, model=Glu_stim_Eq,
                        on_pre=pre, on_post=post,namespace=Params_astroGT,method='exponential_euler')
     
-        Glu_Input.connect(i=0, j=0)
+        # Randomly choose N_stim neurons
+        random_astro = random.sample(range(0, Astro.N), Params_astroGT['N_stim'])
+        
+        Glu_Input.connect(i=np.arange(Params_astroGT['N_stim']), j=random_astro)
     
     
         
@@ -1437,7 +1540,7 @@ def get2D_rnd_coordinates(N,c_min,c_max,sed):
     return np.array(coordinates)
 
 
-def Plot_NeuroDevice(Grid,Neuron_group,Nn):
+def Plot_CultureDevice(Grid,Neuron_group,Nn):
     
     tertiary_color_palette = [
     # Warm Tones
@@ -1497,6 +1600,14 @@ def Plot_NeuroDevice(Grid,Neuron_group,Nn):
     plt.xlabel("[um]")
     plt.ylabel("[um]")
     plt.show()  
+
+
+
+
+
+
+
+
 
 
 
