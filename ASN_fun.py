@@ -162,7 +162,7 @@ def get_Astroparam(oscillations = 'AM',**kwargs):
         'zeta': 2.,                # Maximal reduction of receptor affinity by PKC
         'n': 1.,                   # Cooperativity of agonist binding reaction
         # --- Gliotransmitter release and time course        
-        'C_Theta': 0.5*umole,      # Ca^2+ threshold for exocytosis
+        'C_Theta': 0.3*umole,      # Ca^2+ threshold for exocytosis
         'Omega_A': 0.6/second,     # Gliotransmitter recycling rate
         'U_A': 0.6,                # Gliotransmitter release probability
         'G_T': 200.*mmole,         # Total vesicular gliotransmitter
@@ -228,7 +228,7 @@ def get_Neuronparam(Adaptation=True,delta = 0,**kwargs):
     'gl': (0.3*msiemens*cm**-2) * Neuron_area, # maximal leak conductance (calculated with area)
     'g_AHP': g_AHP, # maximal conductance of AHP currents
     'VT': -30.4*mV,                      # alters firing threshold of neurons
-    'sigma': 4.1 * mV,                     # standard deviation of the noisy voltage fluctuations
+    'sigma': 6.1 * mV,                     # standard deviation of the noisy voltage fluctuations
     'Tau_max': 608 * ms,                # Decay factor of AHP
     
     'I_inj': 10*pA, # Injected current
@@ -564,10 +564,10 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
         
         # -------------- Event based update --------------
         
-        
         pre = '''
         
         U_0 =  (1 - Gamma_S) * U_0__star + alpha * Gamma_S
+       
         u_S += U_0 * (1 - u_S)
         r_S = u_S * x_S # released synaptic neurotransmitter resources
         x_S -= r_S
@@ -845,11 +845,12 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
     
     # -------------- Connections --------------
     #TODO: UNDO THIS
-    # Source_neuron,Target_neuron = unfold_ADJ(ADJ)
+    Source_neuron,Target_neuron = unfold_ADJ(ADJ)
     
-    # S.connect(i=Source_neuron, j=Target_neuron)
+    S.connect(i=Source_neuron, j=Target_neuron)
     
-    S.connect(p=params_Syn['connprob'])
+    # --------- RANDOM -----------
+    # S.connect(p=params_Syn['connprob'])
     
     
     
@@ -1042,9 +1043,17 @@ def Astrocyte_Group(N_astro,ADJ,Simulated_network,sed):
         Astrocytic Networks: The Role of Astrocytes in the Stability of the Neuronal Firing Rate
     
     '''
-    Source,Target = astrocyte_connections(Astro,Params_astroGT['conn_dist'])
+    
+    # # --------- RANDOM -----------
+    # Source,Target = astrocyte_connections(Astro,Params_astroGT['conn_dist'])
+    
+    
+    # -------- MATRIX BASED --------
+    Source,Target = unfold_ADJ(ADJ)
     
     GJ.connect(i=Source , j= Target)
+    
+    
     
     
     
@@ -1110,8 +1119,8 @@ def Gliotransmission(N_astro,ics,Astro):
     eqs_GT = Equations('''
             # Gliotransmitter
             C : mole (linked)
-            dx_A/dt = Omega_A * (1 - x_A) : 1 (clock-driven)  # Fraction of gliotransmitter resources available for release
-            dG_A/dt = -Omega_e*G_A (clock-driven) : mole  # gliotransmitter concentration in the extracellular space
+            dx_A/dt = Omega_A * (1 - x_A) : 1   # Fraction of gliotransmitter resources available for release
+            dG_A/dt = -Omega_e*G_A  : mole  # gliotransmitter concentration in the extracellular space
             ''')
     gliot_release = '''
     G_A += rho_e * G_T * U_A * x_A
@@ -1120,7 +1129,7 @@ def Gliotransmission(N_astro,ics,Astro):
     threshold = 'C>C_Theta'
     refractory = 'C>C_Theta'
     
-    
+    Params_astroGT = get_Astroparam()
     Glio_release = NeuronGroup(N_astro, eqs_GT,
                             # The following formulation makes sure that a "spike" is
                             # only triggered at the first threshold crossing
@@ -1172,7 +1181,7 @@ def Synapse_to_astro(synapse,Astro,ADJ):
 
 
 
-def Astro_to_Syn(Glio_relaease,synapse,ADJ):
+def Astro_to_Syn(Glio_release,synapse,ADJ):
     # ---- Astro-syn ----
     # Glio_relaease is the reference neuronal group
     Astro_Syn = Synapses(Glio_release,synapse,
@@ -1600,8 +1609,6 @@ def Plot_CultureDevice(Grid,Neuron_group,Nn):
     plt.xlabel("[um]")
     plt.ylabel("[um]")
     plt.show()  
-
-
 
 
 
