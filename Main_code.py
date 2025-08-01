@@ -38,9 +38,16 @@ A = astrocyte;
 <--> = Gap-junction mediated links between astrocytes;
 --> = Synaptic connections.
 
+FEATURES:
+    1) Neurons and astrocytic positions are randomly set.
 
 
 
+
+
+REFERENCES:
+    1) Distance dependent prob of conneciton = Estimating neuronal connectivity from axonal and dendritic density fields
+    2) Astrocyte connections: A Computational Model of Interactions Between Neuronal and Astrocytic Networks: The Role of Astrocytes in the Stability of the Neuronal Firing Rate
 
 '''
 
@@ -98,28 +105,27 @@ oscillations = 'AM'
 # ------------------------- PARAMETERS -------------------------
 
 # --------- SIMULATION -----------
-simtime = 100 * second               # simulation time
+simtime = 20 * second               # simulation time
 # transient = 3 * second              # time omitted as transient
 sed = 39                             # random number seed
 devices.device.seed(sed)            # set the seed for all the random number realisations
 
 
-Simulated_network = 'Full' # Astrocytic/Neuronal/Full
+Simulated_network = 'Neuronal' # Astrocytic/Neuronal/Full
 
 
 # --------- NEURON -----------
-Nn = 4
+Nn = 100
 neuron_radius = 9 #[um]
 # --------- SYNAPTIC -----------
 
 # ----- Connectivity -----
-#TODO: for now is not needed connections will be
-#   randomly set
-ADJ_neuro = np.array(([0,1,0,0],
-                      [0,0,1,0],
-                      [0,0,0,1],
-                      [0,0,0,0]))
-
+# Can be directly an ADJ or a string: Random, Distance
+# Connection_neuro = np.array(([0,1,0,0],
+#                               [0,0,1,0],
+#                               [0,0,0,1],
+#                               [0,0,0,0]))
+Connection_neuro = 'Distance'
 
 # --------- ASTROCYTE and GJ ----------- 
 '''
@@ -129,12 +135,11 @@ Given the nature of the link hte adjency matrix is ALWAYS symmetric
 Na = 3
 
 # ----- Connectivity -----
-#TODO: for now is not needed connections will be
-#   randomly set
-ADJ_astro = np.array(([0,1,0],
-                      [1,0,1],
-                      [0,1,0]))
-
+# Can be directly an ADJ or a string: Distance
+# Connection_astro= np.array(([0,1,0],
+#                             [1,0,1],
+#                             [0,1,0]))
+Connection_astro = 'Distance'
 
 
 # --------- GLIOTRANSMISSION ----------- 
@@ -170,18 +175,14 @@ c_max = 1100 #[um]
 
 if Simulated_network == 'Full':
     # --------- NEURON and SYNAPSE -----------
-    N,S = Neuronal_Network(Nn,ADJ_neuro, RandomKinetics=RandomKinetics, OnlyExc=OnlyExc,
+    N,S = Neuronal_Network(Nn,Connection_neuro, RandomKinetics=RandomKinetics, OnlyExc=OnlyExc,
                            Syn_Currents_model=Syn_Currents_model,add_delay=add_delay,
                            delay_mode=delay_mode,Max_delay=Max_delay,ics=ics,
                            std_pers=std_pers, Simulated_network=Simulated_network,Decay_type=Decay_type,
                            synapse_type=synapse_type)
     
     
-    # # ----- SET POSITIONS -----
-    # # Position neurons on a grid
-    # Coordinates = get2D_rnd_coordinates(Nn,c_min,c_max,sed)
-    # N.x = Coordinates[:,0]*um
-    # N.y = Coordinates[:,1]*um
+
     
     
     
@@ -189,7 +190,7 @@ if Simulated_network == 'Full':
     
     
     # --------- ASTROCYTE -----------
-    Astro,GJ = Astrocyte_Group(Na,ADJ_astro,Simulated_network,sed)
+    Astro,GJ = Astrocyte_Group(Na,Connection_astro,Simulated_network,sed)
     
     
     
@@ -211,18 +212,13 @@ if Simulated_network == 'Full':
 elif Simulated_network == 'Neuronal':
 
     # --------- NEURON and SYNAPSE -----------
-    N,S = Neuronal_Network(Nn,ADJ_neuro, RandomKinetics=RandomKinetics, OnlyExc=OnlyExc,
+    N,S = Neuronal_Network(Nn,Connection_neuro, RandomKinetics=RandomKinetics, OnlyExc=OnlyExc,
                            Syn_Currents_model=Syn_Currents_model,add_delay=add_delay,
                            delay_mode=delay_mode,Max_delay=Max_delay,ics=ics,
                            std_pers=std_pers, Simulated_network=Simulated_network,Decay_type=Decay_type,synapse_type = synapse_type)
     
     
-    # ----- SET POSITIONS AND CONNECTIONS -----
-    # Position neurons on a grid
-
-    Coordinates = get2D_rnd_coordinates(Nn,c_min,c_max,sed)
-    N.x = Coordinates[:,0]*um
-    N.y = Coordinates[:,1]*um
+   
     
 
     
@@ -235,7 +231,7 @@ elif Simulated_network == 'Astrocytic':
     N_stim in the parameters.
     '''
     # --------- ASTROCYTE -----------
-    Astro, GJ,P,Glu_Input = Astrocyte_Group(Na,ADJ_astro,Simulated_network,sed)
+    Astro, GJ,P,Glu_Input = Astrocyte_Group(Na,Connection_astro,Simulated_network,sed)
     
 
 
@@ -281,7 +277,7 @@ net_.run(simtime,report='text', profile=True)
 
 
 
-#%%
+
 spike_trains = SpikesN.spike_trains()
 # --------------------- PLOTS ---------------------
 # ------- NEURONS -------
@@ -539,7 +535,7 @@ downs_factor = 100
 # Resample (for comp. feasability)
 Trace_astro_norm_res = resampy.resample(Trace_astro_norm, len(Trace_astro_norm[0,:]), len(Trace_astro_norm[0,:])/downs_factor,axis=1)
 
-#%%
+
 # Create color map
 colors = [(0, 0, 0), (1, 0, 0)] # This defines the start and end colors
 %matplotlib
@@ -561,57 +557,17 @@ plt.show()
 #%%
 
 # --------------- ELECTRODE RECORDINGS NEURONAL CULTURE ---------------
-
-Grid = Get_12grid(pitch)
-
-MEA_dict = Recording_sites(pitch_recsites,shift)
-
-# --- Plot Device + Neurons
-%matplotlib
-
-Plot_CultureDevice(Grid,N,Nn)
-
-Traces = Electrode_recording(MEA_dict,N,MonitorN,electrode_dist,neuron_radius,electrode_radius)
+Traces,MEA_dict = Electrode_traces(pitch,pitch_recsites,shift,N,MonitorN,electrode_dist,neuron_radius,electrode_radius)
 
 
-t_vec = np.linspace(0,len(Traces[0]),len(Traces[0]))
 
-plt.figure()
-tertiary_color_palette = [
-    # Warm Tones
-    (1.0, 0.647, 0.0),    # Orange (RGB 255, 165, 0)
-    (1.0, 0.498, 0.314),  # Coral (RGB 255, 127, 80)
-    (0.8, 0.0, 0.0),      # Dark Red / Maroon-ish (RGB 204, 0, 0) - Not pure Red (1,0,0)
-    (0.627, 0.322, 0.176),# Sienna (RGB 160, 82, 45) - Earthy Brown
-    (1.0, 0.753, 0.796),  # Pink (RGB 255, 192, 203)
 
-    # Cool Tones
-    (0.294, 0.0, 0.510),  # Indigo (RGB 75, 0, 130) - Deep Blue-Purple
-    (0.502, 0.0, 0.502),  # Purple (RGB 128, 0, 128) - More vibrant Purple
-    (0.251, 0.878, 0.816),# Turquoise (RGB 64, 224, 208) - Blue-Green
-    (0.0, 0.502, 0.502),  # Teal (RGB 0, 128, 128)
 
-    # Earthy/Muted Tones
-    (0.502, 0.502, 0.0),  # Olive (RGB 128, 128, 0) - Muted Yellow-Green
-    (0.439, 0.502, 0.565),# Slate Gray (RGB 112, 128, 144) - Muted Blue-Gray
-    (0.753, 0.753, 0.0)   # Chartreuse (RGB 192, 192, 0) - Muted Yellow-Green
-]
 
-col = 0
-for ch in range(12):
-    
-    # if ch == 9:
-    #     plt.plot(t_vec,Traces[ch]*0.1-np.mean(Traces[el])+ch*0.1,color = tertiary_color_palette[col])
-    #     col = col+1
-        
-    # else:
-        plt.plot(t_vec,Traces[ch]-np.mean(Traces[el])+ch*0.1,color = tertiary_color_palette[col])
-        col = col+1
-plt.show()
 
 #%%
 
-# --------------- ELECTRODE RECORDINGS NEURONAL CULTURE ---------------
+# --------------- ASTROCYTIC NETWORK ---------------
 
 Grid = Get_12grid(pitch)
 
@@ -655,6 +611,15 @@ ax3.set_xlabel('Time [s]')
 # plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
 
 show()
+
+
+
+
+
+
+
+
+
 
 
 
