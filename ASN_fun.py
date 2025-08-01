@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -8,12 +9,56 @@ import scipy.io
 import pdb
 import os
 
-import random
+
 from brian2 import *
 from brian2 import devices
 
 from sklearn.neighbors import KDTree
-# clear_cache('cython')
+
+
+
+
+def Distance_based_connections(N,params_Syn,sed):
+    
+    '''
+    The ADJ matrix must comply to the following concention:
+        rows    : pre
+        columns : post
+    
+    '''
+    
+    import random
+    random.seed(sed)
+    
+    
+    # Retrieve number of neurons and pre initialize the adj matrix
+    Nn = N.N
+    
+    ADJ = np.zeros((Nn,Nn))
+    
+    for neu_pre in range(Nn):
+        for neu_post in range(Nn):
+            
+            # Sort out same neuron
+            if neu_pre == neu_post:
+                continue
+            # Define the distance
+            else:
+            
+            
+                d = np.sqrt( (N[neu_post].x/um - N[neu_pre].x/um)**2 + (N[neu_post].y/um - N[neu_pre].y/um)**2 )
+                
+                # Distance dependent probability
+                prob = -d * params_Syn['slope'] + params_Syn['intercept']
+                
+                # Generate a random number; if less than prob a connection is established
+                rnd_num = random.random()
+                if  rnd_num <= prob:
+                    
+                    ADJ[neu_pre,neu_post] = 1
+                
+        
+    return ADJ 
 def normalize_to_range(data, min_old, max_old, min_new, max_new):
     """
     Normalizes data from an old range [min_old, max_old]
@@ -171,7 +216,7 @@ def get_Astroparam(oscillations = 'AM',**kwargs):
         'spill_over': 0.75,         # Spill over parameter
         
         # Connection probability
-        'conn_dist' : 150, # [um]
+        'conn_dist' : 150, # [um] 
         'c_min' : 0, #[um]
         'c_max' : 1100, # [um]
         
@@ -228,10 +273,10 @@ def get_Neuronparam(Adaptation=True,delta = 0,**kwargs):
     'gl': (0.3*msiemens*cm**-2) * Neuron_area, # maximal leak conductance (calculated with area)
     'g_AHP': g_AHP, # maximal conductance of AHP currents
     'VT': -30.4*mV,                      # alters firing threshold of neurons
-    'sigma': 6.1 * mV,                     # standard deviation of the noisy voltage fluctuations
+    'sigma': 4.1 * mV,                     # standard deviation of the noisy voltage fluctuations
     'Tau_max': 608 * ms,                # Decay factor of AHP
     
-    'I_inj': 10*pA, # Injected current
+    'I_inj': 15*pA, # Injected current
  
      # Synaptic contribution
      'we_AMPA' : 0.5, # Relative contribution of AMPA channels to the total syn weight
@@ -348,7 +393,12 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         'Xi': 0.8,
         
         # Connection probability
-        'connprob' : 0.107,
+        'conn_prob' : 0.107, # Random 
+        
+        # Distance dependent
+        'slope': 1/500, # in [um] sHOULD BE 500
+        'intercept': 1,
+        
         
        
     
@@ -426,7 +476,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
 
 
 
-def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
+def Neuronal_Network(Nn,Connection_var, RandomKinetics = False, OnlyExc= True ,
                      Syn_Currents_model = 'Kinetic',add_delay= False,delay_mode= 'random',
                      Max_delay = 10*ms,ics = True,std_pers = 0.01, Simulated_network = 'Neuronal',
                      Decay_type = 'Double_exp',synapse_type = 'neutral'):
@@ -820,21 +870,26 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
     params_NN = get_Neuronparam(Adaptation)
     
     
-    P = NeuronGroup(Nn, model=eqs_NN, name='Neuron*',namespace= params_NN, threshold='V>20*mV', refractory=2 * ms,
+    N = NeuronGroup(Nn, model=eqs_NN, name='Neuron*',namespace= params_NN, threshold='V>20*mV', refractory=2 * ms,
                         method='exponential_euler')
     
     # Initialize neuron parameters
-    P.V = -39 * mV                          # approximately resting membrane potential
-    P.I = '(rand() -0.5) * I_inj'          # Make neurons heterogeneously excitable
+    N.V = -39 * mV                          # approximately resting membrane potential
+    N.I = '(rand() -0.5) * I_inj'          # Make neurons heterogeneously excitable
+    
+    
+    
+    # ----- SET POSITIONS AND CONNECTIONS -----
+    # Position neurons on a grid
+
+    Coordinates = get2D_rnd_coordinates(N.N,c_min,c_max,sed)
+    N.x = Coordinates[:,0]*um
+    N.y = Coordinates[:,1]*um
     
     
     
     
-    
-    
-    
-    
-    S = Synapses(P, model=eqs_Syn,
+    S = Synapses(N, model=eqs_Syn,
                         on_pre=pre,
                         on_post=post,
                         name='Synapse*',
@@ -844,13 +899,40 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
     
     
     # -------------- Connections --------------
-    #TODO: UNDO THIS
-    Source_neuron,Target_neuron = unfold_ADJ(ADJ)
+    # Check the type of connection scheme and implement the connection
+    if isinstance(Connection_var, str):
+        
+        
+        if Connection_var == 'Random':
+            # --- Random ---
+            S.connect(p=params_Syn['connprob'])
+            
+        elif Connection_var == 'Distance':
+            
+            ADJ_ = Distance_based_connections(N,params_Syn,sed)
+            
+                
+            Source_neuron,Target_neuron = unfold_ADJ(ADJ_)
+            
+            S.connect(i=Source_neuron, j=Target_neuron)
+        
+      
+          
+        
+        
+        
+        
+        
+    elif isinstance(Connection_var, numpy.ndarray):
+        
     
-    S.connect(i=Source_neuron, j=Target_neuron)
     
-    # --------- RANDOM -----------
-    # S.connect(p=params_Syn['connprob'])
+        Source_neuron,Target_neuron = unfold_ADJ(Connection_var)
+        
+        S.connect(i=Source_neuron, j=Target_neuron)
+    
+    
+    
     
     
     
@@ -892,7 +974,7 @@ def Neuronal_Network(Nn,ADJ, RandomKinetics = False, OnlyExc= True ,
         Y_T = params['Y_T']
         S.Y_S = '1.2 * rho_c * Y_T * rand()'
         
-    return P,S
+    return N,S
         
     
 
@@ -948,7 +1030,7 @@ def astrocyte_connections(Astrocyte_group,Connection_dist):
     
     
 
-def Astrocyte_Group(N_astro,ADJ,Simulated_network,sed):
+def Astrocyte_Group(N_astro,Connection_var,Simulated_network,sed):
 # ------ Astrocyte core equations ------
 
     eqs_A = Equations('''
@@ -1044,14 +1126,18 @@ def Astrocyte_Group(N_astro,ADJ,Simulated_network,sed):
     
     '''
     
-    # # --------- RANDOM -----------
-    # Source,Target = astrocyte_connections(Astro,Params_astroGT['conn_dist'])
+    if isinstance(Connection_var, str):
     
     
-    # -------- MATRIX BASED --------
-    Source,Target = unfold_ADJ(ADJ)
+        # --------- RANDOM -----------
+        Source,Target = astrocyte_connections(Astro,Params_astroGT['conn_dist'])
+        GJ.connect(i=Source , j= Target)
     
-    GJ.connect(i=Source , j= Target)
+    elif isinstance(Connection_var, numpy.ndarray):
+        # -------- MATRIX BASED --------
+        Source,Target = unfold_ADJ(Connection_var)
+        
+        GJ.connect(i=Source , j= Target)
     
     
     
@@ -1609,7 +1695,58 @@ def Plot_CultureDevice(Grid,Neuron_group,Nn):
     plt.xlabel("[um]")
     plt.ylabel("[um]")
     plt.show()  
-
+    
+    
+def Electrode_traces(pitch,pitch_recsites,shift,N,MonitorN,electrode_dist,neuron_radius,electrode_radius):
+    Grid = Get_12grid(pitch)
+    
+    MEA_dict = Recording_sites(pitch_recsites,shift)
+    
+    # --- Plot Device + Neurons
+    
+    
+    Plot_CultureDevice(Grid,N,Nn)
+    
+    Traces = Electrode_recording(MEA_dict,N,MonitorN,electrode_dist,neuron_radius,electrode_radius)
+    
+    
+    t_vec = np.linspace(0,len(Traces[0]),len(Traces[0]))
+    
+    plt.figure()
+    tertiary_color_palette = [
+        # Warm Tones
+        (1.0, 0.647, 0.0),    # Orange (RGB 255, 165, 0)
+        (1.0, 0.498, 0.314),  # Coral (RGB 255, 127, 80)
+        (0.8, 0.0, 0.0),      # Dark Red / Maroon-ish (RGB 204, 0, 0) - Not pure Red (1,0,0)
+        (0.627, 0.322, 0.176),# Sienna (RGB 160, 82, 45) - Earthy Brown
+        (1.0, 0.753, 0.796),  # Pink (RGB 255, 192, 203)
+    
+        # Cool Tones
+        (0.294, 0.0, 0.510),  # Indigo (RGB 75, 0, 130) - Deep Blue-Purple
+        (0.502, 0.0, 0.502),  # Purple (RGB 128, 0, 128) - More vibrant Purple
+        (0.251, 0.878, 0.816),# Turquoise (RGB 64, 224, 208) - Blue-Green
+        (0.0, 0.502, 0.502),  # Teal (RGB 0, 128, 128)
+    
+        # Earthy/Muted Tones
+        (0.502, 0.502, 0.0),  # Olive (RGB 128, 128, 0) - Muted Yellow-Green
+        (0.439, 0.502, 0.565),# Slate Gray (RGB 112, 128, 144) - Muted Blue-Gray
+        (0.753, 0.753, 0.0)   # Chartreuse (RGB 192, 192, 0) - Muted Yellow-Green
+    ]
+    
+    col = 0
+    for ch in range(12):
+        
+        # if ch == 9:
+        #     plt.plot(t_vec,Traces[ch]*0.1-np.mean(Traces[el])+ch*0.1,color = tertiary_color_palette[col])
+        #     col = col+1
+            
+        # else:
+            plt.plot(t_vec,Traces[ch]-np.mean(Traces[el])+ch*0.1,color = tertiary_color_palette[col])
+            col = col+1
+    plt.show()
+    
+    
+    return Traces,MEA_dict
 
 
 
