@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Created on Tue Jul 22 17:06:17 2025
+Created on Tue Aug 12 17:53:15 2025
 
-@author: leona
+@author: Admin
 """
 
 
@@ -13,7 +13,7 @@ from brian2 import *
 import os
 
 
-os.chdir(r'C:\Users\Admin\Desktop\CURRENTS')
+os.chdir(r'C:\Users\Admin\Desktop\Leonardo\ASN')
 import ASN_fun
 
 
@@ -49,6 +49,11 @@ REFERENCES:
     1) Distance dependent prob of conneciton = Estimating neuronal connectivity from axonal and dendritic density fields
     2) Astrocyte connections: A Computational Model of Interactions Between Neuronal and Astrocytic Networks: The Role of Astrocytes in the Stability of the Neuronal Firing Rate
 
+    
+    
+    
+TODO:
+    1) Optimize and parallelize Electrode_recording
 '''
 
 
@@ -558,10 +563,77 @@ plt.show()
 
 # --------------- ELECTRODE RECORDINGS NEURONAL CULTURE ---------------
 Traces,MEA_dict = Electrode_traces(pitch,pitch_recsites,shift,N,MonitorN,electrode_dist,neuron_radius,electrode_radius)
+#%%
+clock_dt = defaultclock.dt 
+
+def get_Raster(Traces,dt,low_f=100,Visible=True):
+    from scipy import signal
+
+    from scipy.signal import find_peaks
+    '''
+    Alternatively an elliptic filter can be used.
+    Elliptic filters offer the steepest possible rolloff between the passband and stopband for a given filter order.
+    This makes them highly efficient for applications that require a sharp frequency cutoff. 
+    However, this superior performance comes at the cost of ripples in both the passband and the stopband.
+    
+    
+    '''
+    
+        # set up a filter to filter the voltage signal
+    fs = 1 / (dt / second)
+    fc = low_f                                          # Cut-off frequency of the filter
+    w = fc / (fs / 2)                                   # Normalize the frequency
+    b, a = signal.butter(2, w, 'high')
+    
+    APs = []
+    # voltagetraces = zeros((len(Traces),len(Traces[0])))
+    Raster = zeros((len(Traces),len(Traces[0])))
+    k = 0 
+    for Trace_temp in Traces:
+        
+        # Subtract the mean
+        Trace_temp = Trace_temp - np.mean(Trace_temp)
+        Voltagefilt = signal.filtfilt(b, a, Trace_temp)  # high pass filter
+        threshold = 4 * np.std(Voltagefilt)      #threshold to detect APs
+        APstemp, _ = find_peaks(abs(Voltagefilt), height=threshold)
+        for j in range(len(APstemp)):
+            APs = np.append(APs, [k,APstemp[j]])
+        # voltagetraces[k, :] = Voltagefilt
+
+        k = k+1
+        
+        Raster[k,APstemp] = 1
+        
+        
+        
+        
+    if Visible == 'True':
+        
+        
+            # Create the plot
+        plt.figure()
+        
+        # Plot the unit indices (y-axis) against the spike times (x-axis)
+        plt.scatter(APs[:, 1]/sec, APs[:, 0], s=5, marker='|')
+        
+        # Customize the plot
+        plt.title('Spiking Activity (Raster Plot)')
+        plt.xlabel('Time (s)')
+        plt.ylabel('Channel')
+        plt.yticks(np.unique(spike_data[:, 0]))  # Set y-ticks to be the unique unit indices
+        plt.grid(True)
+        plt.show()
+        
+    
+    
+        
+        
+    
+    return Raster
 
 
 
-
+Raster = get_Raster(Traces,clock_dt)
 
 
 
@@ -611,41 +683,6 @@ ax3.set_xlabel('Time [s]')
 # plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
 
 show()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
