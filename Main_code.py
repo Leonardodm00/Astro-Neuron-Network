@@ -585,42 +585,44 @@ def get_Raster(Traces,dt,low_f=100,Visible=True):
     w = fc / (fs / 2)                                   # Normalize the frequency
     b, a = signal.butter(2, w, 'high')
     
-    APs = []
+    APs_time = []
+    APs_unit = []
     # voltagetraces = zeros((len(Traces),len(Traces[0])))
     Raster = zeros((len(Traces),len(Traces[0])))
-    k = 0 
-    for Trace_temp in Traces:
-        
+    
+    for k in range(len(Traces)):
+        Trace_temp = Traces[k]
         # Subtract the mean
         Trace_temp = Trace_temp - np.mean(Trace_temp)
         Voltagefilt = signal.filtfilt(b, a, Trace_temp)  # high pass filter
         threshold = 4 * np.std(Voltagefilt)      #threshold to detect APs
         APstemp, _ = find_peaks(abs(Voltagefilt), height=threshold)
         for j in range(len(APstemp)):
-            APs = np.append(APs, [k,APstemp[j]])
+            APs_time = np.append(APs_time, APstemp[j])
+            APs_unit = np.append(APs_unit,k)
         # voltagetraces[k, :] = Voltagefilt
 
-        k = k+1
+       
         
         Raster[k,APstemp] = 1
         
         
         
         
-    if Visible == 'True':
+    if Visible:
         
         
             # Create the plot
         plt.figure()
         
         # Plot the unit indices (y-axis) against the spike times (x-axis)
-        plt.scatter(APs[:, 1]/sec, APs[:, 0], s=5, marker='|')
+        plt.scatter(APs_time/fs, APs_unit, s=5, marker='|')
         
         # Customize the plot
         plt.title('Spiking Activity (Raster Plot)')
         plt.xlabel('Time (s)')
         plt.ylabel('Channel')
-        plt.yticks(np.unique(spike_data[:, 0]))  # Set y-ticks to be the unique unit indices
+        
         plt.grid(True)
         plt.show()
         
@@ -683,12 +685,6 @@ ax3.set_xlabel('Time [s]')
 # plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
 
 show()
-
-
-
-
-
-
 
 
 
