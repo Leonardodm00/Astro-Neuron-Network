@@ -1,9 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Aug 12 17:53:15 2025
-
-@author: Admin
-"""
 
 
 import matplotlib.pyplot as plt
@@ -60,7 +54,8 @@ TODO:
 
 
 
-
+# Saving 
+Out_path = r'C:\Users\Admin\Desktop\Leonardo\ASN\Output Temp'
 
 
 
@@ -120,7 +115,7 @@ Simulated_network = 'Neuronal' # Astrocytic/Neuronal/Full
 
 
 # --------- NEURON -----------
-Nn = 100
+Nn = 200
 neuron_radius = 9 #[um]
 # --------- SYNAPTIC -----------
 
@@ -563,79 +558,45 @@ plt.show()
 
 # --------------- ELECTRODE RECORDINGS NEURONAL CULTURE ---------------
 Traces,MEA_dict = Electrode_traces(pitch,pitch_recsites,shift,N,MonitorN,electrode_dist,neuron_radius,electrode_radius)
-#%%
+
 clock_dt = defaultclock.dt 
 
-def get_Raster(Traces,dt,low_f=100,Visible=True):
-    from scipy import signal
+Raster,Raster_array = get_Raster(Traces,clock_dt)
 
-    from scipy.signal import find_peaks
-    '''
-    Alternatively an elliptic filter can be used.
-    Elliptic filters offer the steepest possible rolloff between the passband and stopband for a given filter order.
-    This makes them highly efficient for applications that require a sharp frequency cutoff. 
-    However, this superior performance comes at the cost of ripples in both the passband and the stopband.
+# ------- SAVE -------
+#%%
+# # Meta-data dict
+# Meta_data_nn ={
+    
+#     # 'Simulation_time': simtime, #[sec]
+    
+#     # 'fs': 1/(clock_dt/second), # [Hz]
+    
+#     # 'Raster_array': Raster_array,
+    
+#     # 'Electrode_traces': Traces,
+    
+#     # 'MEA_dict': MEA_dict,
     
     
-    '''
     
-        # set up a filter to filter the voltage signal
-    fs = 1 / (dt / second)
-    fc = low_f                                          # Cut-off frequency of the filter
-    w = fc / (fs / 2)                                   # Normalize the frequency
-    b, a = signal.butter(2, w, 'high')
     
-    APs_time = []
-    APs_unit = []
-    # voltagetraces = zeros((len(Traces),len(Traces[0])))
-    Raster = zeros((len(Traces),len(Traces[0])))
     
-    for k in range(len(Traces)):
-        Trace_temp = Traces[k]
-        # Subtract the mean
-        Trace_temp = Trace_temp - np.mean(Trace_temp)
-        Voltagefilt = signal.filtfilt(b, a, Trace_temp)  # high pass filter
-        threshold = 4 * np.std(Voltagefilt)      #threshold to detect APs
-        APstemp, _ = find_peaks(abs(Voltagefilt), height=threshold)
-        for j in range(len(APstemp)):
-            APs_time = np.append(APs_time, APstemp[j])
-            APs_unit = np.append(APs_unit,k)
-        # voltagetraces[k, :] = Voltagefilt
+    
+    
+    
+#     }
 
-       
-        
-        Raster[k,APstemp] = 1
-        
-        
-        
-        
-    if Visible:
-        
-        
-            # Create the plot
-        plt.figure()
-        
-        # Plot the unit indices (y-axis) against the spike times (x-axis)
-        plt.scatter(APs_time/fs, APs_unit, s=5, marker='|')
-        
-        # Customize the plot
-        plt.title('Spiking Activity (Raster Plot)')
-        plt.xlabel('Time (s)')
-        plt.ylabel('Channel')
-        
-        plt.grid(True)
-        plt.show()
-        
-    
-    
-        
-        
-    
-    return Raster
+# import json
+# os.chdir(Out_path)
+# # The 'w' flag opens the file in write mode
+# with open('Simulation_dict.json', 'w') as f:
+#     json.dump(Meta_data_nn, f, indent=4)
+# with open('MEA_dict.json', 'w') as f:
+#     json.dump(MEA_dict, f, indent=4)
 
-
-
-Raster = get_Raster(Traces,clock_dt)
+# with open('Electrode_traces.json', 'w') as f:
+#     json.dump(Traces, f, indent=4)
 
 
 
