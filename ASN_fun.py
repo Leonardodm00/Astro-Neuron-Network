@@ -1,6 +1,9 @@
 
+"""
+Created on Tue Aug 12 17:52:56 2025
 
-
+@author: Admin
+"""
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -10,7 +13,11 @@ import numpy as np
 import scipy.io
 import pdb
 import os
-
+from scipy.io import loadmat
+from scipy.signal import find_peaks
+from scipy.ndimage import gaussian_filter1d
+from sklearn.decomposition import PCA
+from mpl_toolkits.mplot3d import Axes3D
 
 from brian2 import *
 from brian2 import devices
@@ -20,46 +27,42 @@ from sklearn.neighbors import KDTree
 
 
 
-def Distance_based_connections(N,params_Syn,sed):
-    
-    '''
-    The ADJ matrix must comply to the following concention:
-        rows    : pre
-        columns : post
-    
-    '''
-    
-    import random
-    random.seed(sed)
-    
-    
-    # Retrieve number of neurons and pre initialize the adj matrix
+def Distance_based_connections(N, params_Syn, sed):
+    """
+    Optimized function to create a distance-based adjacency matrix.
+
+    The ADJ matrix must comply with the following convention:
+        rows: pre-synaptic neurons
+        columns: post-synaptic neurons
+    """
+    # Use NumPy's random number generator for better performance
+    rng = np.random.default_rng(sed)
+
+    # Retrieve the number of neurons
     Nn = N.N
+
+    # Extract x and y coordinates and scale them
+    coords = np.squeeze(np.array([[n.x / um, n.y / um] for n in N]))
+
+    # Calculate all pairwise distances at once using broadcasting
+    # This creates a matrix where element (i, j) is the distance between neuron i and neuron j
+    x_diff = coords[:, 0][:, np.newaxis] - coords[:, 0]
+    y_diff = coords[:, 1][:, np.newaxis] - coords[:, 1]
+    distances = np.sqrt(x_diff**2 + y_diff**2)
+
+    # Calculate probabilities for all connections simultaneously
+    probabilities = -distances * params_Syn['slope'] + params_Syn['intercept']
+
+    # Generate a single matrix of random numbers
+    random_matrix = rng.random((Nn, Nn))
+
+    # Compare the random numbers to the probabilities to determine connections
+    # This creates a boolean array, which is then converted to integers (0s and 1s)
+    ADJ = (random_matrix < probabilities).astype(int)
+
+    # Remove self-connections by setting the diagonal to zero
+    np.fill_diagonal(ADJ, 0)
     
-    ADJ = np.zeros((Nn,Nn))
-    
-    for neu_pre in range(Nn):
-        for neu_post in range(Nn):
-            
-            # Sort out same neuron
-            if neu_pre == neu_post:
-                continue
-            # Define the distance
-            else:
-            
-            
-                d = np.sqrt( (N[neu_post].x/um - N[neu_pre].x/um)**2 + (N[neu_post].y/um - N[neu_pre].y/um)**2 )
-                
-                # Distance dependent probability
-                prob = -d * params_Syn['slope'] + params_Syn['intercept']
-                
-                # Generate a random number; if less than prob a connection is established
-                rnd_num = random.random()
-                if  rnd_num <= prob:
-                    
-                    ADJ[neu_pre,neu_post] = 1
-                
-        
     return ADJ 
 def normalize_to_range(data, min_old, max_old, min_new, max_new):
     """
@@ -255,7 +258,7 @@ def get_Neuronparam(Adaptation=True,delta = 0,**kwargs):
     
     if Adaptation == True:
             
-            g_AHP= (0.001*msiemens*cm**-2) * Neuron_area
+            g_AHP= (0.003*msiemens*cm**-2) * Neuron_area
             
             
     else:
@@ -278,7 +281,7 @@ def get_Neuronparam(Adaptation=True,delta = 0,**kwargs):
     'sigma': 4.1 * mV,                     # standard deviation of the noisy voltage fluctuations
     'Tau_max': 608 * ms,                # Decay factor of AHP
     
-    'I_inj': 15*pA, # Injected current
+    'I_inj': 18*pA, # Injected current # 18
  
      # Synaptic contribution
      'we_AMPA' : 0.5, # Relative contribution of AMPA channels to the total syn weight
@@ -392,14 +395,14 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         'tau_decay_nmda': 100*ms,
         
         # Synaptic efficacy
-        'Xi': 0.8,
+        'Xi': 0.2, # 0.8
         
         # Connection probability
         'conn_prob' : 0.107, # Random 
         
         # Distance dependent
         'slope': 1/500, # in [um] sHOULD BE 500
-        'intercept': 1,
+        'intercept': 0.8, # 1 usually
         
         
        
@@ -481,7 +484,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
 def Neuronal_Network(Nn,Connection_var, RandomKinetics = False, OnlyExc= True ,
                      Syn_Currents_model = 'Kinetic',add_delay= False,delay_mode= 'random',
                      Max_delay = 10*ms,ics = True,std_pers = 0.01, Simulated_network = 'Neuronal',
-                     Decay_type = 'Double_exp',synapse_type = 'neutral'):
+                     Decay_type = 'Double_exp',synapse_type = 'neutral',Out_path = None):
     
 # std_pers = persentage of mean value used as standard deviation for introducing some
 #   variability
@@ -917,7 +920,12 @@ def Neuronal_Network(Nn,Connection_var, RandomKinetics = False, OnlyExc= True ,
             Source_neuron,Target_neuron = unfold_ADJ(ADJ_)
             
             S.connect(i=Source_neuron, j=Target_neuron)
-        
+            
+            os.chdir(Out_path)
+            # Save the array to a CSV file named 'my_data.csv'
+            np.savetxt('ADJ.csv', ADJ_, delimiter=',')
+            
+            
       
           
         
@@ -1936,6 +1944,751 @@ def Electrode_traces(pitch,pitch_recsites,shift,N,MonitorN,electrode_dist,neuron
 
 
 
+
+
+
+
+#---------------------------------------- NEURONAL DYNAMICS ----------------------------------------
+def Standardization(data):
+    """
+    Standardizes a multivariate time series by standardizing each feature (column) separately.
+
+    Standardization (Z-score normalization) transforms the data to have a mean of 0 and a standard deviation of 1.
+    The formula for standardization is: z = (x - mu) / sigma, where mu is the mean and sigma is the standard deviation.
+
+    Args:
+        data (np.ndarray): A 2D NumPy array of shape (timesteps, features).
+
+    Returns:
+        np.ndarray: A 2D NumPy array of the same shape as `data`, but with each feature standardized.
+                    Returns None if the input data is not a 2D array.
+    """
+    if not isinstance(data, np.ndarray) or data.ndim != 2:
+        print("Error: Input data must be a 2D NumPy array.")
+        return None
+
+    # Get the number of timesteps and features
+    timesteps, features = data.shape
+
+    # Initialize an array to store the standardized data
+    standardized_data = np.zeros_like(data)
+
+    # Standardize each feature (column) separately
+    for feature_index in range(features):
+        feature_data = data[:, feature_index]
+        mean = np.mean(feature_data)
+        std_dev = np.std(feature_data)
+
+        # Handle the case where the standard deviation is zero to avoid division by zero
+        if std_dev == 0:
+            print(f"Warning: Standard deviation for feature {feature_index} is zero. This feature will be all zeros.")
+            standardized_data[:, feature_index] = 0
+        else:
+            standardized_data[:, feature_index] = (feature_data - mean) / std_dev
+
+    return standardized_data
+
+def Get_IFR(data, fs, Cumulative, t_vec, step_s, bin_size, Isolate_NB, T_max):
+    """
+    Calculates the Instantaneous Firing Rate (IFR) of the neuronal data.
+
+    Args:
+        data (list): A list of spike timings for each channel.
+        fs (int): Sampling frequency in Hz.
+        Cumulative (numpy.ndarray): The cumulative global activity.
+        t_vec (numpy.ndarray): The time vector for the cumulative activity.
+        step_s (float): Step size for the cumulative activity calculation.
+        bin_size (float): Bin size in seconds.
+        Isolate_NB (bool): If True, isolates IFR for neurobursts.
+        T_max (int): Total recording time in samples.
+
+    Returns:
+        tuple: A tuple containing:
+            IFR (list or numpy.ndarray): The calculated IFR.
+            bin_size (float): The bin size in samples.
+            window_size (int): The window size for NB analysis in samples,
+                               or None if Isolate_NB is False.
+    """
+    bin_size_samples = int(bin_size * fs)  # [samples]
+
+    if Isolate_NB:
+        # Construct the window that will be centered at the NB's peak
+        pre_w = 1.5  # Pre samples [s]
+        post_w = 3.5 # post samples [s]
+
+        # Scale to samples
+        pre_w_samples = int(pre_w * fs)
+        post_w_samples = int(post_w * fs)
+
+        # Define the window size for calculating the IFR
+        window_size = pre_w_samples + post_w_samples  # [samples]
+        num_bins = window_size // bin_size_samples
+
+        # Isolate the NB timings (peaks location).
+        mean_IFR = np.mean(Cumulative)
+        std_IFR = np.std(Cumulative)
+        
+        # The 'distance' argument for find_peaks is in samples, not seconds.
+        # It should be based on the sampling of 'Cumulative', which is 'step_s'.
+        # The MATLAB code uses 3 * fs / step_s, where fs is the original sampling rate.
+        # This seems to be a scaling factor. We'll replicate it.
+        min_peak_distance_samples = int(3 * fs / step_s)
+        
+        # 'height' in scipy.signal.find_peaks is the equivalent of MinPeakHeight
+        idx, _ = find_peaks(Cumulative.flatten(), height=mean_IFR + std_IFR, distance=min_peak_distance_samples)
+        NB_T = t_vec[idx]
+
+        IFR = [None] * len(NB_T)
+        num_channels = len(data)
+
+        for nb_idx, nb_time in enumerate(NB_T):
+            binned_NB = np.zeros((num_channels, num_bins))
+
+            lower_bound = nb_time - pre_w_samples
+            upper_bound = nb_time + post_w_samples
+
+            # Extract per each channel the spikes within the NB window
+            for ch_idx in range(num_channels):
+                data_ = data[ch_idx]
+
+                # Bins for this specific NB
+                for bin_idx in range(num_bins - 1):
+                    # Define the start and stop timings
+                    start_idx = int(lower_bound + bin_idx * bin_size_samples)
+                    stop_idx = int(lower_bound + (bin_idx + 1) * bin_size_samples)
+
+                    # Extract spikes within the window (inclusive of the boundaries)
+                    within_range = (data_ >= start_idx) & (data_ < stop_idx)
+
+                    # Count and store the number of spikes
+                    number_spks = np.sum(within_range)
+                    binned_NB[ch_idx, bin_idx] = number_spks
+
+            IFR[nb_idx] = binned_NB
+
+    else:
+        window_size = None
+        num_channels = int(len(data))
+        num_bins = int(T_max // bin_size_samples)
+        IFR = np.zeros((num_bins, num_channels))
+
+        for ch_idx in range(num_channels):
+            data_ = data[ch_idx]
+
+            for bin_idx in range(num_bins):
+                start_idx = bin_idx * bin_size_samples
+                stop_idx = (bin_idx + 1) * bin_size_samples
+                
+                within_range = (data_ >= start_idx) & (data_ < stop_idx)
+                
+                number_spks = np.sum(within_range)
+                
+                IFR[bin_idx, ch_idx] = number_spks
+
+    return IFR, bin_size_samples, window_size
+
+
+def Rect_window(fs, w_size_s, overlap_s, x, T_max):
+    """
+    Calculates cumulative activity using a sliding rectangular window.
+
+    Args:
+        fs (int): Sampling frequency in Hz.
+        w_size_s (float): Window size in seconds.
+        overlap_s (float): Overlap between windows in seconds.
+        x (list): A list of spike timings for each channel.
+        T_max (int): Total recording time in samples.
+
+    Returns:
+        tuple: A tuple containing:
+            Cumulative (numpy.ndarray): The cumulative activity. NOT NORMALIZED
+            t_vec (numpy.ndarray): The time vector for the cumulative activity.
+            step_size (int): The step size between windows in samples.
+    """
+    w_size = int(w_size_s * fs)
+    overlap = int(overlap_s * fs)
+    
+    step_size = w_size - overlap
+    
+    # In MATLAB, '0:step_size:T_max' is inclusive, so we need to adjust np.arange.
+    t_vec = np.arange(0, T_max, step_size)
+    Cumulative = np.zeros(len(t_vec))
+    
+    start_index = 0
+    idx = 0
+    while start_index + w_size <= T_max and idx < len(t_vec):
+        temp_cum = 0
+        for ch in x:
+            data_ = ch
+            
+            # The MATLAB code uses start_index + w_size-1, which is correct for 1-based indexing.
+            # For Python, we use the end index exclusively.
+            within_range = (data_ >= start_index) & (data_ < start_index + w_size)
+            
+            count = np.sum(within_range)
+            
+            temp_cum += count
+            
+        # Cumulative[idx] = temp_cum / w_size
+        Cumulative[idx] = temp_cum
+        
+        start_index += step_size
+        idx += 1
+        
+    return Cumulative, t_vec, step_size
+    
+def get_PCA(NB_IFR_smoothed_concatenated, IFR_smoothed, Isolate_NB,Visible):
+    """
+    Performs Principal Component Analysis (PCA) on the IFR data.
+
+    Args:
+        NB_IFR_smoothed_concatenated: The concatenated smoothed IFR data.
+                                      If Isolate_NB is True, this is used for PCA.
+        IFR_smoothed: The smoothed IFR data, which can be a list of arrays (Isolate_NB=True)
+                      or a 2D array (Isolate_NB=False).
+        Isolate_NB: A boolean indicating whether to perform PCA on concatenated
+                    neuroburst (NB) data or the total signal.
+    
+    Returns:
+        Variance_explained: The percentage of variance explained by each PC.
+        Projected_trajectories: The data projected onto the new PCA space.
+        Coefficients: The principal component coefficients (eigenvectors).
+        NB_IFR_PCA_mean: The mean PCA trajectory (if Isolate_NB is True).
+    """
+
+    if Isolate_NB:
+        # In scikit-learn's PCA, the input data should have shape (n_samples, n_features).
+        # MATLAB's pca assumes rows are observations and columns are variables.
+        # So we transpose the concatenated data.
+        NB_IFR_smoothed_concatenated_PCA = NB_IFR_smoothed_concatenated.T
+
+        # Perform PCA
+        pca = PCA()
+        pca.fit(NB_IFR_smoothed_concatenated_PCA)
+        Coefficients = pca.components_.T
+        Variance_explained = pca.explained_variance_ratio_
+
+        # Obtain the mean traces
+        num_nb = len(IFR_smoothed)
+        num_channels = IFR_smoothed[0].shape[0] if num_nb > 0 else 0
+        samples_per_window = IFR_smoothed[0].shape[1] if num_nb > 0 else 0
+        
+        NB_IFR_PCA_mean_ = np.zeros((num_channels, samples_per_window, num_nb))
+
+        for k in range(num_nb):
+            nb_ifr_pca_data = IFR_smoothed[k]
+            # Project the data
+            proj = nb_ifr_pca_data.T @ Coefficients
+            NB_IFR_PCA_mean_[:, :, k] = proj.T
+        
+        # Calculate the mean across the third dimension (k)
+        NB_IFR_PCA_mean = np.mean(NB_IFR_PCA_mean_, axis=2).T
+        
+        # Project the concatenated data
+        Projected_trajectories = NB_IFR_smoothed_concatenated_PCA @ Coefficients
+
+        # Plotting
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        
+        # Extract the first three components
+        x = Projected_trajectories[:, 0]
+        y = Projected_trajectories[:, 1]
+        z = Projected_trajectories[:, 2]
+
+        x_m = NB_IFR_PCA_mean[:, 0]
+        y_m = NB_IFR_PCA_mean[:, 1]
+        z_m = NB_IFR_PCA_mean[:, 2]
+        
+        # Use plot3 function to plot the lines
+        ax.plot(x, y, z)
+        ax.plot(x_m, y_m, z_m, linewidth=4.5, color='red')
+        
+        ax.set_xlabel('PC 1')
+        ax.set_ylabel('PC 2')
+        ax.set_zlabel('PC 3')
+        ax.set_title('Concatenated NBs')
+        
+        # To keep the axes scaled appropriately and prevent distortion
+        ax.set_box_aspect([1, 1, 1])  # equal aspect ratio
+        
+        ax.grid(True)
+        plt.show()
+
+    else:
+        
+        
+        # In this case, Isolate_NB is false and IFR_smoothed is a 2D array.
+        NB_IFR_PCA_mean = None
+        
+        # Perform PCA
+        pca = PCA()
+        pca.fit(IFR_smoothed)
+        Coefficients = pca.components_.T
+        Variance_explained = pca.explained_variance_ratio_
+        
+        # Project the data
+        Projected_trajectories = pca.transform(IFR_smoothed)
+
+
+        if Visible == True:
+            # Plotting
+            fig = plt.figure()
+            ax = fig.add_subplot(111, projection='3d')
+            
+            # Extract the first three components
+            x = Projected_trajectories[:, 0]
+            y = Projected_trajectories[:, 1]
+            z = Projected_trajectories[:, 2]
+            
+            # Use plot3 function to plot the lines
+            ax.plot(x, y, z)
+            
+            ax.set_xlabel('PC 1')
+            ax.set_ylabel('PC 2')
+            ax.set_zlabel('PC 3')
+            ax.set_title('Culture Dynamics')
+            
+            ax.set_box_aspect([1, 1, 1])
+            
+            ax.grid(True)
+            plt.show()
+
+    return Variance_explained, Projected_trajectories, Coefficients, NB_IFR_PCA_mean
+
+# The Smoothed_IFR function from the previous response is included here for completeness.
+def Smoothed_IFR(IFR, bin_size, window_size, fs, Isolate_NB, Gaussian_window, Visible):
+    """
+    The function takes the raw instantaneous firing rates of the NB-centered
+    windows and returns the concatenated and smoothed NB's IFR.
+    
+    Args:
+        IFR: The input IFR data. Its format depends on Isolate_NB.
+        bin_size: The size of the time bins.
+        window_size: The size of the analysis window.
+        fs: The sampling frequency.
+        Isolate_NB: If True, IFR is a list of arrays (cell array in MATLAB).
+                    If False, IFR is a 2D NumPy array.
+        Gaussian_window: The size of the Gaussian smoothing window.
+        Visible: A boolean to control whether to display plots.
+    
+    Returns:
+        IFR_smoothed: The smoothed IFR data.
+        IFR_smoothed_concatenated: The concatenated smoothed IFR data.
+    """
+
+    from scipy.ndimage import gaussian_filter1d
+
+    if Isolate_NB:
+        num_nb = len(IFR)
+        num_channels = IFR[0].shape[0] if num_nb > 0 else 0
+        
+        if num_nb > 0:
+            samples_per_window = IFR[0].shape[1]
+        else:
+            samples_per_window = 0
+
+        t_vec_nb = np.arange(0, samples_per_window) * bin_size
+
+        if Visible:
+            plt.figure()
+            for j in range(num_nb):
+                ifr_data = IFR[j]
+                for i in range(num_channels):
+                    channel = ifr_data[i, :]
+                    plt.plot(t_vec_nb, channel)
+            plt.title('Raw IFR')
+            plt.xlabel('Time [s]')
+            plt.ylabel('Spikes')
+            plt.show()
+
+        IFR_smoothed = [None] * num_nb
+        IFR_smoothed_concatenated = np.zeros((num_channels, num_nb * samples_per_window))
+        
+        for j in range(num_nb):
+            ifr_data = IFR[j]
+            smoothed_channels = []
+            for i in range(num_channels):
+                channel = ifr_data[i, :]
+                smoothed_channel = gaussian_filter1d(channel.astype(float), sigma=Gaussian_window)
+                smoothed_channels.append(smoothed_channel)
+                
+                IFR_smoothed_concatenated[i, j * samples_per_window : (j + 1) * samples_per_window] = smoothed_channel
+
+            IFR_smoothed[j] = np.array(smoothed_channels)
+
+        if Visible:
+            plt.figure()
+            plt.subplot(2, 1, 1)
+            for j in range(num_nb):
+                ifr_data = IFR_smoothed[j]
+                for i in range(num_channels):
+                    channel = ifr_data[i, :]
+                    plt.plot(t_vec_nb, channel)
+            plt.title('Smoothed IFR')
+            plt.xlabel('Time [s]')
+            plt.ylabel('Spikes')
+
+            plt.subplot(2, 1, 2)
+            t_vec_conc = np.arange(IFR_smoothed_concatenated.shape[1])
+            plt.plot(t_vec_conc, IFR_smoothed_concatenated.T)
+            plt.title('Concatenated smoothed NB IFR')
+            plt.xlabel('Samples')
+            plt.ylabel('Spikes')
+            plt.tight_layout()
+            plt.show()
+
+    else:
+        num_samples, num_channels = IFR.shape
+        IFR_smoothed = np.zeros_like(IFR)
+        IFR_smoothed_concatenated = []
+
+        if Visible:
+            plt.figure()
+            plt.subplot(2, 1, 1)
+            for i in range(num_channels):
+                plt.plot(IFR[:, i])
+            plt.title('Raw IFR')
+            plt.xlabel('Samples')
+            plt.ylabel('Spikes')
+            
+            plt.subplot(2, 1, 2)
+            for i in range(num_channels):
+                channel = IFR[:, i]
+                smoothed_channel = gaussian_filter1d(channel.astype(float), sigma=Gaussian_window)
+                IFR_smoothed[:, i] = smoothed_channel
+                plt.plot(smoothed_channel)
+            plt.title('Smoothed IFR')
+            plt.xlabel('Samples')
+            plt.ylabel('Spikes')
+            plt.tight_layout()
+            plt.show()
+        else:
+            for i in range(num_channels):
+                channel = IFR[:, i]
+                IFR_smoothed[:, i] = gaussian_filter1d(channel.astype(float), sigma=Gaussian_window)
+            
+    return IFR_smoothed, IFR_smoothed_concatenated
+
+
+
+def Smoothed_IFR(IFR, bin_size, window_size, fs, Isolate_NB, Gaussian_window, Visible):
+    """
+    The function takes the raw instantaneous firing rates of the NB-centered
+    windows and returns the concatenated and smoothed NB's IFR.
+    
+    Args:
+        IFR: The input IFR data. Its format depends on Isolate_NB.
+        bin_size: The size of the time bins.
+        window_size: The size of the analysis window.
+        fs: The sampling frequency.
+        Isolate_NB: If True, IFR is a list of arrays (cell array in MATLAB).
+                    If False, IFR is a 2D NumPy array.
+        Gaussian_window: The size of the Gaussian smoothing window [s].
+        Visible: A boolean to control whether to display plots.
+    
+    Returns:
+        IFR_smoothed: The smoothed IFR data.
+        IFR_smoothed_concatenated: The concatenated smoothed IFR data.
+    """
+    Gaussian_window_samples = Gaussian_window*fs
+    if Isolate_NB:
+        # MATLAB uses 1-based indexing for size, Python uses 0-based
+        num_nb = len(IFR)
+        num_channels = IFR[0].shape[0] if num_nb > 0 else 0
+        
+        # Calculate samples_per_window
+        # Assuming Samples_per_window is a global variable in the MATLAB code,
+        # we'll calculate it here from the input IFR data.
+        if num_nb > 0:
+            samples_per_window = IFR[0].shape[1]
+        else:
+            samples_per_window = 0
+
+        # Create time vector for plotting
+        t_vec_nb = np.arange(0, samples_per_window) * bin_size
+
+        if Visible:
+            plt.figure()
+            for j in range(num_nb):
+                ifr_data = IFR[j]
+                for i in range(num_channels):
+                    channel = ifr_data[i, :]
+                    plt.plot(t_vec_nb, channel)
+            plt.title('Raw IFR')
+            plt.xlabel('Time [s]')
+            plt.ylabel('Spikes')
+            plt.show()
+
+        IFR_smoothed = [None] * num_nb
+        IFR_smoothed_concatenated = np.zeros((num_channels, num_nb * samples_per_window))
+        
+        # MATLAB's smoothdata('gaussian') is equivalent to a Gaussian filter.
+        # We'll use scipy.ndimage.gaussian_filter1d for this.
+
+        for j in range(num_nb):
+            ifr_data = IFR[j]
+            smoothed_channels = []
+            for i in range(num_channels):
+                channel = ifr_data[i, :]
+                smoothed_channel = gaussian_filter1d(channel.astype(float), sigma=Gaussian_window_samples)
+                smoothed_channels.append(smoothed_channel)
+                
+                # Concatenate the smoothed data
+                # MATLAB's n*Samples_per_window + 1 : (n+1)* Samples_per_window
+                # is equivalent to n*samples_per_window : (n+1)* samples_per_window in Python
+                IFR_smoothed_concatenated[i, j * samples_per_window : (j + 1) * samples_per_window] = smoothed_channel
+
+            IFR_smoothed[j] = np.array(smoothed_channels)
+
+        if Visible:
+            plt.figure()
+            plt.subplot(2, 1, 1)
+            for j in range(num_nb):
+                ifr_data = IFR_smoothed[j]
+                for i in range(num_channels):
+                    channel = ifr_data[i, :]
+                    plt.plot(t_vec_nb, channel)
+            plt.title(f'Smoothed IFR')
+            plt.xlabel('Time [s]')
+            plt.ylabel('Spikes')
+
+            plt.subplot(2, 1, 2)
+            # The original code plots all channels; Ch = 3 is not used.
+            # We'll follow the original code and plot all.
+            t_vec_conc = np.arange(IFR_smoothed_concatenated.shape[1])
+            plt.plot(t_vec_conc, IFR_smoothed_concatenated.T)
+            plt.title(f'Concatenated smoothed NB IFR')
+            plt.xlabel('Samples')
+            plt.ylabel('Spikes')
+            plt.tight_layout()
+            plt.show()
+
+    else:
+        # IFR is a 2D array: samples x channels
+        num_samples, num_channels = IFR.shape
+        IFR_smoothed = np.zeros_like(IFR)
+        IFR_smoothed_concatenated = []
+
+        if Visible:
+            plt.figure()
+            plt.subplot(2, 1, 1)
+            for i in range(num_channels):
+                plt.plot(IFR[:, i])
+            plt.title(f'Raw IFR')
+            plt.xlabel('Samples')
+            plt.ylabel('Spikes')
+            
+            plt.subplot(2, 1, 2)
+            for i in range(num_channels):
+                channel = IFR[:, i]
+                smoothed_channel = gaussian_filter1d(channel.astype(float), sigma=Gaussian_window_samples)
+                IFR_smoothed[:, i] = smoothed_channel
+                plt.plot(smoothed_channel)
+            plt.title(f'Smoothed IFR')
+            plt.xlabel('Samples')
+            plt.ylabel('Spikes')
+            plt.tight_layout()
+            plt.show()
+        else:
+            for i in range(num_channels):
+                channel = IFR[:, i]
+                IFR_smoothed[:, i] = gaussian_filter1d(channel.astype(float), sigma=Gaussian_window_samples)
+            
+    return IFR_smoothed, IFR_smoothed_concatenated
+
+        
+
+def get_Smoothed_Cumulative(Cumulative,fs_downsampled,Gaussian_window):
+    # Gaussian window is the std of the gaussian window. it is defined in s
+    # and MUST be grater than the sampling step of fs_downsampled
+   
+    
+    # Gaussian window is defined in s, thus devide by 1000 because fs_downsampled is in Hz
+    Gaussian_window_samples = np.ceil(Gaussian_window*fs_downsampled) 
+    
+    
+    if  Gaussian_window_samples == 1:
+        
+        raise ValueError("Single sample window width.")
+    
+    # Check consistency
+    if Gaussian_window_samples <=5: # five samples are not a lot
+    
+    
+        print('Smoothing with a narrow gaussian window...')
+        
+        
+    smoothed_cumulative = gaussian_filter1d(Cumulative.astype(float), sigma=Gaussian_window_samples)
+    
+    
+    return smoothed_cumulative
+    
+        
+    
+
+def Neuronal_traces_simulation(Raster_array,Type ='PCA',t_rec = 600, fs = 10000, w_size = 0.12, overlap = 0.06, 
+                    bin_size_s = 0.05, Isolate_NB = False, Gaussian_window = 2,
+                     Visible = False):
+    
+    # Raster_array = nx2, 1st column the channel's idx, 2nd column the timing of spike
+    # Type = PCA or Cumulative. PCA = Usual neuronal dynamics, Cumulative= Cumulative IFR on all the electrodes.
+    # t_rec = 600  # [s] Recording time
+    # fs = 10000
+
+    # Visible = True
+
+    # # Calculate the GA
+    # w_size = 0.12  # [s] 12
+    # overlap = 0.06  # [s]
+
+    # # Bin size for the IFR
+    # bin_size_s = 0.05  # [s] 0.005 = 5 [ms]
+
+    # # Whether to Isolate NB or keep the total signal
+    # Isolate_NB = False
+
+    # # Window size for smoothing
+    # Gaussian_window = 2  # [s]
+
+    # # Extract data
+    # data = [None] * len(Strings)
+    
+    # Extract data    
+    n_channels = int(np.max(Raster_array[:,0]) + 1)
+   
+    data = [None] * n_channels
+    
+    T_max = t_rec * fs
+    
+    # COnvert the sigma of the gaussian window in samples
+    
+    
+    
+    
+    
+    for i in range(n_channels):
+        # find non-zero elements
+        spk_timing = np.where(Raster_array[:,0]  == i)[0]
+        data[i] = Raster_array[spk_timing,1]
+
+    
+    if Visible:
+        plt.figure()
+        for i in range(n_channels):
+            data_timings = data[i]
+            data_plot = np.ones(len(data_timings)) * (i + 1)
+            plt.scatter(data_timings / fs, data_plot, s=15, marker='.')
+        plt.xlabel('Time [s]')
+        plt.ylabel('Electrodes')
+        plt.title('Spike Timings')
+        plt.grid(True)
+        plt.show()
+    
+        # Calculate NBs
+        # You would need to define Rect_window in Python
+        # [Cumulative, t_vec, step_s] = Rect_window(fs, w_size, overlap, data, T_max)
+        # The following is a placeholder for the Rect_window function call
+        # This part would need to be implemented in Python based on the MATLAB function's logic
+        
+        # Assume Cumulative, t_vec, and step_s are computed here
+        # For example:
+        # Cumulative, t_vec, step_s = Rect_window(fs, w_size, overlap, data, T_max)
+    
+        # # Let's assume we have Cumulative, t_vec, and step_s for the next part
+        # # Example mock data for plotting:
+        # t_vec = np.linspace(0, t_rec, int(T_max))
+        # Cumulative = np.random.rand(len(t_vec)) * 100
+    
+        # Mean_IFR = np.mean(Cumulative)
+        # STD_IFR = np.std(Cumulative)
+        # plot_MFR = np.ones(len(t_vec)) * Mean_IFR
+        # plot_MFR_STD_plus = np.ones(len(t_vec)) * (Mean_IFR + STD_IFR)
+        # plot_MFR_STD_minus = np.ones(len(t_vec)) * (Mean_IFR - STD_IFR) # The MATLAB code had a mistake here
+        
+        # # findpeaks
+        # # The 'MinPeakDistance' argument in MATLAB is different in Python's find_peaks
+        # # In Python, distance is in samples, not seconds.
+        # # The MATLAB code has 3 * fs / step_s, which should be adjusted for Python
+        # # Assuming step_s is the sampling rate of Cumulative, not fs
+        
+        # # Let's assume a step_s value
+        # step_s = 1000 # Example step_s value
+        # idx, _ = find_peaks(Cumulative, height=Mean_IFR + STD_IFR, distance=int(3 * fs / step_s))
+        # NB_T = t_vec[idx]
+        
+        # plt.figure()
+        # plt.plot(Cumulative)
+        # plt.plot(idx, Cumulative[idx], 'x')
+        # plt.title('findpeaks')
+        # plt.show()
+    
+        # plt.figure()
+        # plt.title('Global Activity')
+        # plt.plot(t_vec / fs, Cumulative, label='Cumulative IFR')
+        # plt.plot(t_vec / fs, plot_MFR, linestyle='-.', color='r', linewidth=1.5, label='Mean IFR')
+        # plt.plot(t_vec / fs, plot_MFR_STD_plus, linestyle='--', color='g', linewidth=1.5, label='Mean + STD')
+        # plt.xlabel('Time [s]')
+        # plt.ylabel('Instantaneous firing rate [spk/s]')
+        # plt.legend()
+        # plt.show()
+    
+    # Calculate NBs
+    # You would need to define Rect_window in Python
+    if Type == 'PCA':
+        [Cumulative, t_vec, step_s] = Rect_window(fs, w_size, overlap, data, T_max)
+        
+        [IFR, bin_size,window_size] = Get_IFR(data,fs,Cumulative,t_vec,step_s,bin_size_s,Isolate_NB,T_max);
+            
+   
+        fs_downsampled = 1/bin_size_s
+        
+    
+   
+        [IFR_smoothed, IFR_smoothed_concatenated] = Smoothed_IFR(IFR, bin_size,window_size,fs_downsampled,Isolate_NB,Gaussian_window,Visible);
+    
+    
+    
+        [Variance_explained, Projected_trajectories,Coefficients,NB_IFR_PCA_mean] = get_PCA(IFR_smoothed_concatenated,IFR_smoothed,Isolate_NB,Visible);
+    
+        
+    
+        return Projected_trajectories,Variance_explained,fs_downsampled
+    
+    
+    elif Type == 'Cumulative':
+        overlap = 0
+        [Cumulative, t_vec, step_s] = Rect_window(fs, w_size, overlap, data, T_max)
+        
+        # The new sampling frequency is downsampled by a factor determined by w_size [s]
+        fs_downsampled = 1/w_size
+        
+        
+        smoothed_cumulative =  get_Smoothed_Cumulative(Cumulative,fs_downsampled,Gaussian_window)
+        
+        
+        if Visible == True:
+            
+            plt.figure()
+            plt.plot(t_vec*fs_downsampled,smoothed_cumulative)
+            plt.xlabel('Time [s]')
+            plt.ylabel('IFR')
+            plt.show()
+            
+            
+            
+            
+        
+        
+        return smoothed_cumulative,fs_downsampled
+        
+        
+        
+        
+        
+
+        
+    
 
 
 
