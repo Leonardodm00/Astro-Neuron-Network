@@ -1,7 +1,16 @@
 
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Aug 12 17:53:15 2025
+
+@author: Admin
+"""
+
 
 import matplotlib.pyplot as plt
 from brian2 import *
+
+from brian2 import clear_cache
 
 
 import os
@@ -61,7 +70,8 @@ Out_path = r'C:\Users\Admin\Desktop\Leonardo\ASN\Output Temp'
 
 
 
-
+# Clear the cache for the 'cython' code generation target
+# clear_cache('cython') 
 start_scope()
 # ------------------------- SET OPTIONS -------------------------
 
@@ -105,7 +115,7 @@ oscillations = 'AM'
 # ------------------------- PARAMETERS -------------------------
 
 # --------- SIMULATION -----------
-simtime = 20 * second               # simulation time
+simtime = 10 * second               # simulation time
 # transient = 3 * second              # time omitted as transient
 sed = 39                             # random number seed
 devices.device.seed(sed)            # set the seed for all the random number realisations
@@ -115,7 +125,7 @@ Simulated_network = 'Neuronal' # Astrocytic/Neuronal/Full
 
 
 # --------- NEURON -----------
-Nn = 200
+Nn = 100
 neuron_radius = 9 #[um]
 # --------- SYNAPTIC -----------
 
@@ -179,7 +189,7 @@ if Simulated_network == 'Full':
                            Syn_Currents_model=Syn_Currents_model,add_delay=add_delay,
                            delay_mode=delay_mode,Max_delay=Max_delay,ics=ics,
                            std_pers=std_pers, Simulated_network=Simulated_network,Decay_type=Decay_type,
-                           synapse_type=synapse_type)
+                           synapse_type=synapse_type,Out_path = Out_path)
     
     
 
@@ -215,7 +225,7 @@ elif Simulated_network == 'Neuronal':
     N,S = Neuronal_Network(Nn,Connection_neuro, RandomKinetics=RandomKinetics, OnlyExc=OnlyExc,
                            Syn_Currents_model=Syn_Currents_model,add_delay=add_delay,
                            delay_mode=delay_mode,Max_delay=Max_delay,ics=ics,
-                           std_pers=std_pers, Simulated_network=Simulated_network,Decay_type=Decay_type,synapse_type = synapse_type)
+                           std_pers=std_pers, Simulated_network=Simulated_network,Decay_type=Decay_type,synapse_type = synapse_type,Out_path = Out_path)
     
     
    
@@ -564,40 +574,48 @@ clock_dt = defaultclock.dt
 Raster,Raster_array = get_Raster(Traces,clock_dt)
 
 # ------- SAVE -------
-#%%
+
 # # Meta-data dict
-# Meta_data_nn ={
+Meta_data_nn ={
     
-#     # 'Simulation_time': simtime, #[sec]
+    'Simulation_time': simtime/second, #[sec]
     
-#     # 'fs': 1/(clock_dt/second), # [Hz]
+    'fs': 1/(clock_dt/second), # [Hz]
     
-#     # 'Raster_array': Raster_array,
+    'Raster_array': Raster_array,
     
-#     # 'Electrode_traces': Traces,
+    'Electrode_traces': Traces,
     
-#     # 'MEA_dict': MEA_dict,
-    
-    
+    'MEA_dict': MEA_dict,
     
     
-    
-    
-    
-    
-#     }
 
-# import json
-# os.chdir(Out_path)
-# # The 'w' flag opens the file in write mode
-# with open('Simulation_dict.json', 'w') as f:
-#     json.dump(Meta_data_nn, f, indent=4)
-# with open('MEA_dict.json', 'w') as f:
-#     json.dump(MEA_dict, f, indent=4)
+    
+    }
 
-# with open('Electrode_traces.json', 'w') as f:
-#     json.dump(Traces, f, indent=4)
 
+os.chdir(Out_path)
+
+np.save('Simulation_dict.npy', Meta_data_nn, allow_pickle=True)
+np.save('Electrode_traces.npy', Traces, allow_pickle=True)
+np.save('MEA_dict.npy', MEA_dict, allow_pickle=True)
+
+
+#%%
+# ----- Neuronal Dynamics ------
+Type_Neruonal_dynamics = 'Cumulative'
+
+
+if Type_Neruonal_dynamics == 'PCA':
+    Projected_trajectories,Variance_explained,fs_downsampled = Neuronal_traces_simulation(Raster_array,Type = Type_Neruonal_dynamics,t_rec = simtime/second, fs = 1/(clock_dt/second), w_size = 0.12, overlap = 0.06, 
+                                                                                            bin_size_s = 0.05, Isolate_NB = False, Gaussian_window = 0.002,
+                                                                                             Visible = True)
+
+elif Type_Neruonal_dynamics == 'Cumulative':
+
+    Cumulative,fs_downsampled = Neuronal_traces_simulation(Raster_array,Type = Type_Neruonal_dynamics,t_rec = simtime/second, fs = 1/(clock_dt/second), w_size = 0.01, overlap = 0.06, 
+                                                                                            bin_size_s = 0.05, Isolate_NB = False, Gaussian_window = 0.021,
+                                                                                             Visible = True)
 
 
 #%%
