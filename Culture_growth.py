@@ -1,5 +1,11 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sat Mar 15 07:56:02 2025
+
+@author: leona
+"""
 import os
-directory = r"C:\Users\leona\Desktop\PhD\PYTHON\Neuronal culture"  # Replace with your desired path
+directory = r"C:\Users\Admin\Desktop\Leonardo\ASN\Growth"  # Replace with your desired path
 os.chdir(directory)
 
 import time
@@ -22,15 +28,15 @@ cov2_fractals=0.005
 # GENERAL 
 x_size = 1
 y_size = 1
-z_size = 0.3
-rho = 8
+z_size = 0.01
+rho = 1000
 delta = 0.05
 R_influence = 0.3
 over_factor = 100
-Dl = 1e-3
+Dl = 1e-2
 #%
 bias_GABA = 400e-3
-bias_GLU = 1200e-3
+bias_GLU = 800e-3
 Number_GABA = 4
 Number_GLU = 1
 
@@ -40,7 +46,7 @@ Gamma_GABA = 1
 Gamma_GLU = 1
 
 # Suitable value 
-P_b = 0.007
+P_b = 0.00
 Branch_TH = 0.01 # [mm] New branches of length lower that TH are discarded
 # Maybe in the future I can implement cell-specific P_b
 # P_b_GLU = 0.002 #branching probability
@@ -86,7 +92,38 @@ print(f"Elapsed time: {elapsed_time:.4f} seconds")  # Format the output
 fig = plt.figure()
 ax = fig.add_subplot(111, projection='3d')
 
+def pad_vectors_to_max_length(v1, v2, v3):
+    """
+    Pads three input vectors with their last value to match the length of the longest vector.
 
+    Args:
+        v1 (np.ndarray): The first input vector.
+        v2 (np.ndarray): The second input vector.
+        v3 (np.ndarray): The third input vector.
+
+    Returns:
+        tuple: A tuple containing the three padded vectors (padded_v1, padded_v2, padded_v3).
+    """
+    vectors = [v1, v2, v3]
+    max_len = max(len(v) for v in vectors)
+    
+    padded_vectors = []
+    for v in vectors:
+        current_len = len(v)
+        if current_len < max_len:
+            # Determine the value to pad with (the last element)
+            last_value = v[-1]
+            # Calculate how many values need to be added
+            num_to_pad = max_len - current_len
+            # Create the padding array
+            padding = np.full(num_to_pad, last_value)
+            # Concatenate the original vector with the padding
+            padded_v = np.concatenate((v, padding))
+            padded_vectors.append(padded_v)
+        else:
+            padded_vectors.append(v)
+            
+    return tuple(padded_vectors)
 x_arrays, y_arrays, z_arrays = extract_nonzero_arrays_separately(Xi, Yi, Zi)
 N = len(x_arrays)  # Number of segments
 Ne = N*excitatory_persentage
@@ -95,6 +132,9 @@ for i in range(N):
     x1 = x_arrays[i]
     y1 = y_arrays[i]
     z1 = z_arrays[i]
+    
+    x1,y1,z1 = pad_vectors_to_max_length(x1, y1, z1)
+    
     
     
     for k in range(len(x1) - 1):
@@ -131,3 +171,4 @@ ax.set_zlim([-0.5, 1.5])
 
 # Show the plot
 plt.show()
+
