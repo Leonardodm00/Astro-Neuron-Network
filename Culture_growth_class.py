@@ -1,9 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Sat Mar 15 07:50:09 2025
-
-@author: leona
-"""
 
 import random
 import math
@@ -22,7 +16,8 @@ from scipy.spatial.transform import Rotation as R
 from scipy.spatial import cKDTree
 
 
-
+directory = r"C:\Users\Admin\Desktop\Leonardo\ASN\Growth"  # Replace with your desired path
+os.chdir(directory)
 from Functionalities import *
 
 
@@ -945,13 +940,19 @@ class Network_3D:
         # # Initializes the number of growing cones, TO BE UPDATED EVERY TIME A BRANCH IS CREATED
         # Number_cones = len(X)
         n = 1
-        
+        Finished_neurons = 0
         # To keep track of the progress
         
         # The loop runs until every single number in the Total_length array becomes negative
         # (less than 0).  If even one number in the array is zero or positive, the loop keeps running.
-        while not  np.all(Total_length < 0): 
-           
+        while not  np.all(Total_length <= 0): 
+            
+            
+            if len(np.where(Total_length<=0)[0]) != Finished_neurons:
+                
+                Finished_neurons = len(np.where(Total_length<=0)[0])
+                print('Fully extented neurons:')
+                print(Finished_neurons)
             
            
             # Check which neurons must be lengthen.
@@ -987,20 +988,24 @@ class Network_3D:
             
             
             
+            #TODO: CHECKK
+            # ------- IN CASE BORDER CHECK AND VECTOR FIELD ARE COMMENTED
+            # Final_points = Temp_point
+            
             ###########  CHECK FOR BORDER CROSSING: parallelized
             
-            Temp_point_,phi_new,theta_new = Check_borders(Temp_point,Pre_point,phi[Mask_growth],theta[Mask_growth],width,depth,height,Dl)
+            Final_points,phi_new,theta_new = Check_borders(Temp_point,Pre_point,phi[Mask_growth],theta[Mask_growth],width,depth,height,Dl)
             phi[Mask_growth] = phi_new
             theta[Mask_growth] = theta_new
             
             ###########  VECTOR FIELD INFLUENCE: parallelized
             
             
-            Final_points,phi_new,theta_new = Field_gradient(Vector_field_tree,Vector_field_surrogate,Vector_Field,Pre_point,Temp_point_,over_factor,Dl, Connections, Neuron_of_belonging,phi[Mask_growth],theta[Mask_growth])
+            # Final_points,phi_new,theta_new = Field_gradient(Vector_field_tree,Vector_field_surrogate,Vector_Field,Pre_point,Final_points,over_factor,Dl, Connections, Neuron_of_belonging,phi[Mask_growth],theta[Mask_growth])
            
             
-            phi[Mask_growth] = phi_new
-            theta[Mask_growth] = theta_new
+            # phi[Mask_growth] = phi_new
+            # theta[Mask_growth] = theta_new
            
             
             
@@ -1040,6 +1045,14 @@ class Network_3D:
             indices = np.where(rdn <= P_b)[0]
             
             if indices.size != 0:
+                print('')
+                print('----------------------------------------------------------------------')
+                print('')
+                print(f'{len(indicies)} new branches')
+                print(f'Total number of brances: {len(Idx_growing_branches) + len(indicies)}')
+                print('')
+                print('----------------------------------------------------------------------')
+                print('')
                 for ind_branch in indices:
                     
                    
@@ -1152,3 +1165,4 @@ class Network_3D:
             n = n+1
          
         return A,Xi,Yi,Zi,Connections
+ 
