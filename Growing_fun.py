@@ -1,3 +1,4 @@
+
 import random
 import math
 
@@ -19,208 +20,323 @@ from scipy.spatial.transform import Rotation as R
 from scipy.spatial import cKDTree
 
 
-def Check_borders(Point_neurite_temp_vector,Point_neurite_pre_vector,Phi,Theta,width,depth,height,Dl) :
-    '''
-    Checks for the neurites branches that crosses the culture's boundaries.
-    If the point crosses x and y boundaries than the algorithm will act only on
-    the azhimutal angle, if z axes boundaries are crossed than the polar angle is changed.
+# def Check_borders(Point_neurite_temp_vector,Point_neurite_pre_vector,Phi,Theta,width,depth,height,Dl) :
+#     '''
+#     Checks for the neurites branches that crosses the culture's boundaries.
+#     If the point crosses x and y boundaries than the algorithm will act only on
+#     the azhimutal angle, if z axes boundaries are crossed than the polar angle is changed.
     
     
 
+#     Parameters
+#     ----------
+#     Neurites related variables have been altrady masked
+    
+#     Point_neurite_temp_vector : array [N,3]
+#         Temporary new points of the growing neurites  
+#     Point_neurite_pre_vector : array [N,3]
+#         Current points of the growing neurites 
+#     Phi : array [N,3]
+#         Azimuthal angles 
+#     Theta : array [N,3]
+#         Polar angles
+#     width : Integer
+#         X span of the culture
+#     depth : Integer
+#         Y span of the culture
+#     height : Integer
+#         Z span of the culture
+#     Dl : Float 
+#         Growing step
+
+#     Returns
+#     -------
+#     Point_neurite_temp : array [N,3]
+#         New temporary points of the growing neurites  
+#     phi : array [N,3]
+#         New azimuthal angles 
+#     theta : array [N,3]
+#         New polar angles
+#     '''
+    
+    
+    
+#     z_axes = np.array((2,5))
+#     xy_axes = np.array((0,1,3,4))
+#     sd = 0.1 # Is needed to bring some randomness in the debug, otherwise it gets stuck
+#     debug_angle = np.pi/80 # Used to avoid bottle necks in the search of a point. pi/96 = 1.8334649 degrees
+#             # in compliance with the boundary conditions.
+#     # t_th = 100 # Number of iterations before getting in the debug loop
+#     p_add = 0.005 # The addition to the multiplier (how fast the debug angle grows)
+#     # Iterate over neurites
+#     for neu in np.arange(np.shape(Point_neurite_temp_vector)[0]):
+        
+#         # Extract variables
+#         Point_neurite_temp = Point_neurite_temp_vector[neu,:]
+#         Point_neurite_pre = Point_neurite_pre_vector[neu,:]
+#         phi = Phi[neu]
+#         theta = Theta[neu]
+#         Ch = False
+        
+        
+#         # Set conditions
+#         exceed_threshold = [Point_neurite_temp[0] < 0, Point_neurite_temp[1] < 0, Point_neurite_temp[2] < 0, Point_neurite_temp[0]> width, Point_neurite_temp[1] > depth, Point_neurite_temp[2] > height]
+#         Check = any(exceed_threshold)
+#         phi_ = phi
+#         theta_ = theta
+        
+#         if Check == True:
+#             Ch = True
+#             # Used to avoid bottlenecks
+#             t = 0    
+#             p = 0
+#             q = sd*np.random.normal(0, 1) # Needed to add some variability
+#             f = 1
+            
+#             # Axes of incidence
+#             Exceeded_Axes = np.where(exceed_threshold)[0]
+            
+            
+#             if np.all(np.isin(Exceeded_Axes, xy_axes)): # Act only on the azimuthal angle phi
+#                 print('xy only')   
+#                 print('Phi_pre', np.degrees(phi))
+#                 while Check == True:
+                    
+                    
+#                     # There are situation in whichh the algorithm is stuck in a loop reaching t = 80000.
+#                     if t == 800 :  # Attention to the trade off ruled by the term
+#                         print('Inside debug')
+#                     f = f*(-1)
+#                     q = q + p*(f)# At every iteration the value changes sign and takes, thus the opposite magnitude plus one
+#                     # change completely tha angle both of them but an improvement could be to find which axes is the problematic one and solve
+#                     # Another way to debug is to determine the plane that is crossed and rotate away the related angle.
+                    
+#                     phi_ = phi + q*debug_angle # Rotation direction depends on q's sign
+                    
+#                     p = p+p_add
+#                     print('P',q*debug_angle )
+#                         t = 0
+#                     # else:
+                        
+                        
+                    
+                        
+            
+#                     # i-th elements shuld be preserved not modified ###### in case check
+#                     Point_neurite_temp[0] = Point_neurite_pre[0] + Dl*np.cos(phi_)*np.sin(theta)
+#                     Point_neurite_temp[1] = Point_neurite_pre[1] + Dl*np.sin(phi_)*np.sin(theta)
+#                     Point_neurite_temp[2] = Point_neurite_pre[2] + Dl*np.cos(theta)
+                    
+                    
+            
+#                     exceed_threshold = [Point_neurite_temp[0] < 0, Point_neurite_temp[1] < 0, Point_neurite_temp[2] < 0, Point_neurite_temp[0]> width, Point_neurite_temp[1] > depth, Point_neurite_temp[2] > height]
+                    
+#                     Check = any(exceed_threshold)
+                    
+#                     t = t+1  # For computation feasability
+                    
+            
+                    
+#             elif np.all(np.isin(Exceeded_Axes, z_axes)): # Act on the polar angle theta
+#                 # print('z only') 
+#                 # print('Theta_pre', np.degrees(theta))
+#                 while Check == True:
+                    
+                    
+#                     # There are situation in whichh the algorithm is stuck in a loop reaching t = 80000.
+#                     # if t == t_th :  # Attention to the trade off ruled by the term
+#                     # print('Inside debug')
+#                     f = f*(-1)
+#                     q = q + p*(f)# At every iteration the value changes sign and takes, thus the opposite magnitude plus one
+#                     # change completely tha angle both of them but an improvement could be to find which axes is the problematic one and solve
+#                     # Another way to debug is to determine the plane that is crossed and rotate away the related angle.
+                    
+                    
+#                     theta_ = theta +  q*debug_angle # Rotation direction depends on q's sign
+#                     p = p+p_add
+#                     # print('P',q*debug_angle )
+#                     # t = 0
+#                     # else:
+                        
+                        
+                        
+                    
+            
+#                     # i-th elements shuld be preserved not modified ###### in case check
+#                     Point_neurite_temp[0] = Point_neurite_pre[0] + Dl*np.cos(phi)*np.sin(theta_)
+#                     Point_neurite_temp[1] = Point_neurite_pre[1] + Dl*np.sin(phi)*np.sin(theta_)
+#                     Point_neurite_temp[2] = Point_neurite_pre[2] + Dl*np.cos(theta_)
+            
+#                     exceed_threshold = [Point_neurite_temp[0] < 0, Point_neurite_temp[1] < 0, Point_neurite_temp[2] < 0, Point_neurite_temp[0]> width, Point_neurite_temp[1] > depth, Point_neurite_temp[2] > height]
+                    
+#                     Check = any(exceed_threshold)
+                    
+#                     t = t+1  # For computation feasability
+            
+#             else: # both xy and z are crossed
+#                 # print('x/y and z')   
+#                 # print('Phi_pre', np.degrees(phi))
+#                 # print('Theta_pre', np.degrees(theta))
+#                 while Check == True:
+                    
+                    
+#                     # There are situation in whichh the algorithm is stuck in a loop reaching t = 80000.
+#                     # if t == t_th :  # Attention to the trade off ruled by the term
+#                     # print('Inside debug')
+#                     f = f*(-1)
+#                     q = q + p*(f)# At every iteration the value changes sign and takes, thus the opposite magnitude plus one
+#                     # change completely tha angle both of them but an improvement could be to find which axes is the problematic one and solve
+#                     # Another way to debug is to determine the plane that is crossed and rotate away the related angle.
+                    
+                     
+#                     phi_ = phi + q*debug_angle # Rotation direction depends on q's sign
+#                     theta_ = theta +  q*debug_angle
+#                     p = p+p_add
+#                     # print('P',q)
+#                     # t = 0
+#                     # else:
+                        
+                        
+#                     phi+= sd*np.random.normal(0, 1)
+#                     theta  += sd*np.random.normal(0, 1)
+            
+#                     # i-th elements shuld be preserved not modified ###### in case check
+#                     Point_neurite_temp[0] = Point_neurite_pre[0] + Dl*np.cos(phi_)*np.sin(theta_)
+#                     Point_neurite_temp[1] = Point_neurite_pre[1] + Dl*np.sin(phi_)*np.sin(theta_)
+#                     Point_neurite_temp[2] = Point_neurite_pre[2] + Dl*np.cos(theta_)
+            
+#                     exceed_threshold = [Point_neurite_temp[0] < 0, Point_neurite_temp[1] < 0, Point_neurite_temp[2] < 0, Point_neurite_temp[0]> width, Point_neurite_temp[1] > depth, Point_neurite_temp[2] > height]
+                    
+#                     Check = any(exceed_threshold)
+                    
+#                     t = t+1  # For computation feasability
+            
+                
+           
+#         # if Ch == True:    
+#         #     print('Phi_post', np.degrees(phi_))
+#         #     print('Theta_post', np.degrees(theta_))
+#         # # Update variables
+#         Point_neurite_temp_vector[neu,:] = Point_neurite_temp
+#         Phi[neu] = phi_ # azimuthal
+#         Theta[neu] = theta_
+    
+#     return Point_neurite_temp_vector,Phi,Theta
+def Check_borders(Point_neurite_temp_vector, Point_neurite_pre_vector, Phi, Theta, width, depth, height, Dl): # This is optimized
+    '''
+    Vectorized version: Checks for neurite branches that cross the culture's boundaries.
+    If the point crosses x/y boundaries, only the azimuthal angle is adjusted; if z boundaries are crossed, the polar angle is changed.
+
     Parameters
     ----------
-    Neurites related variables have been altrady masked
-    
     Point_neurite_temp_vector : array [N,3]
         Temporary new points of the growing neurites  
     Point_neurite_pre_vector : array [N,3]
         Current points of the growing neurites 
-    Phi : array [N,3]
+    Phi : array [N]
         Azimuthal angles 
-    Theta : array [N,3]
+    Theta : array [N]
         Polar angles
-    width : Integer
+    width : int
         X span of the culture
-    depth : Integer
+    depth : int
         Y span of the culture
-    height : Integer
+    height : int
         Z span of the culture
-    Dl : Float 
+    Dl : float 
         Growing step
 
     Returns
     -------
-    Point_neurite_temp : array [N,3]
+    Point_neurite_temp_vector : array [N,3]
         New temporary points of the growing neurites  
-    phi : array [N,3]
+    Phi : array [N]
         New azimuthal angles 
-    theta : array [N,3]
+    Theta : array [N]
         New polar angles
     '''
-    
-    
-    
-    z_axes = np.array((2,5))
-    xy_axes = np.array((0,1,3,4))
-    sd = 0.1 # Is needed to bring some randomness in the debug, otherwise it gets stuck
-    debug_angle = np.pi/180 # Used to avoid bottle necks in the search of a point. pi/96 = 1.8334649 degrees
-            # in compliance with the boundary conditions.
-    # t_th = 100 # Number of iterations before getting in the debug loop
-    p_add = 0.002 # The addition to the multiplier
-    # Iterate over neurites
-    for neu in np.arange(np.shape(Point_neurite_temp_vector)[0]):
-        
-        # Extract variables
-        Point_neurite_temp = Point_neurite_temp_vector[neu,:]
-        Point_neurite_pre = Point_neurite_pre_vector[neu,:]
-        phi = Phi[neu]
-        theta = Theta[neu]
-        Ch = False
-        
-        
-        # Set conditions
-        exceed_threshold = [Point_neurite_temp[0] < 0, Point_neurite_temp[1] < 0, Point_neurite_temp[2] < 0, Point_neurite_temp[0]> width, Point_neurite_temp[1] > depth, Point_neurite_temp[2] > height]
-        Check = any(exceed_threshold)
-        phi_ = phi
-        theta_ = theta
-        
-        if Check == True:
-            Ch = True
-            # Used to avoid bottlenecks
-            t = 0    
-            p = 0
-            q = sd*np.random.normal(0, 1) # Needed to add some variability
-            f = 1
-            
-            # Axes of incidence
-            Exceeded_Axes = np.where(exceed_threshold)[0]
-            
-            
-            if np.all(np.isin(Exceeded_Axes, xy_axes)): # Act only on the azimuthal angle phi
-                # print('xy only')   
-                # print('Phi_pre', np.degrees(phi))
-                while Check == True:
-                    
-                    
-                    # There are situation in whichh the algorithm is stuck in a loop reaching t = 80000.
-                    # if t == t_th :  # Attention to the trade off ruled by the term
-                    # print('Inside debug')
-                    f = f*(-1)
-                    q = q + p*(f)# At every iteration the value changes sign and takes, thus the opposite magnitude plus one
-                    # change completely tha angle both of them but an improvement could be to find which axes is the problematic one and solve
-                    # Another way to debug is to determine the plane that is crossed and rotate away the related angle.
-                    
-                    phi_ = phi + q*debug_angle # Rotation direction depends on q's sign
-                    
-                    p = p+p_add
-                    # print('P',q*debug_angle )
-                        # t = 0
-                    # else:
-                        
-                        
-                    
-                        
-            
-                    # i-th elements shuld be preserved not modified ###### in case check
-                    Point_neurite_temp[0] = Point_neurite_pre[0] + Dl*np.cos(phi_)*np.sin(theta)
-                    Point_neurite_temp[1] = Point_neurite_pre[1] + Dl*np.sin(phi_)*np.sin(theta)
-                    Point_neurite_temp[2] = Point_neurite_pre[2] + Dl*np.cos(theta)
-                    
-                    
-            
-                    exceed_threshold = [Point_neurite_temp[0] < 0, Point_neurite_temp[1] < 0, Point_neurite_temp[2] < 0, Point_neurite_temp[0]> width, Point_neurite_temp[1] > depth, Point_neurite_temp[2] > height]
-                    
-                    Check = any(exceed_threshold)
-                    
-                    t = t+1  # For computation feasability
-                    
-            
-                    
-            elif np.all(np.isin(Exceeded_Axes, z_axes)): # Act on the polar angle theta
-                # print('z only') 
-                # print('Theta_pre', np.degrees(theta))
-                while Check == True:
-                    
-                    
-                    # There are situation in whichh the algorithm is stuck in a loop reaching t = 80000.
-                    # if t == t_th :  # Attention to the trade off ruled by the term
-                    # print('Inside debug')
-                    f = f*(-1)
-                    q = q + p*(f)# At every iteration the value changes sign and takes, thus the opposite magnitude plus one
-                    # change completely tha angle both of them but an improvement could be to find which axes is the problematic one and solve
-                    # Another way to debug is to determine the plane that is crossed and rotate away the related angle.
-                    
-                    
-                    theta_ = theta +  q*debug_angle # Rotation direction depends on q's sign
-                    p = p+p_add
-                    # print('P',q*debug_angle )
-                    # t = 0
-                    # else:
-                        
-                        
-                        
-                    
-            
-                    # i-th elements shuld be preserved not modified ###### in case check
-                    Point_neurite_temp[0] = Point_neurite_pre[0] + Dl*np.cos(phi)*np.sin(theta_)
-                    Point_neurite_temp[1] = Point_neurite_pre[1] + Dl*np.sin(phi)*np.sin(theta_)
-                    Point_neurite_temp[2] = Point_neurite_pre[2] + Dl*np.cos(theta_)
-            
-                    exceed_threshold = [Point_neurite_temp[0] < 0, Point_neurite_temp[1] < 0, Point_neurite_temp[2] < 0, Point_neurite_temp[0]> width, Point_neurite_temp[1] > depth, Point_neurite_temp[2] > height]
-                    
-                    Check = any(exceed_threshold)
-                    
-                    t = t+1  # For computation feasability
-            
-            else: # both xy and z are crossed
-                # print('x/y and z')   
-                # print('Phi_pre', np.degrees(phi))
-                # print('Theta_pre', np.degrees(theta))
-                while Check == True:
-                    
-                    
-                    # There are situation in whichh the algorithm is stuck in a loop reaching t = 80000.
-                    # if t == t_th :  # Attention to the trade off ruled by the term
-                    # print('Inside debug')
-                    f = f*(-1)
-                    q = q + p*(f)# At every iteration the value changes sign and takes, thus the opposite magnitude plus one
-                    # change completely tha angle both of them but an improvement could be to find which axes is the problematic one and solve
-                    # Another way to debug is to determine the plane that is crossed and rotate away the related angle.
-                    
-                     
-                    phi_ = phi + q*debug_angle # Rotation direction depends on q's sign
-                    theta_ = theta +  q*debug_angle
-                    p = p+p_add
-                    # print('P',q)
-                    # t = 0
-                    # else:
-                        
-                        
-                    phi+= sd*np.random.normal(0, 1)
-                    theta  += sd*np.random.normal(0, 1)
-            
-                    # i-th elements shuld be preserved not modified ###### in case check
-                    Point_neurite_temp[0] = Point_neurite_pre[0] + Dl*np.cos(phi_)*np.sin(theta_)
-                    Point_neurite_temp[1] = Point_neurite_pre[1] + Dl*np.sin(phi_)*np.sin(theta_)
-                    Point_neurite_temp[2] = Point_neurite_pre[2] + Dl*np.cos(theta_)
-            
-                    exceed_threshold = [Point_neurite_temp[0] < 0, Point_neurite_temp[1] < 0, Point_neurite_temp[2] < 0, Point_neurite_temp[0]> width, Point_neurite_temp[1] > depth, Point_neurite_temp[2] > height]
-                    
-                    Check = any(exceed_threshold)
-                    
-                    t = t+1  # For computation feasability
-            
-                
-           
-        # if Ch == True:    
-        #     print('Phi_post', np.degrees(phi_))
-        #     print('Theta_post', np.degrees(theta_))
-        # # Update variables
-        Point_neurite_temp_vector[neu,:] = Point_neurite_temp
-        Phi[neu] = phi_ # azimuthal
-        Theta[neu] = theta_
-    
-    return Point_neurite_temp_vector,Phi,Theta
+    sd = 0.1
+    debug_angle = np.pi / 120
+    p_add = 0.005
+    max_iter = 1000  # Prevent infinite loops
+
+    N = Point_neurite_temp_vector.shape[0]
+    # Boundary thresholds
+    lower_bounds = np.array([0, 0, 0])
+    upper_bounds = np.array([width, depth, height])
+
+    # Vectorized exceed mask
+    exceed_mask = (
+        (Point_neurite_temp_vector < lower_bounds) | 
+        (Point_neurite_temp_vector > upper_bounds)
+    )
+    # Any boundary exceeded per neurite
+    Check = np.any(exceed_mask, axis=1)
+
+    # Precompute random variability for all
+    q = sd * np.random.normal(0, 1, N)
+    p = np.zeros(N)
+    f = np.ones(N)
+
+    # Use previous values for update
+    phi_ = Phi.copy()
+    theta_ = Theta.copy()
+
+    # Precompute indices
+    xy_axes = [0, 1, 3, 4]
+    z_axes = [2, 5]
+
+    # Track which axes exceeded for each neurite
+    exceeded_axes = np.argwhere(exceed_mask)
+
+    for t in range(max_iter):
+        # Only operate on neurites that still exceed
+        idx = np.where(Check)[0]
+        if len(idx) == 0:
+            break
+
+        # Flip and update f, q, p for these indices
+        f[idx] *= -1
+        q[idx] += p[idx] * f[idx]
+        p[idx] += p_add
+
+        # For each neurite, check which axes are exceeded
+        for neu in idx:
+            axes_exceeded = exceeded_axes[exceeded_axes[:,0]==neu][:,1]
+            # xy only
+            if np.all(np.isin(axes_exceeded, xy_axes)):
+                phi_[neu] = Phi[neu] + q[neu] * debug_angle
+                Point_neurite_temp_vector[neu, 0] = Point_neurite_pre_vector[neu, 0] + Dl * np.cos(phi_[neu]) * np.sin(Theta[neu])
+                Point_neurite_temp_vector[neu, 1] = Point_neurite_pre_vector[neu, 1] + Dl * np.sin(phi_[neu]) * np.sin(Theta[neu])
+                Point_neurite_temp_vector[neu, 2] = Point_neurite_pre_vector[neu, 2] + Dl * np.cos(Theta[neu])
+            # z only
+            elif np.all(np.isin(axes_exceeded, z_axes)):
+                theta_[neu] = Theta[neu] + q[neu] * debug_angle
+                Point_neurite_temp_vector[neu, 0] = Point_neurite_pre_vector[neu, 0] + Dl * np.cos(Phi[neu]) * np.sin(theta_[neu])
+                Point_neurite_temp_vector[neu, 1] = Point_neurite_pre_vector[neu, 1] + Dl * np.sin(Phi[neu]) * np.sin(theta_[neu])
+                Point_neurite_temp_vector[neu, 2] = Point_neurite_pre_vector[neu, 2] + Dl * np.cos(theta_[neu])
+            # both xy and z
+            else:
+                phi_[neu] = Phi[neu] + q[neu] * debug_angle + sd * np.random.normal(0, 1)
+                theta_[neu] = Theta[neu] + q[neu] * debug_angle + sd * np.random.normal(0, 1)
+                Point_neurite_temp_vector[neu, 0] = Point_neurite_pre_vector[neu, 0] + Dl * np.cos(phi_[neu]) * np.sin(theta_[neu])
+                Point_neurite_temp_vector[neu, 1] = Point_neurite_pre_vector[neu, 1] + Dl * np.sin(phi_[neu]) * np.sin(theta_[neu])
+                Point_neurite_temp_vector[neu, 2] = Point_neurite_pre_vector[neu, 2] + Dl * np.cos(theta_[neu])
+
+        # Update mask
+        exceed_mask = (
+            (Point_neurite_temp_vector < lower_bounds) | 
+            (Point_neurite_temp_vector > upper_bounds)
+        )
+        Check = np.any(exceed_mask, axis=1)
+        exceeded_axes = np.argwhere(exceed_mask)
+
+    # Failsafe: clip within bounds
+    Point_neurite_temp_vector = np.clip(Point_neurite_temp_vector, lower_bounds, upper_bounds)
+    Phi[:] = phi_
+    Theta[:] = theta_
+
+    return Point_neurite_temp_vector, Phi, Theta
 
 
 def find_approximate_match(number, vector, tolerance=0.4):
@@ -1181,4 +1297,16 @@ def Check_synapses(X,Y,Z,A,Final_points,Connections,alpha_values,r_dendrite,Neur
                     
     return A, Connections
 
-  
+                    
+                    
+                    
+                    
+                    
+            
+        
+        
+        
+                      
+                        
+                        
+                    
