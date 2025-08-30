@@ -970,14 +970,15 @@ def Get_vectors(Pre_point, Temp_point):
 
     return normalized_vectors
 
+
 def generate_random_angles():
     """Generates a random angle from the combined range [pi/5, pi] and [-pi, -pi/5]."""
-    if random.random() < 0.5:  # 50% chance for each range
-        # Generate from [pi/5, pi]
-        return random.uniform(math.pi / 6, math.pi/3)
+    if random.random() < 0.5:  # 50% chance for the first range
+        # Generates a random angle in the range [pi/5, pi]
+        return random.uniform(math.pi / 5, math.pi)
     else:
-        # Generate from [-pi, -pi/5]
-        return random.uniform(5*math.pi/3, 11*math.pi/6)  # Negate the uniform value
+        # Generates a random angle in the range [-pi, -pi/5]
+        return random.uniform(-math.pi, -math.pi / 5)
 
 
 
@@ -1657,6 +1658,11 @@ def Check_synapses(X,Y,Z,A,Final_points,Connections,alpha_values,r_dendrite,Neur
                     
                     
                     
+                    
+                    
+            
+        
+        
                     
                     
             
