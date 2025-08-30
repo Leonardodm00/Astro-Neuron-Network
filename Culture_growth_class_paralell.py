@@ -1,5 +1,4 @@
 
-
 import random
 import math
 from tqdm import tqdm
@@ -15,7 +14,7 @@ from scipy.stats import multivariate_normal
 from sklearn.neighbors import BallTree
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial import cKDTree
-
+import concurrent.futures
 
 directory = r"C:\Users\Admin\Desktop\Leonardo\ASN\Growth"  # Replace with your desired path
 os.chdir(directory)
@@ -815,8 +814,8 @@ class Network_3D:
         phi_sd_GLU = 0.05  # axon random walk std ### ORIGINAL VALUES 0.1
         theta_sd_GLU = 0.05 # second angle
         
-        phi_sd_GABA = 0.25   
-        theta_sd_GABA = 0.25 
+        phi_sd_GABA = 0.45   
+        theta_sd_GABA = 0.45 
 
         r_dendrite_mu   = 120e-3    # denrite radius mean (mm) ## Depends on the cells' type M1 and M2 aprox. 117
         r_dendrite_sd   = 40e-3     # denrite radius std
@@ -869,13 +868,18 @@ class Network_3D:
         # STARTING POINTS Array  ######## CORRECTLY DEFINE THE STARTING POINTS IN BASE OF THE NUMBER OF NEURITES
         # Initialize the starting coordinates.
         # Glutamatergic
-        X_GLU = np.tile(X[0:Ne], Number_GLU)
-        Y_GLU  = np.tile(Y[0:Ne], Number_GLU)
-        Z_GLU  = np.tile(Z[0:Ne], Number_GLU)
         
-        X_GABA = np.tile(X[Ne:], Number_GABA)
-        Y_GABA  = np.tile(Y[Ne:], Number_GABA)
-        Z_GABA  = np.tile(Z[Ne:], Number_GABA)
+        
+        
+        # Repeats each element of X[0:Ne] Number_GLU times
+        X_GLU = np.repeat(X[0:Ne], Number_GLU)
+        Y_GLU = np.repeat(Y[0:Ne], Number_GLU)
+        Z_GLU = np.repeat(Z[0:Ne], Number_GLU)
+        
+        # Repeats each element of X[Ne:] Number_GABA times
+        X_GABA = np.repeat(X[Ne:], Number_GABA)
+        Y_GABA = np.repeat(Y[Ne:], Number_GABA)
+        Z_GABA = np.repeat(Z[Ne:], Number_GABA)
         
         
         # We want to keep track
@@ -905,6 +909,8 @@ class Network_3D:
         n_workers_exc = int(n_workers*excitatory_persentage)
         n_cells_perwrk_exc = np.floor(Ne/n_workers_exc) # Some will be discard
         
+        # To retrieve positions 
+        Excitatory_cells_idx = []
         Input_total_exc = []
         for wrk in range(n_workers_exc-1):
             
@@ -944,6 +950,9 @@ class Network_3D:
                 Neuron_type
             ]
             
+            
+            # Update
+            Excitatory_cells_idx.append(range(start_idx,end_idx))
             Input_total_exc.append(Input)
         
             
@@ -953,11 +962,15 @@ class Network_3D:
             n_workers_inh = n_workers - n_workers_exc
             n_cells_perwrk_inh = np.floor(Ni/n_workers_inh) # Some will be discard
             max_n_excitatory_val = int(Ne*Number_GLU) # To take the correct idx
+            
+            # To retrieve positions 
             Input_total_inh = [] 
+            Inhibitory_cells_idx = []
             for wrk in range(n_workers_inh-1):
                 # Raw slicing idx
                 start_idx = Ne+int(wrk*n_cells_perwrk_inh)
                 end_idx = Ne+int((wrk+1)*n_cells_perwrk_inh)
+                
                 
                 # Slicing indicies for neurites
                 start_idx_n = max_n_excitatory_val+ int(wrk*n_cells_perwrk_inh)*Number_GABA # I must account also for the number of neurite per cell
@@ -971,7 +984,7 @@ class Network_3D:
                 
                 # Kept neurites
                 
-                N_neurites_temp = int(n_cells_perwrk_exc*Number_GLU)
+                N_neurites_temp = int(n_cells_perwrk_inh*Number_GABA)
                 
                 
                 Total_length_temp = Total_length_INH[start_idx_n:end_idx_n]
@@ -980,7 +993,7 @@ class Network_3D:
                 # Neurons might have multiple neurites.
                 
                 Input = [
-                    Total_length_temp,  Xi[start_idx_n:end_idx_n,:], Yi[start_idx_n:end_idx_n,:], Zi[start_idx_n:end_idx_n,:], width, depth, height,
+                    Total_length_temp,  Xi[start_idx_n:end_idx_n,:], Yi[start_idx_n:end_idx_n,:], Zi[start_idx_n:end_idx_n,:], Dl ,width, depth, height,
                     X, Y, Z,  Connections, alpha_values, r_dendrite, Neuron_of_Neurites_temp,
                     Ne, P_b, Branch_TH, phi_sd_GABA, theta_sd_GABA, Ns,N_neurites_temp,
                     Vector_Field,over_factor,Vector_field_surrogate,Vector_field_tree,Border_check,Vector_field_check,n_cells_perwrk_inh,
@@ -988,34 +1001,37 @@ class Network_3D:
                 ]
                 
                 
-                
+                # Update
+                Inhibitory_cells_idx.append(range(start_idx,end_idx))
                 Input_total_inh.append(Input)
         
         
         
+
         
         
-       
-        # Debug with a for loop
-        
-        for j in range(n_workers_exc):
-            
-            out = Core_growth(Input_total_exc[j])
-            
-        
-        
-        # with concurrent.futures.ProcessPoolExecutor() as executor:
+        with concurrent.futures.ProcessPoolExecutor() as executor:
           
-        #     out = list(executor.map(Core_growth,tuple_list_tau))
+            out_exc = list(executor.map(Core_growth,Input_total_exc))
+            
+        
+        if Ni > 0:
+            
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+              
+                out_inh = list(executor.map(Core_growth,Input_total_inh))
             
             
-            
-            
-            
-            
-            
-            
-            
-            
+            return out_exc,out_inh,Excitatory_cells_idx,Inhibitory_cells_idx
+        
+        
+        
+        else:
+        
+        
+        
+        
+        
+            return out_exc,Excitatory_cells_idx
             
             
