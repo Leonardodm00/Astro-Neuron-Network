@@ -1,8 +1,10 @@
 
 # MAIN CODES
 ## Activity
-- *Main_code.py*: Primary interface to simulate the ***in-silico*** culture
-- *ANS_fun.py*: Gathers all the functions employed in *Main_code.py* 
+- *Main_code.py*: Primary interface to simulate the ***in-silico*** culture (biophysical)
+- *ANS_fun.py*: Gathers all the functions employed in *Main_code.py* (biophysical)
+- *Main_code_pheno.py*: Phenomenological version of the *Main_code*
+- *ANS_fun_pheno.py*; Phenomenological version of the *ANS_fun*
 ## Growing
 - *Culture_growth.py* : Primary interface to simulate the growth the ***in-silico*** culture
 - *Culture_growth_class.py*: Main class called in *Culture_growth.py*
