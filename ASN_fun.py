@@ -1,8 +1,3 @@
-"""
-Created on Tue Aug 12 17:52:56 2025
-
-@author: Admin
-"""
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -45,9 +40,9 @@ def Distance_based_connections(N, params_Syn, sed):
 
     # Calculate all pairwise distances at once using broadcasting
     # This creates a matrix where element (i, j) is the distance between neuron i and neuron j
-    x_diff = coords[:, 0][:, np.newaxis] - coords[:, 0]
+    x_Siff = coords[:, 0][:, np.newaxis] - coords[:, 0]
     y_diff = coords[:, 1][:, np.newaxis] - coords[:, 1]
-    distances = np.sqrt(x_diff**2 + y_diff**2)
+    distances = np.sqrt(x_Siff**2 + y_diff**2)
 
     # Calculate probabilities for all connections simultaneously
     probabilities = -distances * params_Syn['slope'] + params_Syn['intercept']
@@ -277,8 +272,8 @@ def get_Neuronparam(Adaptation=True,delta = 0,**kwargs):
     'gl': (0.3*msiemens*cm**-2) * Neuron_area, # maximal leak conductance (calculated with area)
     'g_AHP': g_AHP, # maximal conductance of AHP currents
     'VT': -30.4*mV,                      # alters firing threshold of neurons
-    'sigma': 4.1 * mV,                     # standard deviation of the noisy voltage fluctuations
-    'Tau_max': 608 * ms,                # Decay factor of AHP
+    'sigma': 6 * mV,      #4.1               # standard deviation of the noisy voltage fluctuations #!!!
+    'Tau_max': 608 * ms,                # Decay factor of AHP 
     
     'I_inj': 18*pA, # Injected current # 18
  
@@ -320,7 +315,7 @@ def get_Neuronparam(Adaptation=True,delta = 0,**kwargs):
     # Asynchronous Release parameters (uncommented and added to dictionary)
     'AsynchronousRelease': False,
     'tau_ar': 700 * ms,
-    'Uar': 0.003,
+    'Uar': 0.003, #!!!0.003
     'Umax': 0.5/ms,
     'x0': 5, # x0 seems to be unitless here
 
@@ -404,9 +399,9 @@ def get_Synparam(synapse_type='depressing',**kwargs):
        
     
        # Asynchronous Release parameters (uncommented and added to dictionary)
-       'AsynchronousRelease': False,
+ 
        'tau_ar': 700 * ms,
-       'Uar': 0.003,
+       'Uar': 0.0001, #3
        'Umax': 0.5/ms,
        'x0': 5, # x0 seems to be unitless here
     
@@ -479,8 +474,8 @@ def get_Synparam(synapse_type='depressing',**kwargs):
 
 def Neuronal_Network(Nn,Connection_var, RandomKinetics = False, OnlyExc= True ,
                      Syn_Currents_model = 'Kinetic',add_delay= False,delay_mode= 'random',
-                     Max_delay = 10*ms,ics = True,std_pers = 0.01, Simulated_network = 'Neuronal',
-                     Decay_type = 'Double_exp',synapse_type = 'neutral',Asynchronous_release= True,Out_path = None):
+                     Max_Selay = 10*ms,ics = False,std_pers = 0.01, Simulated_network = 'Neuronal',
+                     Decay_type = 'Double_exp',synapse_type = 'neutral',Out_path = None):
     
 # std_pers = persentage of mean value used as standard deviation for introducing some
 #   variability
@@ -562,8 +557,8 @@ def Neuronal_Network(Nn,Connection_var, RandomKinetics = False, OnlyExc= True ,
             
             
             # Add the asyncronous release
-            qar_tot_post = x0 * qar :Hz (summed)
-            qar = clip(randn()*sqrt(x_d/x0*uar*dt*(1-uar*dt))+uar*dt*x_d/x0, 0, 2*x_d/x0*uar*dt)/dt :Hz (constant over dt)
+           
+            qar = clip(randn()*sqrt(x_S/x0*uar*dt*(1-uar*dt))+uar*dt*x_S/x0, 0, 2*x_S/x0*uar*dt)/dt :Hz (constant over dt)
             duar/dt = -uar/tau_ar :Hz (clock-driven)
             
             
@@ -587,7 +582,7 @@ def Neuronal_Network(Nn,Connection_var, RandomKinetics = False, OnlyExc= True ,
         # -------------- Event based update --------------
         
         
-        pre = Equations('''
+        pre = '''
         
             U_0 =  U_0__star
             u_S += U_0 * (1 - u_S)
@@ -596,7 +591,7 @@ def Neuronal_Network(Nn,Connection_var, RandomKinetics = False, OnlyExc= True ,
             
             
             uar += Uar*(Umax-uar)
-            ''')
+            '''
         post = None
         
         
@@ -620,8 +615,8 @@ def Neuronal_Network(Nn,Connection_var, RandomKinetics = False, OnlyExc= True ,
     
     
             # Add the asyncronous release
-            qar_tot_post = x0 * qar :Hz (summed)
-            qar = clip(randn()*sqrt(x_d/x0*uar*dt*(1-uar*dt))+uar*dt*x_d/x0, 0, 2*x_d/x0*uar*dt)/dt :Hz (constant over dt)
+            
+            qar = clip(randn()*sqrt(x_S/x0*uar*dt*(1-uar*dt))+uar*dt*x_S/x0, 0, 2*x_S/x0*uar*dt)/dt :Hz (constant over dt)
             duar/dt = -uar/tau_ar :Hz (clock-driven)
             
             
@@ -705,9 +700,9 @@ def Neuronal_Network(Nn,Connection_var, RandomKinetics = False, OnlyExc= True ,
     eqs_Syn += Equations('''
                          
                                
-                            dr_ampa/dt = -r_ampa/tau_decay_ampa + (rho * Y_T * r_S * Xi_ampa)*qar : 1 (clock-driven)
+                            dr_ampa/dt = -r_ampa/tau_decay_ampa + (rho * Y_T * r_S * Xi_ampa)*x0*qar : 1 (clock-driven)
                             
-                            dr_nmda/dt = ((tau_decay_nmda / tau_rise_nmda) ** (tau_rise_nmda / (tau_decay_nmda - tau_rise_nmda))*x_r_nmda-r_nmda)/tau_rise_nmda + (rho * Y_T * r_S * Xi_nmda)*qar : 1 (clock-driven)
+                            dr_nmda/dt = ((tau_decay_nmda / tau_rise_nmda) ** (tau_rise_nmda / (tau_decay_nmda - tau_rise_nmda))*x_r_nmda-r_nmda)/tau_rise_nmda + (rho * Y_T * r_S * Xi_nmda)*x0*qar : 1 (clock-driven)
                             dx_r_nmda/dt = -x_r_nmda/tau_decay_nmda   : 1 (clock-driven)
                             
                            
@@ -827,13 +822,13 @@ def Neuronal_Network(Nn,Connection_var, RandomKinetics = False, OnlyExc= True ,
     # --- Delays ---
     if add_delay == True:
         
-        Max_delay = Max_delay # Max conduction delay expressed in ms
+        Max_Selay = Max_Selay # Max conduction delay expressed in ms
         N_synapses = S.N
         
         if delay_mode == 'random':
             # Randomly generate scaling values.
             random_values = np.random.rand(N_synapses)
-            Delays = (Max_delay * ms) * random_values
+            Delays = (Max_Selay * ms) * random_values
             S.delay = Delays
             
         elif delay_mode == 'distance':    
@@ -842,7 +837,7 @@ def Neuronal_Network(Nn,Connection_var, RandomKinetics = False, OnlyExc= True ,
             # To this it must be add the time required from the vescicle release 
             # at the pre-synaptic site.
             random_values = np.random.rand(N_synapses)
-            Delays = (Max_delay * ms) * random_values
+            Delays = (Max_Selay * ms) * random_values
             Conductance_velocity = 0.5 * (mm/ms) + Delays
             S.delay = '(sqrt((x_pre - x_post)**2 + (y_pre - y_post)**2 + (z_pre - z_post)**2)) * Conductance_velocity'
     
@@ -2559,4 +2554,7 @@ def Neuronal_traces_simulation(Raster_array,Type ='PCA',t_rec = 600, fs = 10000,
         
         
         return smoothed_cumulative,fs_downsampled
+        
+
+        
     
