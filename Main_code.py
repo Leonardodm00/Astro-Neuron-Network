@@ -1,3 +1,9 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Aug 12 17:53:15 2025
+
+@author: Admin
+"""
 
 
 import matplotlib.pyplot as plt
@@ -123,17 +129,17 @@ Simulated_network = 'Neuronal' # Astrocytic/Neuronal/Full
 
 
 # --------- NEURON -----------
-Nn =4
+Nn =100
 neuron_radius = 9 #[um]
 # --------- SYNAPTIC -----------
 
 # ----- Connectivity -----
 # Can be directly an ADJ or a string: Random, Distance
-Connection_neuro = np.array(([0,1,0,0],
-                              [0,0,1,0],
-                              [0,0,0,1],
-                              [0,0,0,0]))
-# Connection_neuro = 'Random'
+# Connection_neuro = np.array(([0,1,0,0],
+                              # [0,0,1,0],
+                              # [0,0,0,1],
+                              # [0,0,0,0]))
+Connection_neuro = 'Random'
 
 # --------- ASTROCYTE and GJ ----------- 
 '''
@@ -183,15 +189,15 @@ c_max = 1100 #[um]
 
 if Simulated_network == 'Full':
     # --------- NEURON and SYNAPSE -----------
-    N,S = Neuronal_Network(Nn,Connection_neuro, RandomKinetics=RandomKinetics, OnlyExc=OnlyExc,
-                           Syn_Currents_model=Syn_Currents_model,add_delay=add_delay,
+    N,S = Neuronal_Network(Nn,Connection_neuro, 
+                           add_delay=add_delay,
                            delay_mode=delay_mode,Max_delay=Max_delay,ics=ics,
-                           std_pers=std_pers, Simulated_network=Simulated_network,Decay_type=Decay_type,
-                           synapse_type=synapse_type,Asynchronous_release = Asynchronous_release,Out_path = Out_path)
+                           Simulated_network=Simulated_network,Decay_type=Decay_type,
+                           synapse_type=synapse_type)
     
     
 
-    
+    N.I = '(rand() -0.5) * I_inj'          # Make neurons heterogeneously excitable
     
     
     
@@ -220,9 +226,13 @@ if Simulated_network == 'Full':
 elif Simulated_network == 'Neuronal':
 
     # --------- NEURON and SYNAPSE -----------
-    N,S = Neuronal_Network(Nn,Connection_neuro)
-    
-    
+    N,S = Neuronal_Network(Nn,Connection_var = 'Random',
+                        add_delay= False,delay_mode= 'random',
+                         Max_Delay = 10*ms,ics = False, Simulated_network = 'Neuronal',
+                         Decay_type = 'Double_exp',synapse_type = 'neutral',sed=sed)
+    # N.namespace['sigma']=4.1*mV
+    # N.namespace['I_inj']=0*pA
+    N.I = '(rand() -0.5) * I_inj'          # Make neurons heterogeneously excitable
    
     
 
@@ -846,3 +856,4 @@ ax3.set_xlabel('Time [s]')
 # plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
 
 show()
+
