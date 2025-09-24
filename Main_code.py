@@ -1,10 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Aug 12 17:53:15 2025
-
-@author: Admin
-"""
-
 
 import matplotlib.pyplot as plt
 from brian2 import *
@@ -119,7 +112,7 @@ oscillations = 'AM'
 # ------------------------- PARAMETERS -------------------------
 
 # --------- SIMULATION -----------
-simtime =15 * second               # simulation time
+simtime =20 * second               # simulation time
 # transient = 3 * second              # time omitted as transient
 sed = 39                             # random number seed
 devices.device.seed(sed)            # set the seed for all the random number realisations
@@ -229,7 +222,7 @@ elif Simulated_network == 'Neuronal':
     N,S = Neuronal_Network(Nn,Connection_var = 'Random',
                         add_delay= False,delay_mode= 'random',
                          Max_Delay = 10*ms,ics = False, Simulated_network = 'Neuronal',
-                         Decay_type = 'Double_exp',synapse_type = 'neutral',sed=sed)
+                         Decay_type = 'Double_exp',synapse_type = 'facilitating', sed=sed)
     # N.namespace['sigma']=4.1*mV
     # N.namespace['I_inj']=0*pA
     N.I = '(rand() -0.5) * I_inj'          # Make neurons heterogeneously excitable
@@ -255,7 +248,7 @@ elif Simulated_network == 'Astrocytic':
 
 # --- Monitors ---
 # recording_stringN = ['V','I_syn','I_ampa','I_nmda','I_cell']
-recording_stringN = ['V','I_ampa','I_nmda']
+recording_stringN = ['V','I_ampa','I_nmda','I_AHP']
 recording_stringS = ['usr','x_S','Y_S','uar','r_Sr','r_Ar','r_ampa','r_nmda']
 recording_stringA = ['C','I','Gamma_A','I_coupling_tot','Y_extra']
 recording_stringGT = ['G_A','x_A']
@@ -356,6 +349,34 @@ ax3.set_xlabel('Time [s]')
 
 # plt.figure(dpi=200)
 # plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
+#%%
+
+fig, (ax1, ax2, ax3,ax4) = plt.subplots(4, 1) # Added figsize for better viewing
+
+
+
+ax1.plot(MonitorN.t / second, MonitorN[0].I_AHP / mV, 'k', linewidth=0.7)
+ax1.set_ylabel('Voltage [mV]')
+
+ax2.plot(MonitorN.t / second, MonitorN[1].I_AHP / mV, 'k', linewidth=0.7)
+ax2.set_ylabel('Voltage [mV]')
+
+
+
+ax3.plot(MonitorN.t / second, MonitorN[2].I_AHP / mV, 'k', linewidth=0.7)
+ax3.set_ylabel('Voltage [mV]')
+
+
+
+ax4.plot(MonitorN.t / second, MonitorN[3].I_AHP / mV, 'k', linewidth=0.7)
+ax4.set_xlabel('Time [s]')
+ax4.set_ylabel('Voltage [mV]')
+fig.show()
+
+
+
+
+
 #%%
 # show()
 
@@ -856,4 +877,5 @@ ax3.set_xlabel('Time [s]')
 # plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
 
 show()
+
 
