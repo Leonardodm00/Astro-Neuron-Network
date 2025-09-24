@@ -393,7 +393,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         })
     elif synapse_type == 'facilitating':
         params.update({
-            'Omega_d': 2./second,
+            'Omega_d': 2./second, #2
             'Omega_f_sr': 2./second,
             'U_0_sr': 0.15,
             'alpha': 1.,
@@ -515,16 +515,16 @@ def Neuronal_Network(Nn,Connection_var,
         
    
             # Available neurotransmitter
-            dx_S/dt = Omega_d *(1 - x_S) -  r_Ar: 1 (event-driven)
+            dx_S/dt = Omega_d *(1 - x_S) -  r_Ar: 1 (clock-driven)
             
             # Usage of releasable neurotransmitter per single action potential (synchronous):
-            dusr/dt = -Omega_f_sr * usr : 1 (event-driven)
+            dusr/dt = -Omega_f_sr * usr : 1 (clock-driven)
             
             
             # Add the asyncronous release
             r_Ar = x0*nar : Hz
             nar = clip(randn()*sqrt(x_S/x0*uar*dt*(1-uar*dt))+uar*dt*x_S/x0, 0, 2*x_S/x0*uar*dt)/dt :Hz (constant over dt)
-            duar/dt = -uar*Omega_f_ar :Hz (event-driven)
+            duar/dt = -uar*Omega_f_ar :Hz (clock-driven)
             
             r_Sr : 1 
             
@@ -712,7 +712,7 @@ def Neuronal_Network(Nn,Connection_var,
     
     
     
-    S = Synapses(N, model=eqs_Syn,
+    S = Synapses(N,N, model=eqs_Syn,
                         on_pre=pre,
                         on_post=post,
                         name='Synapse*',
@@ -728,7 +728,7 @@ def Neuronal_Network(Nn,Connection_var,
         
         if Connection_var == 'Random':
             # --- Random ---
-            S.connect(p=params_Syn['conn_prob'])
+            S.connect(p=params_Syn['conn_prob'],condition='i != j')
             
         elif Connection_var == 'Distance':
             
@@ -2486,6 +2486,8 @@ def Neuronal_traces_simulation(Raster_array,Type ='Cumulative',t_rec = 600, fs =
         
 
 
+        
+    
         
     
 
