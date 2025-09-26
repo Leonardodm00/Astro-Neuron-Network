@@ -1,3 +1,10 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Aug 12 17:53:15 2025
+
+@author: Admin
+"""
+
 
 import matplotlib.pyplot as plt
 from brian2 import *
@@ -38,8 +45,12 @@ FEATURES:
     2) Only the TM_coupled model is used for synaptic weight modulation
     3) Asynchronous release targets both ampa and nmda receptors
     4) The synaptic model scales r_nmda and r_ampa by an alpha factor to match the currents observed
+    5) Autapses are not modeled
 
 
+
+    
+    
 
 
 
@@ -112,7 +123,7 @@ oscillations = 'AM'
 # ------------------------- PARAMETERS -------------------------
 
 # --------- SIMULATION -----------
-simtime =20 * second               # simulation time
+simtime =50 * second               # simulation time
 # transient = 3 * second              # time omitted as transient
 sed = 39                             # random number seed
 devices.device.seed(sed)            # set the seed for all the random number realisations
@@ -133,6 +144,7 @@ neuron_radius = 9 #[um]
                               # [0,0,0,1],
                               # [0,0,0,0]))
 Connection_neuro = 'Random'
+conn_prob_ = 0.13
 
 # --------- ASTROCYTE and GJ ----------- 
 '''
@@ -222,7 +234,7 @@ elif Simulated_network == 'Neuronal':
     N,S = Neuronal_Network(Nn,Connection_var = 'Random',
                         add_delay= False,delay_mode= 'random',
                          Max_Delay = 10*ms,ics = False, Simulated_network = 'Neuronal',
-                         Decay_type = 'Double_exp',synapse_type = 'facilitating', sed=sed)
+                         Decay_type = 'Double_exp',synapse_type = 'facilitating', conn_prob_ = conn_prob_,sed=sed)
     # N.namespace['sigma']=4.1*mV
     # N.namespace['I_inj']=0*pA
     N.I = '(rand() -0.5) * I_inj'          # Make neurons heterogeneously excitable
@@ -247,8 +259,8 @@ elif Simulated_network == 'Astrocytic':
 # ------------------------- NETWORK SIMULATION -------------------------
 
 # --- Monitors ---
-# recording_stringN = ['V','I_syn','I_ampa','I_nmda','I_cell']
-recording_stringN = ['V','I_ampa','I_nmda','I_AHP']
+recording_stringN = ['V','I_syn','I_ampa','I_nmda','I_cell']
+# recording_stringN = ['V','I_ampa','I_nmda','I_AHP']
 recording_stringS = ['usr','x_S','Y_S','uar','r_Sr','r_Ar','r_ampa','r_nmda']
 recording_stringA = ['C','I','Gamma_A','I_coupling_tot','Y_extra']
 recording_stringGT = ['G_A','x_A']
@@ -310,10 +322,13 @@ ax3.set_ylabel('Voltage [mV]')
 ax4.plot(MonitorN.t / second, MonitorN[3].V / mV, 'k', linewidth=0.7)
 ax4.set_xlabel('Time [s]')
 ax4.set_ylabel('Voltage [mV]')
+
+
+#%%
 fig.show()
 
 plt.figure(dpi=200)
-plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
+plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.69)
 
 show()
 
@@ -540,7 +555,7 @@ fig, (ax1, ax2, ax3) = plt.subplots(3, 1) # Added figsize for better viewing
 
 
 # ax1.plot(SpikesN.t/second,spike_trains[0],'.g', ms=5,label='Spikes')
-ax1.plot(MonitorS.t / second, MonitorS[0].u_S, 'r', linewidth=0.7,label='Ready-to-relase resources')
+ax1.plot(MonitorS.t / second, MonitorS[0].usr, 'r', linewidth=0.7,label='Ready-to-relase resources')
 
 ax1.plot(MonitorS.t / second, MonitorS[0].x_S, 'c', linewidth=0.7,label='Available resources')
 
@@ -549,16 +564,16 @@ ax1.legend()
 
 
 # ax2.plot(SpikesN.t/second,spike_trains[1],'.g', ms=5,label='Spikes')
-ax2.plot(MonitorS.t / second, MonitorS[1].u_S, 'r', linewidth=0.7)
+ax2.plot(MonitorS.t / second, MonitorS[30].usr, 'r', linewidth=0.7)
 
-ax2.plot(MonitorS.t / second, MonitorS[1].x_S, 'c', linewidth=0.7)
+ax2.plot(MonitorS.t / second, MonitorS[30].x_S, 'c', linewidth=0.7)
 
 
 
 # ax3.plot(SpikesN.t/second,spike_trains[2],'.g', ms=5,label='Spikes')
-ax3.plot(MonitorS.t / second, MonitorS[2].u_S, 'r', linewidth=0.7)
+ax3.plot(MonitorS.t / second, MonitorS[954].usr, 'r', linewidth=0.7)
 
-ax3.plot(MonitorS.t / second, MonitorS[2].x_S, 'c', linewidth=0.7)
+ax3.plot(MonitorS.t / second, MonitorS[954].x_S, 'c', linewidth=0.7)
 
 ax3.set_xlabel('Time [s]')
 # fig.show()
@@ -787,7 +802,7 @@ clock_dt = defaultclock.dt
 Raster,Raster_array = get_Raster(Traces,clock_dt)
 
 # ------- SAVE -------
-
+#%%
 # # Meta-data dict
 Meta_data_nn ={
     
