@@ -1,4 +1,5 @@
 
+        
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error
@@ -260,7 +261,6 @@ def get_Neuronparam(**kwargs):
     'g_na': 1.6 * 50 * msiemens * cm**-2 * Neuron_area, # maximal conductance of sodium channels (calculated with area)
     'g_kd': 1.3 * 5 * msiemens * cm**-2 * Neuron_area,  # maximal conductance of potassium (calculated with area)
     'gl': (0.3*msiemens*cm**-2) * Neuron_area, # maximal leak conductance (calculated with area)
-    'g_AHP': 0.003, # maximal conductance of AHP currents
     'VT': -30.4*mV,                      # alters firing threshold of neurons
     'sigma': 4 * mV,      #4.1               # standard deviation of the noisy voltage fluctuations #!!!
     
@@ -444,7 +444,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
 def Neuronal_Network(Nn,Connection_var,
                     add_delay= False,delay_mode= 'random',
                      Max_Delay = 10*ms,ics = False, Simulated_network = 'Neuronal',
-                     Decay_type = 'Double_exp',synapse_type = 'neutral',delta = 0.6,conn_prob_ = 0.1, sed=None):
+                     Decay_type = 'Double_exp',synapse_type = 'neutral',conn_prob_ = None, sed=None):
     
 # std_pers = persentage of mean value used as standard deviation for introducing some
 #   variability
@@ -690,11 +690,11 @@ def Neuronal_Network(Nn,Connection_var,
     # -------------------------- INITIALIZE THE NETWORKS ---------------------------
     
     # ---- Get parameters ----
-    params_NN = get_Neuronparam(delta = delta)
+    params_NN = get_Neuronparam()
     
     
     N = NeuronGroup(Nn, model=eqs_NN, name='Neuron*',namespace= params_NN, threshold='V>20*mV',  reset='Ca += alpha_Ca',refractory=2 * ms,
-                        method='exponential_euler')
+                        method='exponential_euler',dtype=float32)
     
     # Initialize neuron parameters
     N.V = -39 * mV                          # approximately resting membrane potential
@@ -717,7 +717,7 @@ def Neuronal_Network(Nn,Connection_var,
                         on_post=post,
                         name='Synapse*',
                         namespace=params_Syn,
-                        method='exponential_euler')
+                        method='exponential_euler',dtype=float32)
     
     
     
@@ -906,7 +906,7 @@ def Astrocyte_Group(N_astro,Connection_var,Simulated_network,sed):
                         refractory='C>C_osc',
                         method='rk4',
                         namespace=Params_astroGT,
-                        name='astrocyte*')
+                        name='astrocyte*',dtype=float32)
     
     # Random initialization of initial conditions
     if ics=='rand':
@@ -939,7 +939,7 @@ def Astrocyte_Group(N_astro,Connection_var,Simulated_network,sed):
                   model=Gap_Eq,
                   method='exponential_euler',
                   namespace= Params_astroGT,
-                  name = 'Gap_junctions*'
+                  name = 'Gap_junctions*',dtype=float32
                   )
     
     
@@ -1056,7 +1056,7 @@ def Gliotransmission(N_astro,ics,Astro):
                             reset=gliot_release,
                             method='rk4',
                             name='gliot_release*',
-                            namespace=Params_astroGT)
+                            namespace=Params_astroGT,dtype=float32)
     
     # Assign initial conditions
     Glio_release.x_A = 1
@@ -1104,7 +1104,7 @@ def Astro_to_Syn(Glio_release,synapse,ADJ):
                              G_A_post = G_A_pre : mole (summed)
                              ''',
                   
-                             name="ecs_astro_to_syn*"
+                             name="ecs_astro_to_syn*",dtype=float32
                              )
     
     # ---- Connections ----
@@ -2237,7 +2237,7 @@ def Smoothed_IFR(IFR, bin_size, window_size, fs, Isolate_NB, Gaussian_window, Vi
 def get_Smoothed_Cumulative(Cumulative,fs_downsampled,Gaussian_window):
     # Gaussian window is the std of the gaussian window. it is defined in s
     # and MUST be grater than the sampling step of fs_downsampled
-   
+
     
     # Gaussian window is defined in s, thus devide by 1000 because fs_downsampled is in Hz
     Gaussian_window_samples = np.ceil(Gaussian_window*fs_downsampled) 
@@ -2255,6 +2255,9 @@ def get_Smoothed_Cumulative(Cumulative,fs_downsampled,Gaussian_window):
         
         
     smoothed_cumulative = gaussian_filter1d(Cumulative.astype(float), sigma=Gaussian_window_samples)
+
+        
+        
     
     
     return smoothed_cumulative
@@ -2330,12 +2333,15 @@ def calculate_mean_burst_duration(time_series_data, fs,scal_factor = 0.5, Visibl
 
 def Neuronal_traces_simulation(Raster_array,Type ='Cumulative',t_rec = 600, fs = 10000, w_size=0.02, overlap = 0.06, 
                     bin_size_s = 0.05, Isolate_NB = False,Gaussian_window=0.04,
-                     Visible = True,NB_statistics = False):
+                     Visible = True,NB_statistics = False,Normalization_type = 'Peak amplitude'):
     
     # Raster_array = nx2, 1st column the channel's idx, 2nd column the timing of spike in seconds
     # Type = PCA or Cumulative. PCA = Usual neuronal dynamics, Cumulative= Cumulative IFR on all the electrodes.
     # t_rec = 600  # [s] Recording time
     # fs = 10000
+
+
+    # Normalization = 'Standardization' or 'Peak amplitude' type of normalization
 
     # Visible = True
 
@@ -2458,31 +2464,56 @@ def Neuronal_traces_simulation(Raster_array,Type ='Cumulative',t_rec = 600, fs =
     
     
     elif Type == 'Cumulative':
-        overlap = 0
-        [Cumulative, t_vec, step_s] = Rect_window(fs, w_size, overlap, data, T_max)
-        
-        # The new sampling frequency is downsampled by a factor determined by w_size [s]
-        fs_downsampled = 1/w_size
-        
-        
-        smoothed_cumulative =  get_Smoothed_Cumulative(Cumulative,fs_downsampled,Gaussian_window)
-        
-        
-        if Visible == True:
+       overlap = 0
+       [Cumulative, t_vec, step_s] = Rect_window(fs, w_size, overlap, data, T_max)
+       
+       # The new sampling frequency is downsampled by a factor determined by w_size [s]
+       fs_downsampled = 1/w_size
+       
+       
+       smoothed_cumulative =  get_Smoothed_Cumulative(Cumulative,fs_downsampled,Gaussian_window) 
+       
+       
+       if Normalization_type == 'Standardization':
+           print('Cumulative traces are STANDARDIZED')
+           smoothed_cumulative = Standardization(smoothed_cumulative)
+       
+           if Visible == True:
+               
+               plt.figure()
+               plt.plot(t_vec/fs,smoothed_cumulative,color = 'r')
+               # plt.plot(t_vec,Cumulative,color = 'b')
+               plt.xlabel('Time [s]')
+               plt.ylabel('Standardized and Smoothed IFR')
+               plt.show()
+               
+               
+       elif Normalization_type == 'Peak amplitude':
+           print('Cumulative traces are NORMALIZED')
+           
+           peak_amplitude = np.max(smoothed_cumulative)
+           
+           smoothed_cumulative = smoothed_cumulative/peak_amplitude
+           if Visible == True:
+               
+               plt.figure()
+               plt.plot(t_vec/fs,smoothed_cumulative,color = 'r')
+               # plt.plot(t_vec,Cumulative,color = 'b')
+               plt.xlabel('Time [s]')
+               plt.ylabel('Normalized and Smoothed IFR')
+               plt.show()
+
+           
+           
+           
+       
+             
             
-            plt.figure()
-            plt.plot(t_vec/fs,smoothed_cumulative,color = 'r')
-            # plt.plot(t_vec,Cumulative,color = 'b')
-            plt.xlabel('Time [s]')
-            plt.ylabel('Smoothed IFR')
-            plt.show()
-            
-            
             
             
         
         
-        return smoothed_cumulative,fs_downsampled,t_vec
+    return smoothed_cumulative,fs_downsampled,t_vec
         
 
 
