@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Created on Tue Aug 12 17:53:15 2025
 
@@ -16,7 +15,7 @@ import os
 
 
 os.chdir(r'C:\Users\Admin\Desktop\Leonardo\ASN')
-import ASN_fun
+from ASN_fun import *
 
 
 '''
@@ -45,7 +44,9 @@ FEATURES:
     2) Only the TM_coupled model is used for synaptic weight modulation
     3) Asynchronous release targets both ampa and nmda receptors
     4) The synaptic model scales r_nmda and r_ampa by an alpha factor to match the currents observed
-    5) Autapses are not modeled
+    5) Autapses are not modeled.
+    6) For Glia-Syn connections the rule is distance based as in [2]. The synapse position is located at the post-synaptic 
+        neuron given the discrepances in the extention of axonal and dendritic domains
 
 
 
@@ -125,11 +126,12 @@ oscillations = 'AM'
 # --------- SIMULATION -----------
 simtime =50 * second               # simulation time
 # transient = 3 * second              # time omitted as transient
-sed = 39                             # random number seed
+sed_neuron = 39                             # random number seed
+sed_astro= 60
 devices.device.seed(sed)            # set the seed for all the random number realisations
 
 
-Simulated_network = 'Neuronal' # Astrocytic/Neuronal/Full
+Simulated_network = 'Full' # Astrocytic/Neuronal/Full
 
 
 # --------- NEURON -----------
@@ -151,7 +153,7 @@ conn_prob_ = 0.13
 Given the nature of the link hte adjency matrix is ALWAYS symmetric
 
 '''
-Na = 3
+Na = 40
 
 # ----- Connectivity -----
 # Can be directly an ADJ or a string: Distance
@@ -166,9 +168,10 @@ Connection_astro = 'Distance'
 
 # --------- ASTRO-NEURON LINKS ----------- 
 # --- Synapse to astro ---
-ADJ_SynAstro = np.array(([1,0,0],
-                         [0,1,0],
-                         [0,0,1]))
+# ADJ_SynAstro = np.array(([1,0,0],
+#                          [0,1,0],
+#                          [0,0,1]))
+Connection_StoA = 'Distance'
 
 
 # --- Astro to synapse ---
@@ -194,11 +197,10 @@ c_max = 1100 #[um]
 
 if Simulated_network == 'Full':
     # --------- NEURON and SYNAPSE -----------
-    N,S = Neuronal_Network(Nn,Connection_neuro, 
-                           add_delay=add_delay,
-                           delay_mode=delay_mode,Max_delay=Max_delay,ics=ics,
-                           Simulated_network=Simulated_network,Decay_type=Decay_type,
-                           synapse_type=synapse_type)
+    N,S = Neuronal_Network(Nn,Connection_var = 'Random',
+                        add_delay= False,delay_mode= 'random',
+                         Max_Delay = 10*ms,ics = False, Simulated_network = Simulated_network,
+                         Decay_type = 'Double_exp',synapse_type = 'facilitating', conn_prob_ = conn_prob_,sed=sed_neuron)
     
     
 
@@ -209,7 +211,7 @@ if Simulated_network == 'Full':
     
     
     # --------- ASTROCYTE -----------
-    Astro,GJ = Astrocyte_Group(Na,Connection_astro,Simulated_network,sed)
+    Astro,GJ = Astrocyte_Group(Na,Connection_astro,Simulated_network,sed_astro)
     
     
     
@@ -220,10 +222,10 @@ if Simulated_network == 'Full':
     
     # --------- ASTRO-NEURON LINKS ----------- 
     # --- Synapse to astro ---
-    StoA = Synapse_to_astro(S,Astro,ADJ_SynAstro)
+    StoA,Source_syn,Target_astro  = Synapse_to_astro(S,Astro,Connection_StoA)
     
     # --- Astro to synapse ---
-    AtoS = Astro_to_Syn(GT,S,ADJ_AstroSyn)
+    AtoS = Astro_to_Syn(GT,S,Target_astro,Source_syn)   # Astro_to_Syn(Glio_release,synapse,Source_astro, Target_syn)
     
     
     
@@ -287,10 +289,13 @@ elif Simulated_network == 'Astrocytic':
     MonitorA = StateMonitor(Astro, recording_stringA, record=True)
     SpikesA = SpikeMonitor(Astro)
     SpikesP = SpikeMonitor(P)
-
-
+    
+    
+#
+%matplotlib
+plot_connections(N, Astro, S, StoA)
 # --- Collect and add monitors ---
-
+#%%
 
 net_ = Network(collect())  # automatically include all the stated groups
 net_.run(simtime,report='text', profile=True)
@@ -322,6 +327,25 @@ ax3.set_ylabel('Voltage [mV]')
 ax4.plot(MonitorN.t / second, MonitorN[3].V / mV, 'k', linewidth=0.7)
 ax4.set_xlabel('Time [s]')
 ax4.set_ylabel('Voltage [mV]')
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 #%%
