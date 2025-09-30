@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Created on Tue Aug 12 17:53:15 2025
 
@@ -124,18 +125,19 @@ oscillations = 'AM'
 # ------------------------- PARAMETERS -------------------------
 
 # --------- SIMULATION -----------
-simtime =50 * second               # simulation time
-# transient = 3 * second              # time omitted as transient
+simtime =20 * second               # simulation time
+# transient = 3 * second  
+sed_device = 50            # time omitted as transient
 sed_neuron = 39                             # random number seed
 sed_astro= 60
-devices.device.seed(sed)            # set the seed for all the random number realisations
-
+devices.device.seed(sed_device)            # set the seed for all the random number realisations
+# defaultclock.dt = 0.01 * defaultclock.dt
 
 Simulated_network = 'Full' # Astrocytic/Neuronal/Full
 
 
 # --------- NEURON -----------
-Nn =100
+Nn =50
 neuron_radius = 9 #[um]
 # --------- SYNAPTIC -----------
 
@@ -153,7 +155,7 @@ conn_prob_ = 0.13
 Given the nature of the link hte adjency matrix is ALWAYS symmetric
 
 '''
-Na = 40
+Na = 10
 
 # ----- Connectivity -----
 # Can be directly an ADJ or a string: Distance
@@ -218,6 +220,7 @@ if Simulated_network == 'Full':
     
     # --------- GLIOTRANSMISSION ----------- 
     GT = Gliotransmission(Na,ics,Astro)
+    # GT.namespace['G_T'] = 0.*mmole
     
     
     # --------- ASTRO-NEURON LINKS ----------- 
@@ -236,7 +239,7 @@ elif Simulated_network == 'Neuronal':
     N,S = Neuronal_Network(Nn,Connection_var = 'Random',
                         add_delay= False,delay_mode= 'random',
                          Max_Delay = 10*ms,ics = False, Simulated_network = 'Neuronal',
-                         Decay_type = 'Double_exp',synapse_type = 'facilitating', conn_prob_ = conn_prob_,sed=sed)
+                         Decay_type = 'Double_exp',synapse_type = 'facilitating', conn_prob_ = conn_prob_,sed=sed_neuron)
     # N.namespace['sigma']=4.1*mV
     # N.namespace['I_inj']=0*pA
     N.I = '(rand() -0.5) * I_inj'          # Make neurons heterogeneously excitable
@@ -292,10 +295,10 @@ elif Simulated_network == 'Astrocytic':
     
     
 #
-%matplotlib
-plot_connections(N, Astro, S, StoA)
+# %matplotlib
+# plot_connections(N, Astro, S, StoA)
 # --- Collect and add monitors ---
-#%%
+
 
 net_ = Network(collect())  # automatically include all the stated groups
 net_.run(simtime,report='text', profile=True)
@@ -305,6 +308,7 @@ net_.run(simtime,report='text', profile=True)
 
 spike_trains = SpikesN.spike_trains()
 # --------------------- PLOTS ---------------------
+#%%
 # ------- NEURONS -------
 %matplotlib
 fig, (ax1, ax2, ax3,ax4) = plt.subplots(4, 1) # Added figsize for better viewing
@@ -328,25 +332,201 @@ ax4.plot(MonitorN.t / second, MonitorN[3].V / mV, 'k', linewidth=0.7)
 ax4.set_xlabel('Time [s]')
 ax4.set_ylabel('Voltage [mV]')
 
+#%%
+
+def check_nan_neuron_astro_link(monitor_n, N, S, AtoS):
+    """
+    1. Finds neurons where voltage has NaN values.
+    2. Determines if the synapses targeting those neurons are involved in 
+       Astrocyte-to-Synapse (AtoS) modulation.
+
+    Args:
+        monitor_n (StateMonitor): The Brian2 StateMonitor object for the neuronal group (N).
+        N (NeuronGroup): The main neuron group.
+        S (Synapses): The main synapse group (N to N connections).
+        AtoS (Synapses): The Astro-to-Synapse modulation group.
+    """
+    
+    # 1. --- Identify Neurons with NaN Values ---
+    nan_neurons = set()
+    num_neurons = 130
+    
+    for neuron_index in range(num_neurons):
+        voltage_trace = monitor_n.V[neuron_index]
+        if np.isnan(voltage_trace).any():
+            nan_neurons.add(neuron_index)
+
+    if not nan_neurons:
+        print("✅ No NaN values were found in any neuron's voltage. No further check needed.")
+        return
+
+    print(f"❌ {len(nan_neurons)} Neuron(s) failed (NaN detected): {sorted(list(nan_neurons))}")
+    print("\n--- Checking Astrocyte Involvement ---\n")
+
+    # 2. --- Check Linkage to Astrocyte-Modulated Synapses ---
+    
+    # Get the indices of the synapses that are modulated by the astrocyte (AtoS)
+    # The target of the AtoS Synapses is the index within the main Synapse group (S).
+    # Since AtoS is a Synapses object, its target indices are the indices of S.
+    astro_modulated_synapse_indices = set(AtoS.j[:])
+    
+    # Get the post-synaptic neuron indices for ALL synapses (S)
+    # The 'j' attribute of the main Synapses group (S) gives the index of the 
+    # postsynaptic neuron (N) for each synapse index.
+    synapse_post_indices = S.j[:] 
+
+    neurons_with_astro_modulated_input = set()
+    
+    # Check each failed neuron
+    for nan_neuron in nan_neurons:
+        is_astro_linked = False
+        
+        # Find all synapses in S that target the current nan_neuron
+        # The indices of S where the target neuron (S.j) matches nan_neuron
+        synapse_indices_to_nan_neuron = np.where(synapse_post_indices == nan_neuron)[0]
+        
+        # Check if any of these synapses are in the set of astrocyte-modulated synapses
+        for syn_index in synapse_indices_to_nan_neuron:
+            if syn_index in astro_modulated_synapse_indices:
+                neurons_with_astro_modulated_input.add(nan_neuron)
+                is_astro_linked = True
+                break
+        
+        # 3. --- Report Result ---
+        if is_astro_linked:
+            print(f"🔥 Neuron {nan_neuron} IS CONNECTED to an Astrocyte-Modulated Synapse.")
+        else:
+            print(f"❓ Neuron {nan_neuron} is NOT connected to an Astrocyte-Modulated Synapse (Failure likely propagated).")
 
 
+# Example Usage (requires the groups and monitor from your simulation)
+# check_nan_neuron_astro_link(MonitorN, N, S, AtoS)
 
 
+check_nan_neuron_astro_link(MonitorN, N, S, AtoS)
+
+#%%
+def find_first_nan_index(Simulated_network, monitors):
+    """
+    Analyzes all state monitors to find the index (time step) where the 
+    first NaN value appears across all recorded neurons, synapses, or astrocytes.
+
+    Args:
+        Simulated_network (str): The type of network simulated ('Full' or 'Neuronal').
+        monitors (dict): A dictionary containing the StateMonitor objects (e.g., {'MonitorN': MonitorN, ...}).
+    """
+    
+    # Define the variables to check for each group, based on your monitoring strings
+    variable_map = {
+        'MonitorN': ['V', 'I_syn', 'I_ampa', 'I_nmda', 'I_cell'],
+        # Use the synapse monitor specific to the network type
+        'SynapseMonitor': ['usr', 'x_S', 'Y_S', 'uar', 'r_Sr', 'r_Ar', 'r_ampa', 'r_nmda', 'Gamma_S'],
+        'MonitorA': ['C', 'I', 'Gamma_A', 'I_coupling_tot', 'Y_extra'],
+        'MonitorGT': ['G_A', 'x_A'],
+        'MonitorG': ['Y_bias_in'] # Only used in 'Astrocytic'
+    }
+
+    nan_found = False
+    
+    # Map the correct synapse monitor based on the simulation type
+    if Simulated_network == 'Full':
+        syn_monitor_key = 'MonitorS2'
+    elif Simulated_network == 'Neuronal':
+        syn_monitor_key = 'MonitorS'
+    else:
+        # Handle 'Astrocytic' or other scenarios with a specific monitor list
+        monitor_keys = ['MonitorA', 'MonitorG']
+        if Simulated_network == 'Astrocytic':
+            print(f"--- Searching for NaN in {Simulated_network} Network ---")
+        else:
+            print("Unknown network type. Checking available monitors.")
 
 
+    monitor_keys = []
+    if 'MonitorN' in monitors: monitor_keys.append('MonitorN')
+    if syn_monitor_key in monitors: monitor_keys.append(syn_monitor_key)
+    if 'MonitorA' in monitors: monitor_keys.append('MonitorA')
+    if 'MonitorGT' in monitors: monitor_keys.append('MonitorGT')
+    if 'MonitorG' in monitors: monitor_keys.append('MonitorG')
 
 
+    print(f"--- Searching for First NaN in '{Simulated_network}' Network ---")
+    
+    for monitor_key in monitor_keys:
+        monitor = monitors.get(monitor_key)
+        
+        # Determine the variable list for the current monitor
+        if monitor_key == syn_monitor_key:
+            vars_to_check = variable_map['SynapseMonitor']
+            group_name = "Synaptic Group (S)"
+        elif monitor_key == 'MonitorN':
+            vars_to_check = variable_map['MonitorN']
+            group_name = "Neuronal Group (N)"
+        elif monitor_key == 'MonitorA':
+            vars_to_check = variable_map['MonitorA']
+            group_name = "Astrocytic Group (Astro)"
+        elif monitor_key == 'MonitorGT':
+            vars_to_check = variable_map['MonitorGT']
+            group_name = "Gliotransmission Group (GT)"
+        elif monitor_key == 'MonitorG':
+            vars_to_check = variable_map['MonitorG']
+            group_name = "Poisson Input Group (P)"
+        else:
+            continue # Skip if monitor not relevant or present
+
+        if monitor is None:
+            print(f"Skipping monitor: {monitor_key} (Not defined in the monitors dictionary)")
+            continue
+            
+        print(f"\n[Checking {group_name} ({monitor_key}) ]")
+
+        for var_name in vars_to_check:
+            try:
+                # 1. Access the recorded data array (units x time steps)
+                data = getattr(monitor, var_name)[:]
+                
+                # 2. Find the time index where *any* unit has a NaN
+                # np.isnan(data) -> boolean array of same shape
+                # .any(axis=0) -> boolean array (True if any unit is NaN at that time step)
+                nan_at_any_unit = np.isnan(data).any(axis=0)
+                
+                # 3. Get the indices where NaN is True
+                nan_indices = np.where(nan_at_any_unit)[0]
+                
+                if nan_indices.size > 0:
+                    first_nan_index = nan_indices[0]
+                    
+                    # Calculate the time of failure
+                    time_of_failure = monitor.t[first_nan_index]
+                    
+                    print(f"  ❌ FAILURE in {var_name}:")
+                    print(f"    - Index: {first_nan_index}")
+                    print(f"    - Time: {time_of_failure/ms:.3f} ms")
+                    nan_found = True
+                    
+                    # If you want to stop on the *very first* NaN in the whole run, uncomment break here
+                    # return 
+
+            except AttributeError:
+                # This happens if a variable (like 'Gamma_S' in 'Neuronal' model) wasn't recorded or doesn't exist.
+                print(f"  [Skipping {var_name}]: Not found or not applicable to this monitor.")
+            except Exception as e:
+                print(f"  [Error checking {var_name}]: {e}")
 
 
+    if not nan_found:
+        print("\n✅ Success: No NaN values found in any recorded variable.")
+monitors_dict = {
+    'MonitorS2': MonitorS2,
+    'MonitorA': MonitorA,
+    'MonitorN': MonitorN,
+    'MonitorGT': MonitorGT,
+    'SpikesN': SpikesN,
+    'SpikesA': SpikesA
+}
 
 
-
-
-
-
-
-
-
+find_first_nan_index(Simulated_network, monitors_dict)
 
 #%%
 fig.show()
@@ -916,5 +1096,6 @@ ax3.set_xlabel('Time [s]')
 # plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
 
 show()
+
 
 
