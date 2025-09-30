@@ -1,5 +1,10 @@
 
-        
+"""
+Created on Tue Aug 12 17:52:56 2025
+
+@author: Admin
+"""
+
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error
@@ -19,6 +24,59 @@ from brian2 import devices
 
 from sklearn.neighbors import KDTree
 
+import math
+
+
+def plot_connections(neurons, astrocytes, synapses, connections):
+    """
+    Plots the positions of neurons and astrocytes and the connections between them.
+
+    Args:
+        neurons (NeuronGroup): The neuron population.
+        astrocytes (NeuronGroup): The astrocyte population.
+        synapses (NeuronGroup): The synapse population.
+        connections (Synapses): The established connections.
+    """
+    plt.figure(figsize=(10, 10))
+    plt.title('Synapse-Astrocyte Connections')
+
+   
+    # Plot astrocyte positions as large red squares
+    plt.scatter(astrocytes.x_astro/meter, astrocytes.y_astro/meter, color='red', marker='s', s=100, label='Astrocytes')
+
+    # Plot synapse (post-synaptic neuron) positions as blue circles
+    # We get the synapse positions from the 'synapse' group we created.
+    # Note: We can directly access .x and .y without .get_value() in pure Brian2
+    # once the `Synapses` object is created.
+    plt.scatter(synapses.x_syn/meter, synapses.y_syn/meter, color='blue', s=30, label='Synapses (post-synaptic)')
+
+    # Plot the connections as lines
+    # We need the coordinates of the connected pre- and post-synaptic cells
+    synapse_indices = list(connections.i)
+    astrocyte_indices = list(connections.j)
+    
+    # Get the coordinates for the connected synapses and astrocytes
+    conn_synapse_x = synapses.x_syn[synapse_indices]/meter
+    conn_synapse_y = synapses.y_syn[synapse_indices]/meter
+    conn_astro_x = astrocytes.x_astro[astrocyte_indices]/meter
+    conn_astro_y = astrocytes.y_astro[astrocyte_indices]/meter
+
+    # Plot lines for all connections. Use a thin line to avoid clutter.
+    for i in range(int(len(connections.i)/5)):
+        plt.plot(
+            [conn_synapse_x[i], conn_astro_x[i]],
+            [conn_synapse_y[i], conn_astro_y[i]],
+            color='purple',
+            alpha=0.2, # Use transparency to see overlapping connections
+            linewidth=0.5
+        )
+
+    plt.xlabel('X position (m)')
+    plt.ylabel('Y position (m)')
+    plt.legend()
+    plt.grid(True)
+    plt.axis('equal') # Ensures that the plot isn't stretched
+    plt.show()
 
 
 
@@ -216,7 +274,7 @@ def get_Astroparam(oscillations = 'AM',**kwargs):
         'spill_over': 0.75,         # Spill over parameter
         
         # Connection probability
-        'conn_dist' : 150, # [um] 
+        'conn_dist' : 100, # [um] 
         'c_min' : 0, #[um]
         'c_max' : 1100, # [um]
         
@@ -369,7 +427,10 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         'slope': 1/500, # in [um] sHOULD BE 500
         'intercept': 0.8, # 1 usually
         
-        
+        # Connection to astrocyte rules
+        'Conn_syn_astro_cutoff' :70 *um,
+        'sigma_A': 150*um,
+
        
     
        # Asynchronous Release parameters (uncommented and added to dictionary)
@@ -471,8 +532,8 @@ def Neuronal_Network(Nn,Connection_var,
     noise = sigma*(2*gl/Cm)**.5*randn()/sqrt(dt) : volt/second (constant over dt)
     I : amp
     I_cell = -gl*(V-El)-g_na*(m*m*m)*h*(V-ENa)-g_kd*(n*n*n*n)*(V-EK): amp
-    x : meter
-    y : meter
+    x_neuron : meter
+    y_neuron : meter
     ''')
     
     
@@ -580,6 +641,10 @@ def Neuronal_Network(Nn,Connection_var,
             astro_index : integer
             # Per-synapse gliotransmitter-effect parameter
             alpha  : 1
+            
+            # Positions
+            x_syn : metre
+            y_syn : metre
             ''')
         
         # -------------- Event based update --------------
@@ -706,8 +771,8 @@ def Neuronal_Network(Nn,Connection_var,
     # Position neurons on a grid
 
     Coordinates = get2D_rnd_coordinates(N.N,params_NN['c_min'],params_NN['c_max'],sed)
-    N.x = Coordinates[:,0]*um
-    N.y = Coordinates[:,1]*um
+    N.x_neuron = Coordinates[:,0]*um
+    N.y_neuron = Coordinates[:,1]*um
     
     
     
@@ -761,8 +826,10 @@ def Neuronal_Network(Nn,Connection_var,
     
     
     
-    
-    
+    # Set synapse position coincident with the post-synaptic neuron
+    post_synaptic_indices = S.j
+    S.x_syn = N.x_neuron[post_synaptic_indices]
+    S.y_syn = N.y_neuron[post_synaptic_indices]
     
     # --- Delays ---
     if add_delay == True:
@@ -817,8 +884,8 @@ def astrocyte_connections(Astrocyte_group,Connection_dist):
     Na = Astrocyte_group.N
     
     # Generate the KDTree form the neuronal position data
-    x_pos = np.array(Astrocyte_group[:].x/um)
-    y_pos = np.array(Astrocyte_group[:].y/um)
+    x_pos = np.array(Astrocyte_group[:].x_astro/um)
+    y_pos = np.array(Astrocyte_group[:].y_astro/um)
     
     pos = np.column_stack((x_pos, y_pos))
 
@@ -858,7 +925,7 @@ def astrocyte_connections(Astrocyte_group,Connection_dist):
     
     
 
-def Astrocyte_Group(N_astro,Connection_var,Simulated_network,sed):
+def Astrocyte_Group(N_astro,Connection_var,Simulated_network,sed,ics =None):
 # ------ Astrocyte core equations ------
 
     eqs_A = Equations('''
@@ -891,8 +958,8 @@ def Astrocyte_Group(N_astro,Connection_var,Simulated_network,sed):
         Y_extra : mole
     
         # Additional (optional) coordinates (for spatial network implementation)
-        x : meter
-        y : meter
+        x_astro : meter
+        y_astro : meter
         ''')
        
        
@@ -919,8 +986,8 @@ def Astrocyte_Group(N_astro,Connection_var,Simulated_network,sed):
     # ----- SET POSITIONS -----
     # Position neurons on a grid
     Coordinates = get2D_rnd_coordinates(N_astro,Params_astroGT['c_min'],Params_astroGT['c_max'],sed)
-    Astro.x = Coordinates[:,0]*um
-    Astro.y = Coordinates[:,1]*um
+    Astro.x_astro = Coordinates[:,0]*um
+    Astro.y_astro = Coordinates[:,1]*um
         
         
     # ----- Gap-junction based astro links -----
@@ -1073,29 +1140,59 @@ def Gliotransmission(N_astro,ics,Astro):
 
 # -------------- SYNAPSE-ASTRO LINK ---------------
 
-def Synapse_to_astro(synapse,Astro,ADJ):
-    # ---- Syn-astro ----
+
     
+def Synapse_to_astro(synapse,Astro,Connection_var):
+    # ---- Syn-astro ----
+
     Syn_Astro = Synapses(synapse,Astro,
                         model='''
                         # neurotransmitter concentration in the extracellular space
                         Y_extra_post = Y_S_pre : mole (summed)
                         ''',
+                        namespace=synapse.namespace,
              
                         
                         name="ecs_syn_to_astro*")
     
-    # ---- Connections ----
+    if isinstance(Connection_var, str):
     
-    Source_syn,Target_astro = unfold_ADJ(ADJ)
+        
+        # --------- RANDOM -----------
+
+        p_conn = 'exp(- ((sqrt((x_syn_pre - x_astro_post)**2 + (y_syn_pre - y_astro_post)**2))**2) / (2 * sigma_A**2))'
+        Syn_Astro.connect(
+        condition='sqrt((x_syn_pre - x_astro_post)**2 + (y_syn_pre - y_astro_post)**2) < Conn_syn_astro_cutoff' ,
+        p=p_conn
+        )
+        
+        Source = list(Syn_Astro.i) # Synapse as pre unit
+        Target = list(Syn_Astro.j) # Astro as target unit
+        
+        
     
-    Syn_Astro.connect(i = Source_syn, j = Target_astro)
+    
+    elif isinstance(Connection_var, numpy.ndarray):
+        # ---- Connections ----
+        
+        Source,Target = unfold_ADJ(ADJ)
+        
+        Syn_Astro.connect(i = Source, j = Target)
 
-    return Syn_Astro
+    return Syn_Astro,Source,Target # To be loaded in Astro_to_syn swapped.
 
 
 
-def Astro_to_Syn(Glio_release,synapse,ADJ):
+def Astro_to_Syn(Glio_release,synapse,Source_astro, Target_syn):
+    
+    '''
+    The connectivity is bidirectional thus the same as for the function 'Synapse_to_astro'
+    from which the Sources and target are inherted. Be aware that the source in this case is the target
+    of the provious unction
+    
+    
+    '''
+    
     # ---- Astro-syn ----
     # Glio_relaease is the reference neuronal group
     Astro_Syn = Synapses(Glio_release,synapse,
@@ -1108,8 +1205,7 @@ def Astro_to_Syn(Glio_release,synapse,ADJ):
                              )
     
     # ---- Connections ----
-    
-    Source_astro,Target_syn = unfold_ADJ(ADJ)
+
     
     Astro_Syn.connect(i = Source_astro, j = Target_syn)
     
@@ -2516,6 +2612,8 @@ def Neuronal_traces_simulation(Raster_array,Type ='Cumulative',t_rec = 600, fs =
     return smoothed_cumulative,fs_downsampled,t_vec
         
 
+
+        
 
         
     
