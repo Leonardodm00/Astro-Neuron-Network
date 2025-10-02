@@ -23,11 +23,66 @@ from brian2 import *
 from brian2 import devices
 
 from sklearn.neighbors import KDTree
-
+from scipy.stats import skewnorm
+from scipy.stats import chi2
+import seaborn as sns
 import math
 
 
 def plot_connections(neurons, astrocytes, synapses, connections):
+    """
+    Plots the positions of neurons and astrocytes and the connections between them,
+    coloring each synapse based on its connected astrocyte.
+
+    Args:
+        neurons (NeuronGroup): The neuron population.
+        astrocytes (NeuronGroup): The astrocyte population.
+        synapses (NeuronGroup): The synapse population.
+        connections (Synapses): The established connections.
+    """
+    plt.figure(figsize=(10, 10))
+    plt.title('Synapse-Astrocyte Connections')
+
+    # Generate a unique color for each astrocyte
+    num_astrocytes = len(astrocytes)
+    colors = plt.cm.viridis(np.linspace(0, 1, num_astrocytes))
+    
+    # Plot astrocyte positions as large red squares
+    plt.scatter(astrocytes.x_astro/meter, astrocytes.y_astro/meter, color='red', marker='s', s=100, label='Astrocytes')
+
+    # Get connection indices
+    synapse_indices = connections.i
+    astrocyte_indices = connections.j
+    
+    # Loop through each connection to plot the synapse with the corresponding astrocyte color
+    for i in range(len(synapse_indices)):
+        syn_index = synapse_indices[i]
+        astro_index = astrocyte_indices[i]
+        
+        # Get the color for the connected astrocyte
+        color = colors[astro_index]
+        
+        # Plot the synapse using the astrocyte's color
+        plt.scatter(synapses.x_syn[syn_index]/meter, synapses.y_syn[syn_index]/meter,
+                    color=color, s=30, label=f'Synapse connected to Astro {astro_index}' if i == 0 else "")
+        
+        # Plot the connection line
+        plt.plot(
+            [synapses.x_syn[syn_index]/meter, astrocytes.x_astro[astro_index]/meter],
+            [synapses.y_syn[syn_index]/meter, astrocytes.y_astro[astro_index]/meter],
+            color=color,
+            alpha=0.2, # Use transparency to see overlapping connections
+            linewidth=0.5
+        )
+
+    plt.xlabel('X position (m)')
+    plt.ylabel('Y position (m)')
+    plt.legend()
+    plt.grid(True)
+    plt.axis('equal')
+    plt.show()
+
+def plot_connectionsA(neurons, astrocytes, synapses, connections):
     """
     Plots the positions of neurons and astrocytes and the connections between them.
 
@@ -62,7 +117,8 @@ def plot_connections(neurons, astrocytes, synapses, connections):
     conn_astro_y = astrocytes.y_astro[astrocyte_indices]/meter
 
     # Plot lines for all connections. Use a thin line to avoid clutter.
-    for i in range(int(len(connections.i)/5)):
+    for i in range(int(len(connections.i))):
+        print(i)
         plt.plot(
             [conn_synapse_x[i], conn_astro_x[i]],
             [conn_synapse_y[i], conn_astro_y[i]],
@@ -429,7 +485,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         
         # Connection to astrocyte rules
         'Conn_syn_astro_cutoff' :70 *um,
-        'sigma_A': 150*um,
+        'sigma_A': 150*um,   #150*um,
 
        
     
@@ -450,21 +506,21 @@ def get_Synparam(synapse_type='depressing',**kwargs):
             'Omega_d': 2./second,
             'Omega_f_sr': 3.33/second,
             'U_0_sr': 0.6,
-            'alpha': 0.,
+            'alpha_syn': 0.,
         })
     elif synapse_type == 'facilitating':
         params.update({
             'Omega_d': 2./second, #2
             'Omega_f_sr': 2./second,
             'U_0_sr': 0.15,
-            'alpha': 1.,
+            'alpha_syn': 1.,
         })
     elif synapse_type == 'neutral':
         params.update({
             'Omega_d': 3./second,
             'Omega_f_sr': 3./second,
             'U_0_sr': 0.5,
-            'alpha': 1.,
+            'alpha_syn': 1.,
         })
     else:
         raise ValueError('synapse argument has to be "depressing", "facilitating" or "neutral"')
@@ -591,6 +647,10 @@ def Neuronal_Network(Nn,Connection_var,
             
             # Astrocyte ID for connection
             astro_index : integer
+            
+            # Positions
+            x_syn : metre
+            y_syn : metre
           
             ''')
         
@@ -616,31 +676,31 @@ def Neuronal_Network(Nn,Connection_var,
         
         eqs_Syn = Equations('''
             # Fraction of activated presynaptic receptors
-            dGamma_S/dt = O_G * G_A * (1 - Gamma_S) - Omega_G * Gamma_S : 1 (clock-driven)
+            dGamma_S/dt = O_G * G_A_syn * (1 - Gamma_S) - Omega_G * Gamma_S : 1 (clock-driven)
     
             
             # Available neurotransmitter
             dx_S/dt = Omega_d *(1 - x_S) -  r_Ar: 1 (event-driven)
             
             # Usage of releasable neurotransmitter per single action potential (synchronous):
-            dusr/dt = -Omega_f_sr * usr : 1 (event-driven)
+            dusr/dt = -Omega_f_sr * usr : 1 (clock-driven)
             
             
             # Add the asyncronous release
             r_Ar = x0*nar : Hz
             nar = clip(randn()*sqrt(x_S/x0*uar*dt*(1-uar*dt))+uar*dt*x_S/x0, 0, 2*x_S/x0*uar*dt)/dt :Hz (constant over dt)
-            duar/dt = -uar*Omega_f_ar :Hz (event-driven)
+            duar/dt = -uar*Omega_f_ar :Hz (clock-driven)
            
             
             # Define the variables of the model
-            G_A : mole  # gliotransmitter concentration in the extracellular space
+            G_A_syn : mole  # gliotransmitter concentration in the extracellular space
             r_Sr : 1 
             
          
             # Astrocyte ID for connection
             astro_index : integer
             # Per-synapse gliotransmitter-effect parameter
-            alpha  : 1
+            # alpha  : 1
             
             # Positions
             x_syn : metre
@@ -648,10 +708,10 @@ def Neuronal_Network(Nn,Connection_var,
             ''')
         
         # -------------- Event based update --------------
-        
+    
         pre = '''
         
-            U_0 =  (1 - Gamma_S) * U_0_sr + alpha * Gamma_S
+            U_0 =  (1 - Gamma_S) * U_0_sr + alpha_syn * Gamma_S
             
             usr += U_0 * (1 - usr)
             r_Sr = usr * x_S # synchronously released synaptic neurotransmitter resources
@@ -826,10 +886,19 @@ def Neuronal_Network(Nn,Connection_var,
     
     
     
-    # Set synapse position coincident with the post-synaptic neuron
-    post_synaptic_indices = S.j
-    S.x_syn = N.x_neuron[post_synaptic_indices]
-    S.y_syn = N.y_neuron[post_synaptic_indices]
+    # Set synapse position coincident with the post-synaptic neuron plus a stochastic shift (See notes)
+
+    
+    # !!! Finish to set the rearranging fun
+    Syn_prob,Radious_vals =  generate_dendritic_arbour()
+    Syn_coordinates =  get_synapse_coordinates(S,N,Syn_prob,Radious_vals)
+    Syn_coordinates = np.vstack(Syn_coordinates)
+
+    # Print the shape (number of rows, number of columns)
+
+    
+    S.x_syn = Syn_coordinates[:, 0] * um
+    S.y_syn = Syn_coordinates[:, 1] * um
     
     # --- Delays ---
     if add_delay == True:
@@ -971,7 +1040,7 @@ def Astrocyte_Group(N_astro,Connection_var,Simulated_network,sed,ics =None):
     Astro = NeuronGroup(N_astro, eqs_A,
                         threshold='C>C_osc',
                         refractory='C>C_osc',
-                        method='rk4',
+                        method='gsl_rkf45',
                         namespace=Params_astroGT,
                         name='astrocyte*',dtype=float32)
     
@@ -1004,7 +1073,7 @@ def Astrocyte_Group(N_astro,Connection_var,Simulated_network,sed,ics =None):
     
     GJ = Synapses(Astro,Astro,
                   model=Gap_Eq,
-                  method='exponential_euler',
+                  method='rk4',
                   namespace= Params_astroGT,
                   name = 'Gap_junctions*',dtype=float32
                   )
@@ -1121,7 +1190,7 @@ def Gliotransmission(N_astro,ics,Astro):
                             # considered a "reset"
                           
                             reset=gliot_release,
-                            method='rk4',
+                            method='gsl',
                             name='gliot_release*',
                             namespace=Params_astroGT,dtype=float32)
     
@@ -1151,6 +1220,7 @@ def Synapse_to_astro(synapse,Astro,Connection_var):
                         Y_extra_post = Y_S_pre : mole (summed)
                         ''',
                         namespace=synapse.namespace,
+                        method = 'gsl ',
              
                         
                         name="ecs_syn_to_astro*")
@@ -1198,8 +1268,9 @@ def Astro_to_Syn(Glio_release,synapse,Source_astro, Target_syn):
     Astro_Syn = Synapses(Glio_release,synapse,
                              model='''
                              # gliotransmitter concentration in the extracellular space
-                             G_A_post = G_A_pre : mole (summed)
+                             G_A_syn_post = G_A_pre : mole (summed)
                              ''',
+                             method = 'gsl ',
                   
                              name="ecs_astro_to_syn*",dtype=float32
                              )
@@ -2612,9 +2683,281 @@ def Neuronal_traces_simulation(Raster_array,Type ='Cumulative',t_rec = 600, fs =
     return smoothed_cumulative,fs_downsampled,t_vec
         
 
+# ------------------------------------ SYNAPSE POSITION FUNCTIONS -----------------------------------------------------
 
+def map_range(value, from_min, from_max, to_min, to_max):
+    """
+    Maps a value from one range to another range using linear interpolation.
+
+    Args:
+        value: The value to be mapped.
+        from_min: The minimum value of the original range.
+        from_max: The maximum value of the original range.
+        to_min: The minimum value of the target range.
+        to_max: The maximum value of the target range.
+
+    Returns:
+        The mapped value in the target range.
+    """
+
+    # Check for valid input ranges (avoid division by zero)
+    if from_max - from_min == 0:
+        raise ValueError("Input range cannot be zero.")
+    if to_max - to_min == 0:
+      raise ValueError("Target range cannot be zero.")
+
+    # Linear transformation formula
+    mapped_value = (value - from_min) * (to_max - to_min) / (from_max - from_min) + to_min
+    return mapped_value
+
+
+def get_dendrite_prob(r_1,r_0,dx,map_magnitude):
+    '''
+    This function is thought to establish a evidence-based distance-dependent 
+    connection probability field about the interested somata within the shell enacapsuled
+    in 'r_0' and 'r_1', this whithout a detailed representation of the dendritic 
+    arbourization. The analysis hinges on the morphometric analysis on hipsc control lines
+    in the following papers:
+        1) https://doi.org/10.1038/s41467-019-12947-3
+        2) https://doi.org/10.1016/j.celrep.2020.107538
+    
+    The sholl analysis evidenced a peak in branching phenomena at approx. 40/50 um from the
+    soma. Therefore the switch of neurites from primary branches to secondary ones is likely
+    to happen here. This is important to set the correct neurite diameter 'Branch_d'. The mean
+    dendritic length distribution across the distance from the soma is reproduced by scaling
+    a Chi-squared distribution (along both axes) with 4 degrees of freedom.
+    The purpose is to determine the ratio between the total volume of dendritic abourization 
+    within the shell and the total volume of the latter. The total branch length is calculated 
+    by computing the cumulative density function between r_0 and r_1 (integral through the trapz 
+    function of the PDF within the defined range). In this way the probability of an
+    axon to cross a dendritic process is defined. Given the distribution the influence region spans
+    approx 200 um in radius even though the probabiities at the boundaries borders on zero.
+    
+    Parameters
+    ----------
+    r_1 : float [um]
+        Outer shell radius
+    r_0 : float [um]
+        Inner shell radius
+    dx : float 
+        Spacing between sample points for the trapezoidal method
+    map_magnitude : integer [um]
+        Upper limit of the scaling map of the distribution's x axes.
+    Returns
+    -------
+    Filled_volume : float 
+        Probability of neurite presence in the shell [0,1]
+
+    '''
+    
+    if r_1 <= 40:
+        Branch_d = 2.1 # [um] # primary neurites
+        # r_1 = 40
+        # r_0 = 0
+        
+    else:
+        Branch_d = 1.51 # [um] # secondary neurites
+        r_1 = r_1
+        r_0 = r_0
+    
+    
+    value_ = np.arange(0,250,0.1)  #[um] Perisomatic location
+    sqr = np.zeros(len(value_))
+    j=0
+    for i in value_:
+        
+        maped_val = map_range(i, 0, map_magnitude, 0, 12)    
+        sqr[j] = chi2.pdf(maped_val, 4)
+        j=j+1
         
 
+    
+    #%
+
+    sqr_max = max(sqr)
+    value_ = np.arange(0,250,0.1)  #[um] Perisomatic location
+    sqr = np.zeros(len(value_))
+    map_sqr = np.zeros(len(value_))
+    j=0
+    mode = 110
+    for i in value_:
+        
+        maped_val = map_range(i, 0, map_magnitude, 0, 12)    
+        sqr = chi2.pdf(maped_val, 4)
+        # map_sqr[j] = sqr*714.2
+        maped_val_ = map_range(sqr,0, sqr_max,0,mode)    
+        map_sqr[j] = maped_val_
+        j=j+1
+         
+    # plt.figure()
+    # plt.title('Scaled Chi-squared distribution. DoF: 4')
+    # plt.plot(value_,map_sqr)
+    # plt.xlabel('Distance form soma [um]')
+    # plt.ylabel('Mean dendritic length [um]')    
+
+    x_v_1= np.where(value_ == r_1)[0][0]
+    x_v_0= np.where(value_ == r_0)[0][0]
+
+    x_1 = value_[x_v_0:x_v_1]
+    y_1= map_sqr[x_v_0:x_v_1]
+    Cumulative_length_1 = np.trapz(y_1,x_1,dx=dx)
+
+    ##### Calculate
+     
+    V_sphere = (4/3)*np.pi*(r_1**3) -(4/3)*np.pi*(r_0**3)
+
+    
+    V_dendrite = (Cumulative_length_1/4)*np.pi*(Branch_d**2)
+
+    Filled_volume = (V_dendrite/V_sphere)
+    
+    return Filled_volume
+    
+def generate_dendritic_arbour(max_rad = 220,dx=0.001,interval=1):
+    '''
+    
+
+   Parameters
+   ----------
+   max_rad : integer. 220[um]
+       Maximum radius from the soma to calculate the probability of presence of 
+       a dendritic process
+   dx : integer. 0.0001
+       Spacing between sample points for the trapezoidal method
+
+   interval : integer. 5
+       Step in computing the shell ranges (r_0 and r_1) from 0 to max_rad.
+       Must be an integer of thte latter
+
+   Returns
+   -------
+   Syn_prob : array (N,)
+       Array of probability of connections for a axonal neurite 
+   
+    rarius_val : array (N,)
+        Distances from the soma where the relative elements in 'Syn_prob'
+        have been calculated
+   
+    Where N is max_rad/interval
+    '''
+    
+
+    
+    
+    max_rad = 220
+    rarius_val = np.arange(0,max_rad,interval)
+    Syn_prob = np.zeros(len(rarius_val))
+    k= 0
+    dx = 0.0001
+    for i in np.arange(1,len(rarius_val)):
+        
+      r_1 = rarius_val[i]
+      r_0 = rarius_val[i-1]
+      Syn_prob[k] = get_dendrite_prob(r_1,r_0,dx,max_rad)
+      k = k+1
+      
+    # plt.figure()
+    # plt.title('Synapse probability')
+    # plt.plot(rarius_val,Syn_prob)
+    # plt.xlabel('Distance from soma [um]')
+    # plt.ylabel('Probability')
+    # # plt.yscale('log')
+    # plt.xlim(0,200)
+    
+    
+    
+    return Syn_prob,rarius_val
+        
+def sample_distance_from_soma(syn_prob, rarius_val):
+    '''
+    Samples a single distance from the soma based on the provided probability distribution.
+
+    Args:
+        syn_prob (np.array): Array of connection probabilities for each shell.
+        rarius_val (np.array): Distances from the soma corresponding to the shells.
+
+    Returns:
+        float: A single distance value (in um) sampled from the distribution.
+    '''
+    # Normalize the probabilities to ensure they sum to 1
+    prob_sum = np.sum(syn_prob)
+    if prob_sum == 0:
+        # Fallback to a uniform distribution if probabilities are all zero
+        normalized_probs = None
+    else:
+        normalized_probs = syn_prob / prob_sum
+        
+    # Use np.random.choice to sample a distance based on the probabilities
+    # We choose from the radial values where the probability is non-zero
+    valid_indices = np.where(normalized_probs > 0)[0]
+    
+    if len(valid_indices) == 0:
+        print("Warning: All probabilities are zero. Falling back to uniform sampling.")
+        return np.random.choice(rarius_val)
+    
+    sampled_distance = np.random.choice(rarius_val[valid_indices], p=normalized_probs[valid_indices])
+    
+    return sampled_distance    
+def get_synapse_coordinates(Synapse,Neuron,Syn_prob,rarius_val,displ_bias=15):
+    """
+    Calculates the 2D coordinates of each synapse based on a distance from the postsynaptic neuron.
+
+    This function iterates through each synapse, calculates the vector from the presynaptic
+    to the postsynaptic neuron, and then determines the synapse's position by moving
+    a sampled distance along that vector from the postsynaptic neuron's position.
+
+    No autaptic connections allowed
+    A slight bias of 10um is introduced
+    
+    EVERYTRHING is expressed in um
+
+    Args:
+        Synapse (brian2.Synapses): The Synapses object containing the connections.
+        Neuron (brian2.NeuronGroup): The presynaptic/postsynaptic neuron group.
+
+
+    Returns:
+        list: A list of (x, y) tuples, where each tuple is the coordinate of a synapse.
+    """
+    # Initialize an empty list to store the synapse coordinates
+    synapse_coords = []
+    distance_ = []
+    # Iterate through each synapse
+    for i in range(len(Synapse)):
+        # Get the indices of the pre- and postsynaptic neurons for the current synapse
+        pre_idx = Synapse.i[i]
+        post_idx = Synapse.j[i]
+
+        # Get the coordinates of the pre- and postsynaptic neurons
+        pre_pos = np.array([Neuron.x_neuron[pre_idx]/um, Neuron.y_neuron[pre_idx]/um])
+        post_pos = np.array([Neuron.x_neuron[post_idx]/um, Neuron.y_neuron[post_idx]/um])
+
+        # Calculate the vector from the postsynaptic to the presynaptic neuron
+        vector = post_pos - pre_pos
+
+        # Calculate the length (magnitude) of the vector
+        vector_length = np.linalg.norm(vector)
+
+        # Normalize the vector to get a unit vector
+        unit_vector = vector / vector_length
+
+        # Sample a distance for this synapse
+        # CHeck that the synapse distance is lower than then the neuron's.
+        
+        distance = sample_distance_from_soma(Syn_prob,rarius_val) + displ_bias
+        
+        while distance > vector_length:
+            distance = sample_distance_from_soma(Syn_prob,rarius_val) + displ_bias
+        
+        distance_.append(distance)
+
+        # Calculate the new coordinate by moving 'distance' along the unit vector from the postsynaptic neuron
+        new_coord = post_pos - unit_vector * distance
+
+        # Append the new coordinate as a tuple to the list
+        synapse_coords.append(tuple(new_coord))
+
+    return synapse_coords  
         
     
         
