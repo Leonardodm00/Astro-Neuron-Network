@@ -1,6 +1,8 @@
 
-import matplotlib as mpl
-import matplotlib.pyplot as plt
+
+from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
+import matplotlib.colors as mcolors
 from sklearn.metrics import mean_squared_error
 import numpy as np
 # import torch
@@ -30,25 +32,27 @@ Version: cython friendly, connections and positions randomly placed
 '''
 
 
-
-
-def plot_layered_connections(neurons, astrocytes, gj_synapses, neuron_synapses):
+def plot_layered_connections_with_mea_planar(neurons, astrocytes, gj_synapses, neuron_synapses, Grid):
     """
-    Plots the positions of neurons and astrocytes in separate Z-layers and 
-    visualizes connections (Astrocyte GJs and Neuron Synapses) in 3D,
-    with enhanced visual appeal and new custom markers.
+    Plots the positions of neurons, astrocytes, and MEA electrodes (as planar discs)
+    in separate Z-layers and visualizes connections in 3D.
 
     Args:
         neurons (NeuronGroup): The neuron population. Assumed to have .x_neuron, .y_neuron.
         astrocytes (NeuronGroup): The astrocyte population. Assumed to have .x_astro, .y_astro.
-        gj_synapses (Synapses): The astrocyte-to-astrocyte Gap Junction connections (AstrocyteGroup -> AstrocyteGroup).
-        neuron_synapses (Synapses): The neuron-to-neuron connections (NeuronGroup -> NeuronGroup).
+        gj_synapses (Synapses): The astrocyte-to-astrocyte Gap Junction connections.
+        neuron_synapses (Synapses): The neuron-to-neuron connections.
+        Grid (np.array): A (12, 2) array of (x, y) positions of the 12 MEA electrodes in um.
     """
     
     # --- Configuration and Unit Conversion ---
     
-    Z_NEURON_LAYER = 0.0  
-    Z_ASTRO_LAYER  = 1.5  
+    Z_MEA_LAYER    = -1.0  # NEW: Bottom layer for electrodes
+    Z_NEURON_LAYER = 0.0   # Middle layer
+    Z_ASTRO_LAYER  = 1.5   # Top layer
+    
+    MEA_ELECTRODE_RADIUS = 40.0 # [um] The actual radius for drawing the circles
+    NUM_CIRCLE_POINTS = 50     # Number of points to approximate a circle
     
     scale_factor = umeter
 
@@ -66,23 +70,26 @@ def plot_layered_connections(neurons, astrocytes, gj_synapses, neuron_synapses):
     neuron_y = neurons.y_neuron / scale_factor
     neuron_z = np.full_like(neuron_x, Z_NEURON_LAYER)
     
+    # MEA Grid coordinates (already in um)
+    mea_x = Grid[:, 0]
+    mea_y = Grid[:, 1]
+    
     # Get connection indices
     astro_pre_gj = gj_synapses.i
     astro_post_gj = gj_synapses.j
-    
     neuron_pre_syn = neuron_synapses.i
     neuron_post_syn = neuron_synapses.j
 
     # --- Plotting Setup ---
     fig = plt.figure(figsize=(14, 12)) 
     ax = fig.add_subplot(111, projection='3d')
-    ax.set_title('Neural and Glial Networks in 3D', color='white', fontsize=16)
+    ax.set_title('Neural, Glial, and MEA Networks in 3D', color='white', fontsize=16)
     
     # --- Background and Grid Aesthetics ---
     fig.patch.set_facecolor('#282c34') 
     ax.set_facecolor('#1e222a') 
 
-    # Fix: Use the internal pane dictionary for styling (Matplotlib 3.5+ compatibility)
+    # Set pane colors for dark background
     pane_color = (0.1, 0.1, 0.1, 1.0)
     ax.xaxis.pane.set_color(pane_color)
     ax.yaxis.pane.set_color(pane_color)
@@ -93,23 +100,61 @@ def plot_layered_connections(neurons, astrocytes, gj_synapses, neuron_synapses):
 
     ax.grid(True, linestyle=':', alpha=0.4, color='gray') 
 
-    # --- 1. Plot Neurons (Layer Z=0) ---
-    # Marker: 'D' (Diamond)
+    # ------------------------------------------------------------------
+    # --- NEW LAYER: Plot MEA Electrodes as PLANAR DISCS (Layer Z=-0.5) ---
+    # ------------------------------------------------------------------
+    electrode_patches = []
+    for i in range(len(mea_x)):
+        # Generate points for a circle
+        theta = np.linspace(0, 2*np.pi, NUM_CIRCLE_POINTS)
+        x_circle = mea_x[i] + MEA_ELECTRODE_RADIUS * np.cos(theta)
+        y_circle = mea_y[i] + MEA_ELECTRODE_RADIUS * np.sin(theta)
+        z_circle = np.full_like(x_circle, Z_MEA_LAYER)
+        
+        # Create a polygon patch for the electrode (a filled circle)
+        # Poly3DCollection expects a list of (N, 3) arrays, where N is the number of points for each polygon
+        electrode_patches.append(list(zip(x_circle, y_circle, z_circle)))
+    
+    # Add all electrode patches to the plot
+    collection = Poly3DCollection(electrode_patches, 
+                                  facecolors='#808080',   # Gray fill
+                                  edgecolors='white',     # White outline
+                                  linewidths=1.0,
+                                  alpha=0.6,
+                                  zorder=1)
+    ax.add_collection3d(collection)
+    
+    # Add a dummy point for the legend entry (Poly3DCollection doesn't automatically create one)
+    ax.scatter([], [], [], # No data points
+               s=100,      # Example size for legend marker
+               c='#808080', 
+               marker='o', 
+               edgecolors='white', 
+               linewidths=1.0,
+               alpha=0.6,
+               label=f'MEA Electrodes (Z={Z_MEA_LAYER} $\mu m$)', 
+               zorder=1)
+
+
+    # ------------------------------------------------------------------
+    # --- 1. Plot Neurons (Layer Z=0.0) ---
+    # ------------------------------------------------------------------
     ax.scatter(neuron_x, neuron_y, neuron_z, 
                s=50,      
                c='#00BFFF', 
-              # <--- CHANGED MARKER
+               marker='D', 
                edgecolors='white', 
                linewidths=0.5,
                alpha=0.9,
                label=f'Neurons (Z={Z_NEURON_LAYER} $\mu m$)', 
                zorder=5) 
 
+    # ------------------------------------------------------------------
     # --- 2. Plot Astrocytes (Layer Z=1.5) ---
-    # Marker: 'p' (Pentagon)
+    # ------------------------------------------------------------------
     ax.scatter(astro_x, astro_y, astro_z, 
                color='#FF4500', 
-
+               marker='p',     
                s=90,          
                edgecolors='white', 
                linewidths=0.7,
@@ -152,7 +197,7 @@ def plot_layered_connections(neurons, astrocytes, gj_synapses, neuron_synapses):
             linewidth=1.0,   
             label=label
         )
-    
+        
     # --- Final Plot Aesthetics ---
     ax.set_xlabel('X position ($\mu m$)', color='white', fontsize=12)
     ax.set_ylabel('Y position ($\mu m$)', color='white', fontsize=12)
@@ -163,17 +208,23 @@ def plot_layered_connections(neurons, astrocytes, gj_synapses, neuron_synapses):
     ax.tick_params(axis='y', colors='white')
     ax.tick_params(axis='z', colors='white')
     
-    # Set axis limits
-    if neuron_x.size > 0:
-        x_min, x_max = np.min(neuron_x), np.max(neuron_x)
-        y_min, y_max = np.min(neuron_y), np.max(neuron_y)
+    # Set axis limits based on all coordinate data
+    all_x = np.concatenate([neuron_x, astro_x, mea_x])
+    all_y = np.concatenate([neuron_y, astro_y, mea_y])
+    
+    if all_x.size > 0:
+        x_min, x_max = np.min(all_x), np.max(all_x)
+        y_min, y_max = np.min(all_y), np.max(all_y)
         x_range = x_max - x_min
         y_range = y_max - y_min
-        ax.set_xlim(x_min - x_range * 0.1, x_max + x_range * 0.1)
-        ax.set_ylim(y_min - y_range * 0.1, y_max + y_range * 0.1)
+        
+        pad_x = x_range * 0.1
+        pad_y = y_range * 0.1
+        ax.set_xlim(x_min - pad_x, x_max + pad_x)
+        ax.set_ylim(y_min - pad_y, y_max + pad_y)
     
-    z_min = min(Z_NEURON_LAYER, Z_ASTRO_LAYER) - 0.5
-    z_max = max(Z_NEURON_LAYER, Z_ASTRO_LAYER) + 0.5
+    z_min = Z_MEA_LAYER - 0.5
+    z_max = Z_ASTRO_LAYER + 0.5
     ax.set_zlim(z_min, z_max)
     
     # Legend with white text
@@ -185,60 +236,6 @@ def plot_layered_connections(neurons, astrocytes, gj_synapses, neuron_synapses):
     
     plt.tight_layout() 
     plt.show()
-def plot_connections(neurons, astrocytes, synapses, connections):
-    """
-    Plots the positions of neurons and astrocytes and the connections between them,
-    coloring each synapse based on its connected astrocyte.
-
-    Args:
-        neurons (NeuronGroup): The neuron population.
-        astrocytes (NeuronGroup): The astrocyte population.
-        synapses (NeuronGroup): The synapse population.
-        connections (Synapses): The established connections.
-    """
-    plt.figure(figsize=(10, 10))
-    plt.title('Synapse-Astrocyte Connections')
-
-    # Generate a unique color for each astrocyte
-    num_astrocytes = len(astrocytes)
-    colors = plt.cm.viridis(np.linspace(0, 1, num_astrocytes))
-    
-    # Plot astrocyte positions as large red squares
-    plt.scatter(astrocytes.x_astro/meter, astrocytes.y_astro/meter, color='red', marker='s', s=100, label='Astrocytes')
-
-    # Get connection indices
-    synapse_indices = connections.i
-    astrocyte_indices = connections.j
-    
-    # Loop through each connection to plot the synapse with the corresponding astrocyte color
-    for i in range(len(synapse_indices)):
-        syn_index = synapse_indices[i]
-        astro_index = astrocyte_indices[i]
-        
-        # Get the color for the connected astrocyte
-        color = colors[astro_index]
-        
-        # Plot the synapse using the astrocyte's color
-        plt.scatter(synapses.x_syn[syn_index]/meter, synapses.y_syn[syn_index]/meter,
-                    color=color, s=30, label=f'Synapse connected to Astro {astro_index}' if i == 0 else "")
-        
-        # Plot the connection line
-        plt.plot(
-            [synapses.x_syn[syn_index]/meter, astrocytes.x_astro[astro_index]/meter],
-            [synapses.y_syn[syn_index]/meter, astrocytes.y_astro[astro_index]/meter],
-            color=color,
-            alpha=0.2, # Use transparency to see overlapping connections
-            linewidth=0.5
-        )
-
-    plt.xlabel('X position (m)')
-    plt.ylabel('Y position (m)')
-    plt.legend()
-    plt.grid(True)
-    plt.axis('equal')
-    plt.show()
-
-
 
 
 def Distance_based_connections(N, params_Syn, sed):
@@ -663,11 +660,13 @@ def get_Synparam(synapse_type='depressing',**kwargs):
 
 
 
-def Neuronal_Network(Nn,ics = False, Simulated_network = 'Neuronal',
+def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuronal',
                      Decay_type = 'Double_exp',synapse_type = 'neutral',conn_prob_ = None, seed_neu=None,seed_syn = None):
     
-# std_pers = persentage of mean value used as standard deviation for introducing some
-#   variability
+
+# Syn_pdist: stores statistical informations used to spatially reallocate the synapses. [0] probability of a connection to 
+#   be set at the distance in [1]   
+    
 # ---------------------- NEURONAL GROUP ----------------------
      # neuron model
     eqs_NN = Equations('''
@@ -961,9 +960,11 @@ def Neuronal_Network(Nn,ics = False, Simulated_network = 'Neuronal',
     # Set synapse position coincident with the post-synaptic neuron plus a stochastic shift (See notes)
 
     
-    # !!! Finish to set the rearranging fun
-    Syn_prob,Radious_vals =  generate_dendritic_arbour()
-    Syn_coordinates =  get_synapse_coordinates(S,N,Syn_prob,Radious_vals,seed_syn)
+    
+    Syn_coordinates =  get_synapse_coordinates(S,N,
+                                               Syn_pdist['Syn_prob'].to_numpy(),
+                                               Syn_pdist['Radius_val'].to_numpy()
+                                               )
     Syn_coordinates = np.vstack(Syn_coordinates)
 
     # Print the shape (number of rows, number of columns)
@@ -2843,7 +2844,7 @@ def get_dendrite_prob(r_1,r_0,dx,map_magnitude):
     
     return Filled_volume
     
-def generate_dendritic_arbour(max_rad = 220,dx=0.001,interval=1):
+def generate_dendritic_arbour(max_rad = 220,dx=0.01,interval=1):
     '''
     
 
@@ -2898,7 +2899,7 @@ def generate_dendritic_arbour(max_rad = 220,dx=0.001,interval=1):
     
     return Syn_prob,rarius_val
         
-def sample_distance_from_soma(syn_prob, rarius_val,seed):
+def sample_distance_from_soma(syn_prob, rarius_val):
     '''
     Samples a single distance from the soma based on the provided probability distribution.
 
@@ -2911,7 +2912,7 @@ def sample_distance_from_soma(syn_prob, rarius_val,seed):
     '''
     
     # Set the seed
-    rng_syn =  np.random.default_rng(seed=seed)
+    rng_syn =  np.random.default_rng()
     
     # Normalize the probabilities to ensure they sum to 1
     prob_sum = np.sum(syn_prob)
@@ -2932,7 +2933,7 @@ def sample_distance_from_soma(syn_prob, rarius_val,seed):
     sampled_distance = rng_syn.choice(rarius_val[valid_indices], p=normalized_probs[valid_indices],replace = True)
     
     return sampled_distance   
-def get_synapse_coordinates(Synapse,Neuron,Syn_prob,rarius_val,displ_bias=15,seed =None):
+def get_synapse_coordinates(Synapse,Neuron,Syn_prob,rarius_val,displ_bias=15):
     """
     Calculates the 2D coordinates of each synapse based on a distance from the postsynaptic neuron.
 
@@ -2978,10 +2979,10 @@ def get_synapse_coordinates(Synapse,Neuron,Syn_prob,rarius_val,displ_bias=15,see
         # Sample a distance for this synapse
         # CHeck that the synapse distance is lower than then the neuron's.
         
-        distance = sample_distance_from_soma(Syn_prob,rarius_val,seed) + displ_bias
+        distance = sample_distance_from_soma(Syn_prob,rarius_val) + displ_bias
         
         while distance > vector_length:
-            distance = sample_distance_from_soma(Syn_prob,rarius_val,seed) + displ_bias
+            distance = sample_distance_from_soma(Syn_prob,rarius_val) + displ_bias
         
         distance_.append(distance)
 
@@ -2991,4 +2992,4 @@ def get_synapse_coordinates(Synapse,Neuron,Syn_prob,rarius_val,displ_bias=15,see
         # Append the new coordinate as a tuple to the list
         synapse_coords.append(tuple(new_coord))
 
-    return synapse_coords  
+    return synapse_coords
