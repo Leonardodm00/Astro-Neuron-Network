@@ -1,17 +1,18 @@
 
 
+
 import matplotlib.pyplot as plt
 from brian2 import *
 
 from brian2 import clear_cache
 
-
+import pandas as pd
 import os
 
 
 os.chdir(r'C:\Users\Admin\Desktop\Leonardo\ASN')
 from ASN_fun import *
-#%
+#%%
 '''
 Version: cython friendly, connections and positions randomly placed
 
@@ -91,46 +92,21 @@ start_scope()
  # ------------------------- SET OPTIONS -------------------------
 
 # ------- Synapses -------
-synapse_type='neutral'
-ics=None 
-dt=None            
 
-postc_sic='double-exp'
-Decay_type = 'Double_exp'
-sic=None 
-delay=None
-RandomKinetics = False 
-OnlyExc = True
-std_pers =0.01
+# 1. Define the filename
+os.chdir(r'C:\Users\Admin\Desktop\Leonardo\ASN')
+filename = 'synapse_pdist.csv'
+# 2. Load the file
+Syn_pdist = pd.read_csv(filename)
+
 
 Syn_Currents_model = 'TM-coupled' # 'Kinetic','Nina','TM-coupled'
-
-Max_delay = 25 *ms
-add_delay = False
-delay_mode = 'random'
-
-Asynchronous_release = True
-
-# ------- Neurons -------
-Adaptation = True
-
-
-# ------- Astrocytes -------
-oscillations = 'AM'
-
-
-
-
-
-
-
-
 
 
 # ------------------------- PARAMETERS -------------------------
 
 # --------- SIMULATION -----------
-simtime =100 * second               # simulation time
+simtime =30 * second               # simulation time
 # transient = 3 * second  
 seed_device = 50            # time omitted as transient
 seed_neuron = 39                             # random number seed
@@ -148,12 +124,7 @@ neuron_radius = 9 #[um]
 # --------- SYNAPTIC -----------
 
 # ----- Connectivity -----
-# Can be directly an ADJ or a string: Random, Distance
-# Connection_neuro = np.array(([0,1,0,0],
-                              # [0,0,1,0],
-                              # [0,0,0,1],
-                              # [0,0,0,0]))
-Connection_neuro = 'Random'
+
 conn_prob_ = 0.13
 
 # --------- ASTROCYTE and GJ ----------- 
@@ -162,30 +133,6 @@ Given the nature of the link hte adjency matrix is ALWAYS symmetric
 
 '''
 Na = 50
-
-# ----- Connectivity -----
-# Can be directly an ADJ or a string: Distance
-# Connection_astro= np.array(([0,1,0],
-#                             [1,0,1],
-#                             [0,1,0]))
-Connection_astro = 'Distance'
-
-
-# --------- GLIOTRANSMISSION ----------- 
-
-
-# --------- ASTRO-NEURON LINKS ----------- 
-# --- Synapse to astro ---
-# ADJ_SynAstro = np.array(([1,0,0],
-#                          [0,1,0],
-#                          [0,0,1]))
-Connection_StoA = 'Distance'
-
-
-# --- Astro to synapse ---
-ADJ_AstroSyn = np.array(([1,0,0],
-                         [0,1,0],
-                         [0,0,1]))
 
 
 # --------- ELECTRODE RECORDINGS ----------- 
@@ -205,7 +152,7 @@ c_max = 1100 #[um]
 
 if Simulated_network == 'Full':
     # --------- NEURON and SYNAPSE -----------
-    N,S = Neuronal_Network(Nn,ics = False, Simulated_network = Simulated_network,
+    N,S = Neuronal_Network(Nn,Syn_pdist = Syn_pdist,ics = False, Simulated_network = Simulated_network,
                          Decay_type = 'Double_exp',synapse_type = 'facilitating', conn_prob_ = conn_prob_,seed_neu=seed_neuron,seed_syn=seed_synapse)
     
     
@@ -217,7 +164,7 @@ if Simulated_network == 'Full':
     
     
     # --------- ASTROCYTE -----------
-    Astro,GJ = Astrocyte_Group(Na,Connection_astro,Simulated_network,seed_astro = seed_astro)
+    Astro,GJ = Astrocyte_Group(Na,Simulated_network,seed_astro = seed_astro)
     
     
     
@@ -308,61 +255,7 @@ net_ = Network(collect())  # automatically include all the stated groups
 net_.run(simtime,report='text', profile=True)
 
 #%%
-# ----------------- POSITIONS -----------------
 
-
-# Neurons 
-neuron_x = list(N.x_neuron) 
-neuron_y = list(N.y_neuron) 
-
-# Synapse
-synapse_x = list(S.x_syn)
-synapse_y = list(S.y_syn)
-
-# Astro
-astro_x = list(Astro.x_astro)
-astro_y = list(Astro.y_astro)
-
-# ----------------- CONNECTIONS -----------------
-
-# Synapses
-# Note: S.i and S.j are typically array-like Brian2 indices
-Syn_pre = list(S.i)
-Syn_post = list(S.j)
-
-# Gap junctions
-# Note: GJ.i and GJ.j are typically array-like Brian2 indices
-Gap_J_pre = list(GJ.i)
-Gap_J_post = list(GJ.j)
-
-# Syn to Astro
-# Note: StoA.i and StoA.j are typically array-like Brian2 indices
-Source_syn = list(StoA.i)
-Target_astro = list(StoA.j)
-
-os.chdir(Out_path)
-
-filename = 'Positions_Connections.npz'
-np.savez_compressed(
-            filename,
-            # Coordinates
-            neuron_x=neuron_x,
-            neuron_y=neuron_y,
-            synapse_x=synapse_x,
-            synapse_y=synapse_y,
-            astro_x=astro_x,
-            astro_y=astro_y,
-            
-            # Connections
-            Syn_pre=Syn_pre,
-            Syn_post=Syn_post,
-            Gap_J_pre=Gap_J_pre,
-            Gap_J_post=Gap_J_post,
-            Source_syn=Source_syn,
-            Target_astro=Target_astro
-        )
-
-#%%
 
 # -----------------------------
 plot_connections(N, Astro, S, StoA)
@@ -404,11 +297,13 @@ plt.gca().set_aspect('equal', adjustable='box')
 plt.grid(True)
 plt.show()
 #%%
+os.chdir(r'C:\Users\Admin\Desktop\Leonardo\ASN')
+from ASN_fun import *
+Grid = Get_12grid(pitch)
 
 
-    
-    
-plot_layered_connections(N, Astro, GJ,S)
+#  
+plot_layered_connections_with_mea_planar(N, Astro, GJ,S,Grid)
 # --------------------- PLOTS ---------------------
 #%%
 # ------- NEURONS -------
