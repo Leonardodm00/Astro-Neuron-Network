@@ -14,6 +14,5 @@
 
 
 ## TO DO
-- Plot synaptic links, Gap-junction mediated links and Astro-syn links.
 - Write down the C++ friendly code.
 - Simulate some instaces of different degrees of astrocytic network's influence.
