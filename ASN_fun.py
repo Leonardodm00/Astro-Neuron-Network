@@ -28,7 +28,159 @@ from scipy.stats import chi2
 import seaborn as sns
 import math
 
+def plot_layered_connections(neurons, astrocytes, gj_synapses, neuron_synapses):
+    """
+    Plots the positions of neurons and astrocytes in separate Z-layers and 
+    visualizes connections (Astrocyte GJs and Neuron Synapses) in 3D,
+    with enhanced visual appeal and new custom markers.
 
+    Args:
+        neurons (NeuronGroup): The neuron population. Assumed to have .x_neuron, .y_neuron.
+        astrocytes (NeuronGroup): The astrocyte population. Assumed to have .x_astro, .y_astro.
+        gj_synapses (Synapses): The astrocyte-to-astrocyte Gap Junction connections (AstrocyteGroup -> AstrocyteGroup).
+        neuron_synapses (Synapses): The neuron-to-neuron connections (NeuronGroup -> NeuronGroup).
+    """
+    
+    # --- Configuration and Unit Conversion ---
+    
+    Z_NEURON_LAYER = 0.0  
+    Z_ASTRO_LAYER  = 1.5  
+    
+    scale_factor = umeter
+
+    # Astrocyte coordinates
+    try:
+        astro_x = astrocytes.x_astro / scale_factor
+        astro_y = astrocytes.y_astro / scale_factor
+    except AttributeError:
+        astro_x = astrocytes.x_astro
+        astro_y = astrocytes.y_astro
+    astro_z = np.full_like(astro_x, Z_ASTRO_LAYER)
+
+    # Neuron coordinates
+    neuron_x = neurons.x_neuron / scale_factor
+    neuron_y = neurons.y_neuron / scale_factor
+    neuron_z = np.full_like(neuron_x, Z_NEURON_LAYER)
+    
+    # Get connection indices
+    astro_pre_gj = gj_synapses.i
+    astro_post_gj = gj_synapses.j
+    
+    neuron_pre_syn = neuron_synapses.i
+    neuron_post_syn = neuron_synapses.j
+
+    # --- Plotting Setup ---
+    fig = plt.figure(figsize=(14, 12)) 
+    ax = fig.add_subplot(111, projection='3d')
+    ax.set_title('Neural and Glial Networks in 3D', color='white', fontsize=16)
+    
+    # --- Background and Grid Aesthetics ---
+    fig.patch.set_facecolor('#282c34') 
+    ax.set_facecolor('#1e222a') 
+
+    # Fix: Use the internal pane dictionary for styling (Matplotlib 3.5+ compatibility)
+    pane_color = (0.1, 0.1, 0.1, 1.0)
+    ax.xaxis.pane.set_color(pane_color)
+    ax.yaxis.pane.set_color(pane_color)
+    ax.zaxis.pane.set_color(pane_color)
+    ax.xaxis.pane.set_edgecolor('w')
+    ax.yaxis.pane.set_edgecolor('w')
+    ax.zaxis.pane.set_edgecolor('w')
+
+    ax.grid(True, linestyle=':', alpha=0.4, color='gray') 
+
+    # --- 1. Plot Neurons (Layer Z=0) ---
+    # Marker: 'D' (Diamond)
+    ax.scatter(neuron_x, neuron_y, neuron_z, 
+               s=50,      
+               c='#00BFFF', 
+              # <--- CHANGED MARKER
+               edgecolors='white', 
+               linewidths=0.5,
+               alpha=0.9,
+               label=f'Neurons (Z={Z_NEURON_LAYER} $\mu m$)', 
+               zorder=5) 
+
+    # --- 2. Plot Astrocytes (Layer Z=1.5) ---
+    # Marker: 'p' (Pentagon)
+    ax.scatter(astro_x, astro_y, astro_z, 
+               color='#FF4500', 
+
+               s=90,          
+               edgecolors='white', 
+               linewidths=0.7,
+               alpha=0.9,
+               label=f'Astrocytes (Z={Z_ASTRO_LAYER} $\mu m$)', 
+               zorder=6) 
+
+    # --- 3. Plot Astrocyte-Astrocyte Gap Junctions (Within Astro Layer) ---
+    for i in range(len(astro_pre_gj)):
+        pre_idx = astro_pre_gj[i]
+        post_idx = astro_post_gj[i]
+
+        label = 'Astrocyte Gap Junction' if i == 0 else None
+        
+        ax.plot(
+            [astro_x[pre_idx], astro_x[post_idx]],
+            [astro_y[pre_idx], astro_y[post_idx]],
+            [Z_ASTRO_LAYER, Z_ASTRO_LAYER], 
+            color='#FFD700', 
+            linestyle='-',
+            alpha=0.8,       
+            linewidth=3.0,   
+            label=label
+        )
+    
+    # --- 4. Plot Neuron-Neuron Synaptic Connections (Within Neuron Layer) ---
+    for i in range(len(neuron_pre_syn)):
+        pre_idx = neuron_pre_syn[i]
+        post_idx = neuron_post_syn[i]
+
+        label = 'Neuron-Neuron Synapse' if i == 0 else None
+        
+        ax.plot(
+            [neuron_x[pre_idx], neuron_x[post_idx]],
+            [neuron_y[pre_idx], neuron_y[post_idx]],
+            [Z_NEURON_LAYER, Z_NEURON_LAYER], 
+            color='#32CD32', 
+            linestyle='--',
+            alpha=0.2,       
+            linewidth=1.0,   
+            label=label
+        )
+    
+    # --- Final Plot Aesthetics ---
+    ax.set_xlabel('X position ($\mu m$)', color='white', fontsize=12)
+    ax.set_ylabel('Y position ($\mu m$)', color='white', fontsize=12)
+    ax.set_zlabel('Z position ($\mu m$)', color='white', fontsize=12)
+    
+    # Set axis tick colors to white
+    ax.tick_params(axis='x', colors='white')
+    ax.tick_params(axis='y', colors='white')
+    ax.tick_params(axis='z', colors='white')
+    
+    # Set axis limits
+    if neuron_x.size > 0:
+        x_min, x_max = np.min(neuron_x), np.max(neuron_x)
+        y_min, y_max = np.min(neuron_y), np.max(neuron_y)
+        x_range = x_max - x_min
+        y_range = y_max - y_min
+        ax.set_xlim(x_min - x_range * 0.1, x_max + x_range * 0.1)
+        ax.set_ylim(y_min - y_range * 0.1, y_max + y_range * 0.1)
+    
+    z_min = min(Z_NEURON_LAYER, Z_ASTRO_LAYER) - 0.5
+    z_max = max(Z_NEURON_LAYER, Z_ASTRO_LAYER) + 0.5
+    ax.set_zlim(z_min, z_max)
+    
+    # Legend with white text
+    legend = ax.legend(loc='upper right', markerscale=1.5, fontsize=10, facecolor='#282c34', edgecolor='white')
+    plt.setp(legend.get_texts(), color='white') 
+    
+    # Adjust view angle 
+    ax.view_init(elev=30, azim=-70) 
+    
+    plt.tight_layout() 
+    plt.show()
 def plot_connections(neurons, astrocytes, synapses, connections):
     """
     Plots the positions of neurons and astrocytes and the connections between them,
@@ -82,57 +234,6 @@ def plot_connections(neurons, astrocytes, synapses, connections):
     plt.axis('equal')
     plt.show()
 
-def plot_connectionsA(neurons, astrocytes, synapses, connections):
-    """
-    Plots the positions of neurons and astrocytes and the connections between them.
-
-    Args:
-        neurons (NeuronGroup): The neuron population.
-        astrocytes (NeuronGroup): The astrocyte population.
-        synapses (NeuronGroup): The synapse population.
-        connections (Synapses): The established connections.
-    """
-    plt.figure(figsize=(10, 10))
-    plt.title('Synapse-Astrocyte Connections')
-
-   
-    # Plot astrocyte positions as large red squares
-    plt.scatter(astrocytes.x_astro/meter, astrocytes.y_astro/meter, color='red', marker='s', s=100, label='Astrocytes')
-
-    # Plot synapse (post-synaptic neuron) positions as blue circles
-    # We get the synapse positions from the 'synapse' group we created.
-    # Note: We can directly access .x and .y without .get_value() in pure Brian2
-    # once the `Synapses` object is created.
-    plt.scatter(synapses.x_syn/meter, synapses.y_syn/meter, color='blue', s=30, label='Synapses (post-synaptic)')
-
-    # Plot the connections as lines
-    # We need the coordinates of the connected pre- and post-synaptic cells
-    synapse_indices = list(connections.i)
-    astrocyte_indices = list(connections.j)
-    
-    # Get the coordinates for the connected synapses and astrocytes
-    conn_synapse_x = synapses.x_syn[synapse_indices]/meter
-    conn_synapse_y = synapses.y_syn[synapse_indices]/meter
-    conn_astro_x = astrocytes.x_astro[astrocyte_indices]/meter
-    conn_astro_y = astrocytes.y_astro[astrocyte_indices]/meter
-
-    # Plot lines for all connections. Use a thin line to avoid clutter.
-    for i in range(int(len(connections.i))):
-        print(i)
-        plt.plot(
-            [conn_synapse_x[i], conn_astro_x[i]],
-            [conn_synapse_y[i], conn_astro_y[i]],
-            color='purple',
-            alpha=0.2, # Use transparency to see overlapping connections
-            linewidth=0.5
-        )
-
-    plt.xlabel('X position (m)')
-    plt.ylabel('Y position (m)')
-    plt.legend()
-    plt.grid(True)
-    plt.axis('equal') # Ensures that the plot isn't stretched
-    plt.show()
 
 
 
@@ -330,7 +431,7 @@ def get_Astroparam(oscillations = 'AM',**kwargs):
         'spill_over': 0.75,         # Spill over parameter
         
         # Connection probability
-        'conn_dist' : 100, # [um] 
+        'conn_dist' : 200, # [um] 
         'c_min' : 0, #[um]
         'c_max' : 1100, # [um]
         
@@ -513,7 +614,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
             'Omega_d': 2./second, #2
             'Omega_f_sr': 2./second,
             'U_0_sr': 0.15,
-            'alpha_syn': 1.,
+            'alpha_syn': 0.       #1.,  
         })
     elif synapse_type == 'neutral':
         params.update({
@@ -2958,8 +3059,6 @@ def get_synapse_coordinates(Synapse,Neuron,Syn_prob,rarius_val,displ_bias=15):
         synapse_coords.append(tuple(new_coord))
 
     return synapse_coords  
-        
-    
         
     
 
