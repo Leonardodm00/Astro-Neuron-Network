@@ -1,4 +1,3 @@
-
 """
 Created on Tue Aug 12 17:52:56 2025
 
@@ -614,7 +613,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
             'Omega_d': 2./second, #2
             'Omega_f_sr': 2./second,
             'U_0_sr': 0.15,
-            'alpha_syn': 0.       #1.,  
+            'alpha_syn': 1.       #1.,  
         })
     elif synapse_type == 'neutral':
         params.update({
@@ -3058,8 +3057,7 @@ def get_synapse_coordinates(Synapse,Neuron,Syn_prob,rarius_val,displ_bias=15):
         # Append the new coordinate as a tuple to the list
         synapse_coords.append(tuple(new_coord))
 
-    return synapse_coords  
-        
+    return synapse_coords     
     
 
     
