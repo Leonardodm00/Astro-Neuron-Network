@@ -15,7 +15,5 @@
 
 ## TO DO
 **Write down the C++ friendly code**
-- Save the connectivity matricies and positions of Neurons, Astrocytes and Synapse-astrocytes.
-- Rewrite the ASN_fun and Main_code to be accomodate already defined conenctivity and positions.
-- Rewrite the  ASN_fun and Main_code to set different parameter values and test it.
+- Implement Binomial Distribution in the code to model Asynchronous release.
 
