@@ -25,11 +25,52 @@ import seaborn as sns
 import math
 
 
+
 '''
 
 Version: cython friendly, connections and positions randomly placed
 
 '''
+
+# ---------------------- BINOMIAL FUNCTION ------------------------
+
+def Binomial_fun(n,p, _vectorisation_idx):
+    '''Generate a number from an exponential distribution using inverse
+       transform sampling'''
+    uniform = np.random.rand(n)
+    return sum(uniform < p)
+
+
+
+
+Binomial_fun = Function(Binomial_fun, arg_units=[1,1], return_unit=1,
+                            stateless=False, auto_vectorise=True
+                            )
+
+cython_code = '''
+ 
+
+cdef double Binomial_fun(int n,double p,_vectorisation_idx):
+
+    cdef int count = 0
+    cdef double uniform
+    cdef int i
+  
+    
+    for i in range(n):
+        uniform=rand(_vectorisation_idx)
+        
+        if uniform < p:
+            count = count+1
+            
+    return count;
+
+'''
+Binomial_fun.implementations.add_implementation('cython', cython_code,
+                                                    dependencies={'rand': DEFAULT_FUNCTIONS['rand']})
+
+
+
 
 
 def plot_layered_connections_with_mea_planar(neurons, astrocytes, gj_synapses, neuron_synapses, Grid):
@@ -596,7 +637,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
        'Omega_f_ar': 1/ (0.7 * second),
        'Uar': 0.001, #0.003
        'Umax': 0.5/ms,
-       'x0': 5, # x0 seems to be unitless here
+       'x0': 0.2, # x0 seems to be unitless here
     
     }
     
@@ -734,7 +775,7 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
         
    
             # Available neurotransmitter
-            dx_S/dt = Omega_d *(1 - x_S) -  r_Ar: 1 (clock-driven)
+            dx_S/dt = Omega_d * (1 - x_S) -  r_Ar: 1 (clock-driven)
             
             # Usage of releasable neurotransmitter per single action potential (synchronous):
             dusr/dt = -Omega_f_sr * usr : 1 (clock-driven)
@@ -742,10 +783,12 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
             
             # Add the asyncronous release
             r_Ar = x0*nar : Hz
-            nar = clip(randn()*sqrt(x_S/x0*uar*dt*(1-uar*dt))+uar*dt*x_S/x0, 0, 2*x_S/x0*uar*dt)/dt :Hz (constant over dt)
+            nar = Binomial_fun(int(floor(x_S/x0)),uar*dt)/dt :Hz (constant over dt)
             duar/dt = -uar*Omega_f_ar :Hz (clock-driven)
             
             r_Sr : 1 
+           
+            # avail = int(floor(x_S/x0)) : 1
             
             # Astrocyte ID for connection
             astro_index : integer
@@ -782,7 +825,7 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
     
             
             # Available neurotransmitter
-            dx_S/dt = Omega_d *(1 - x_S) -  r_Ar: 1 (event-driven)
+            dx_S/dt = Omega_d *(1 - x_S) -  r_Ar: 1 (clock-driven)
             
             # Usage of releasable neurotransmitter per single action potential (synchronous):
             dusr/dt = -Omega_f_sr * usr : 1 (clock-driven)
@@ -790,7 +833,7 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
             
             # Add the asyncronous release
             r_Ar = x0*nar : Hz
-            nar = clip(randn()*sqrt(x_S/x0*uar*dt*(1-uar*dt))+uar*dt*x_S/x0, 0, 2*x_S/x0*uar*dt)/dt :Hz (constant over dt)
+            nar = Binomial_fun(int(floor(x_S/x0)),uar*dt)/dt :Hz (constant over dt)
             duar/dt = -uar*Omega_f_ar :Hz (clock-driven)
            
             
@@ -944,9 +987,10 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
                         on_post=post,
                         name='Synapse*',
                         namespace=params_Syn,
-                        method='exponential_euler',dtype=float32)
+                        method='exponential_euler',dtype=float32,
+                        )
     
-    
+    S.namespace['Binomial_fun'] = Binomial_fun
     
     # -------------- Connections --------------
     
