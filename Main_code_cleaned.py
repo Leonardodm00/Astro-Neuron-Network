@@ -1,6 +1,7 @@
 
 
 
+
 import matplotlib.pyplot as plt
 from brian2 import *
 
@@ -11,8 +12,8 @@ import os
 
 
 os.chdir(r'C:\Users\Admin\Desktop\Leonardo\ASN')
-from ASN_fun import *
-#%%
+from ASN_fun_BD import *
+#%
 '''
 Version: cython friendly, connections and positions randomly placed
 
@@ -79,6 +80,41 @@ TODO:
 #%
 
 
+
+def exponential_rand(n,p, _vectorisation_idx):
+    '''Generate a number from an exponential distribution using inverse
+       transform sampling'''
+    uniform = np.random.rand(n)
+    return sum(uniform < p)
+
+exponential_rand = Function(exponential_rand, arg_units=[1,1], return_unit=1,
+                            stateless=False, auto_vectorise=True
+                            )
+
+cython_code = '''
+ 
+
+cdef double exponential_rand(int n,double p,_vectorisation_idx):
+
+    cdef int count = 0
+    cdef double uniform
+    cdef int i
+  
+    
+    for i in range(n):
+        uniform=rand(_vectorisation_idx)
+        
+        if uniform < p:
+            count = count+1
+            
+    return count;
+
+'''
+exponential_rand.implementations.add_implementation('cython', cython_code,
+                                                    dependencies={'rand': DEFAULT_FUNCTIONS['rand']})
+
+
+
 # Saving 
 Out_path = r'C:\Users\Admin\Desktop\Leonardo\ASN\Output Temp'
 
@@ -99,14 +135,13 @@ filename = 'synapse_pdist.csv'
 # 2. Load the file
 Syn_pdist = pd.read_csv(filename)
 
-
 Syn_Currents_model = 'TM-coupled' # 'Kinetic','Nina','TM-coupled'
 
 
 # ------------------------- PARAMETERS -------------------------
 
 # --------- SIMULATION -----------
-simtime =30 * second               # simulation time
+simtime =15 * second               # simulation time
 # transient = 3 * second  
 seed_device = 50            # time omitted as transient
 seed_neuron = 39                             # random number seed
@@ -132,7 +167,7 @@ conn_prob_ = 0.13
 Given the nature of the link hte adjency matrix is ALWAYS symmetric
 
 '''
-Na = 50
+Na = 43
 
 
 # --------- ELECTRODE RECORDINGS ----------- 
@@ -187,7 +222,7 @@ if Simulated_network == 'Full':
 elif Simulated_network == 'Neuronal':
 
     # --------- NEURON and SYNAPSE -----------
-    N,S = Neuronal_Network(Nn,ics = False, Simulated_network = Simulated_network,
+    N,S = Neuronal_Network(Nn,Syn_pdist = Syn_pdist,ics = False, Simulated_network = Simulated_network,
                          Decay_type = 'Double_exp',synapse_type = 'facilitating', conn_prob_ = conn_prob_,seed_neu=seed_neuron,seed_syn=seed_synapse)
     
     
@@ -207,7 +242,7 @@ elif Simulated_network == 'Astrocytic':
     N_stim in the parameters.
     '''
     # --------- ASTROCYTE -----------
-    Astro, GJ,P,Glu_Input = Astrocyte_Group(Na,Connection_astro,Simulated_network,seed_astro = seed_astro)
+    Astro, GJ,P,Glu_Input = Astrocyte_Group(Na,Simulated_network,seed_astro = seed_astro)
     
 
 
@@ -216,17 +251,17 @@ elif Simulated_network == 'Astrocytic':
 
 # --- Monitors ---
 # recording_stringN = ['V','I_syn','I_ampa','I_nmda','I_cell']
-# # recording_stringN = ['V','I_ampa','I_nmda','I_AHP']
-# recording_stringS = ['usr','x_S','Y_S','uar','r_Sr','r_Ar','r_ampa','r_nmda']
+recording_stringN = ['V']
+# recording_stringS = ['Y_S','r_Ar','nar']
 # recording_stringA = ['C','I','Gamma_A','I_coupling_tot','Y_extra']
 # recording_stringGT = ['G_A','x_A']
 
 
 if Simulated_network == 'Full':
     
-    # MonitorS2 = StateMonitor(S, recording_stringS, record=True)
+    # MonitorS = StateMonitor(S, recording_stringS, record=True)
     # MonitorA = StateMonitor(Astro, recording_stringA, record=True)
-    # MonitorN = StateMonitor(N, recording_stringN, record=True)
+    MonitorN1 = StateMonitor(N, recording_stringN, record=True)
     # MonitorGT = StateMonitor(GT, recording_stringGT, record=True)
     SpikesN2 = SpikeMonitor(N)
     SpikesA2 = SpikeMonitor(Astro)
@@ -244,21 +279,25 @@ elif Simulated_network == 'Astrocytic':
     SpikesA = SpikeMonitor(Astro)
     SpikesP = SpikeMonitor(P)
     
-    
-#
-# %matplotlib
+#%
+# # %matplotlib
 # plot_connections(N, Astro, S, StoA)
 # --- Collect and add monitors ---
-
-
+#%
 net_ = Network(collect())  # automatically include all the stated groups
+# BUILD
+# for param in param_list:
+#   device.rum(run_args={param})
 net_.run(simtime,report='text', profile=True)
 
 #%%
+%matplotlib
+plt.figure()
+plt.plot(SpikesN2.t / second, SpikesN2.i, '.k', ms=4)
+plt.show()
 
 
-# -----------------------------
-plot_connections(N, Astro, S, StoA)
+
 #%%
 # Convert coordinates for plotting
 neuron_x = N.x_neuron 
@@ -312,20 +351,20 @@ fig, (ax1, ax2, ax3,ax4) = plt.subplots(4, 1) # Added figsize for better viewing
 
 
 
-ax1.plot(MonitorN.t / second, MonitorN[9].V / mV, 'k', linewidth=0.7)
+ax1.plot(MonitorN1.t / second, MonitorN1[0].V / mV, 'k', linewidth=0.7)
 ax1.set_ylabel('Voltage [mV]')
 
-ax2.plot(MonitorN.t / second, MonitorN[1].V / mV, 'k', linewidth=0.7)
+ax2.plot(MonitorN1.t / second, MonitorN1[1].V / mV, 'k', linewidth=0.7)
 ax2.set_ylabel('Voltage [mV]')
 
 
 
-ax3.plot(MonitorN.t / second, MonitorN[2].V / mV, 'k', linewidth=0.7)
+ax3.plot(MonitorN1.t / second, MonitorN1[2].V / mV, 'k', linewidth=0.7)
 ax3.set_ylabel('Voltage [mV]')
 
 
 
-ax4.plot(MonitorN.t / second, MonitorN[3].V / mV, 'k', linewidth=0.7)
+ax4.plot(MonitorN1.t / second, MonitorN1[3].V / mV, 'k', linewidth=0.7)
 ax4.set_xlabel('Time [s]')
 ax4.set_ylabel('Voltage [mV]')
 
@@ -489,8 +528,8 @@ def check_nan_astrocyte_states(monitor_a, recording_vars_a):
     else:
         print(f"\n--- {len(nan_astrocytes)} Astrocyte(s) with NaN values found. ---\n")
 
-check_nan_neuron_astro_link(MonitorN, N, S, AtoS)
-check_nan_astrocyte_states(MonitorA, recording_stringA)
+check_nan_neuron_astro_link(MonitorN1, N, S, AtoS)
+# check_nan_astrocyte_states(MonitorA, recording_stringA)
 # check_nan_synapse_states(MonitorS2, recording_stringS,S)
 #%%
 def find_first_nan_index(Simulated_network, monitors):
@@ -658,7 +697,7 @@ fig, (ax1, ax2, ax3) = plt.subplots(3, 1) # Added figsize for better viewing
 
 
 # ax1.plot(SpikesN.t/second,spike_trains[0],'.g', ms=5,label='Spikes')
-ax1.plot(MonitorS.t / second, MonitorS[0].uar/hertz, 'r', linewidth=0.7,label='uar')
+ax1.plot(MonitorS.t / second, MonitorS[0].uar/hertz, 'r', linewidth=0.7,label=' uar')
 
 ax1.plot(MonitorS.t / second, MonitorS1[0].uar/hertz,'--', linewidth=0.7,label='No uar')
 
@@ -667,18 +706,55 @@ ax1.legend()
 
 
 # ax2.plot(SpikesN.t/second,spike_trains[1],'.g', ms=5,label='Spikes')
-ax2.plot(MonitorS.t / second, MonitorS[1].uar/hertz, 'r', linewidth=0.7)
+ax2.plot(MonitorS.t / second, MonitorS[100].uar/hertz, 'r', linewidth=0.7)
 
-ax2.plot(MonitorS.t / second, MonitorS1[1].uar/hertz, '--', linewidth=0.7)
+ax2.plot(MonitorS.t / second, MonitorS1[100].uar/hertz, '--', linewidth=0.7)
 
 
 
 # ax3.plot(SpikesN.t/second,spike_trains[2],'.g', ms=5,label='Spikes')
-ax3.plot(MonitorS.t / second, MonitorS[2].uar/hertz, 'r', linewidth=0.7)
+ax3.plot(MonitorS.t / second, MonitorS[200].uar/hertz, 'r', linewidth=0.7)
 
 ax3.plot(MonitorS.t / second, MonitorS1[2].uar/hertz,'--',  linewidth=0.7)
 
 ax3.set_xlabel('Time [s]')
+#%%
+
+fig, (ax1, ax2, ax3,ax4) = plt.subplots(4, 1) # Added figsize for better viewing
+
+
+# ax1.plot(SpikesN.t/second,spike_trains[0],'.g', ms=5,label='Spikes')
+ax1.plot(MonitorN.t / second, MonitorN[3].V/mV, 'k', linewidth=0.7,label='Membrane Potential pre-syn')
+ax1.set_xlim(0, 20)
+ax1.set_ylabel('mV')
+# ax1.legend()
+# ax1.plot(MonitorS.t / second, MonitorS1[0].uar/hertz,'--', linewidth=0.7,label=' uar')
+
+
+
+
+# ax2.plot(SpikesN.t/second,spike_trains[1],'.g', ms=5,label='Spikes')
+ax2.plot(MonitorS.t / second, MonitorS[14].nar/hertz*defaultclock.dt, 'k', linewidth=0.7,label='Released vescicles')
+ax2.set_xlim(0, 20)
+ax2.set_ylabel('#')
+# ax2.plot(MonitorS.t / second, MonitorS1[100].uar/hertz, '--', linewidth=0.7)
+ax2.legend()
+
+
+# ax3.plot(SpikesN.t/second,spike_trains[2],'.g', ms=5,label='Spikes')
+ax3.plot(MonitorN.t / second, MonitorN[5].I_syn/nA, 'k', linewidth=0.7,label='Synaptic currents')
+ax3.set_xlim(0, 20)
+ax3.set_ylabel('nA')
+# ax3.plot(MonitorS.t / second, MonitorS1[2].uar/hertz,'--',  linewidth=0.7)
+ax3.legend()
+
+
+
+ax4.plot(MonitorS.t / second,MonitorS[14].avail,'k',label='Available vescicles')
+ax4.set_ylabel('#')
+ax4.set_xlabel('Time [s]')
+ax4.set_xlim(0, 20)
+ax4.legend()
 # fig.show()
 
 # plt.figure(dpi=200)
@@ -768,7 +844,32 @@ ax3.plot(MonitorS.t / second, MonitorN1[2].I_ampa/pA,'--', linewidth=0.7)
 
 ax3.set_xlabel('Time [s]')
 
+#%% Y_S
 
+fig, (ax1, ax2, ax3) = plt.subplots(3, 1) # Added figsize for better viewing
+
+
+# ax1.plot(SpikesN.t/second,spike_trains[0],'.g', ms=5,label='Spikes')
+ax1.plot(MonitorS.t / second, MonitorS[0].Y_S/mmole, 'r', linewidth=0.7,label='qar')
+ax1.plot(MonitorS.t / second, MonitorS1[0].Y_S/mmole, 'b','--', linewidth=0.7,label='NO qar')
+ax1.legend()
+
+
+
+# ax2.plot(SpikesN.t/second,spike_trains[1],'.g', ms=5,label='Spikes')
+ax2.plot(MonitorS.t / second, MonitorS[30].Y_S/mmole,'r', linewidth=0.7)
+ax2.plot(MonitorS.t / second, MonitorS1[30].Y_S/mmole,'b','--', linewidth=0.7)
+
+
+
+
+
+# ax3.plot(SpikesN.t/second,spike_trains[2],'.g', ms=5,label='Spikes')
+ax3.plot(MonitorS.t / second, MonitorS[100].Y_S/mmole,'r', linewidth=0.7)
+ax3.plot(MonitorS.t / second, MonitorS1[100].Y_S/mmole,'b','--', linewidth=0.7)
+
+
+ax3.set_xlabel('Time [s]')
 
 
 
@@ -816,16 +917,16 @@ ax1.legend()
 
 
 # ax2.plot(SpikesN.t/second,spike_trains[1],'.g', ms=5,label='Spikes')
-ax2.plot(MonitorS.t / second, MonitorS[1].r_ampa/hertz, 'r', linewidth=0.7)
+ax2.plot(MonitorS.t / second, MonitorS[30].r_ampa/hertz, 'r', linewidth=0.7)
 
-ax2.plot(MonitorS.t / second, MonitorS[1].r_nmda/hertz, '--', linewidth=0.7)
+ax2.plot(MonitorS.t / second, MonitorS[30].r_nmda/hertz, '--', linewidth=0.7)
 
 
 
 # ax3.plot(SpikesN.t/second,spike_trains[2],'.g', ms=5,label='Spikes')
-ax3.plot(MonitorS.t / second, MonitorS[2].r_ampa/hertz, 'r', linewidth=0.7)
+ax3.plot(MonitorS.t / second, MonitorS[100].r_ampa/hertz, 'r', linewidth=0.7)
 
-ax3.plot(MonitorS.t / second, MonitorS[2].r_nmda/hertz,'--',  linewidth=0.7)
+ax3.plot(MonitorS.t / second, MonitorS[100].r_nmda/hertz,'--',  linewidth=0.7)
 
 ax3.set_xlabel('Time [s]')
 
@@ -843,16 +944,16 @@ ax1.legend()
 
 
 # ax2.plot(SpikesN.t/second,spike_trains[1],'.g', ms=5,label='Spikes')
-ax2.plot(MonitorS.t / second, MonitorS[1].r_Sr/hertz, 'r', linewidth=0.7)
+ax2.plot(MonitorS.t / second, MonitorS[30].r_Sr/hertz, 'r', linewidth=0.7)
 
-ax2.plot(MonitorS.t / second, MonitorS[1].r_Ar/hertz, '--', linewidth=0.7)
+ax2.plot(MonitorS.t / second, MonitorS[30].r_Ar/hertz, '--', linewidth=0.7)
 
 
 
 # ax3.plot(SpikesN.t/second,spike_trains[2],'.g', ms=5,label='Spikes')
-ax3.plot(MonitorS.t / second, MonitorS[2].r_Sr/hertz, 'r', linewidth=0.7)
+ax3.plot(MonitorS.t / second, MonitorS[100].r_Sr/hertz, 'r', linewidth=0.7)
 
-ax3.plot(MonitorS.t / second, MonitorS[2].r_Ar/hertz,'--',  linewidth=0.7)
+ax3.plot(MonitorS.t / second, MonitorS[100].r_Ar/hertz,'--',  linewidth=0.7)
 
 ax3.set_xlabel('Time [s]')
 
@@ -890,9 +991,9 @@ ax2.plot(MonitorS.t / second, MonitorS[30].x_S, 'c', linewidth=0.7)
 
 
 # ax3.plot(SpikesN.t/second,spike_trains[2],'.g', ms=5,label='Spikes')
-ax3.plot(MonitorS.t / second, MonitorS[954].usr, 'r', linewidth=0.7)
+ax3.plot(MonitorS.t / second, MonitorS[100].usr, 'r', linewidth=0.7)
 
-ax3.plot(MonitorS.t / second, MonitorS[954].x_S, 'c', linewidth=0.7)
+ax3.plot(MonitorS.t / second, MonitorS[100].x_S, 'c', linewidth=0.7)
 
 ax3.set_xlabel('Time [s]')
 # fig.show()
@@ -1044,7 +1145,7 @@ show()
 
 %matplotlib
 plt.figure()
-plt.plot(SpikesA.t / second, SpikesA.i, '.k', ms=4)
+plt.plot(SpikesA2.t / second, SpikesA2.i, '.k', ms=4)
 plt.title("Astro Raster Plot")
 plt.xlabel("Time [s]")
 plt.ylabel("Astrocyte")
@@ -1211,3 +1312,4 @@ ax3.set_xlabel('Time [s]')
 # plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
 
 show()
+
