@@ -1,6 +1,4 @@
 
-
-
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
 import matplotlib.colors as mcolors
@@ -51,6 +49,7 @@ Binomial_fun = Function(Binomial_fun, arg_units=[1,1], return_unit=1,
 cython_code = '''
  
 
+
 cdef double Binomial_fun(int n,double p,_vectorisation_idx):
 
     cdef int count = 0
@@ -67,7 +66,45 @@ cdef double Binomial_fun(int n,double p,_vectorisation_idx):
     return count;
 
 '''
-Binomial_fun.implementations.add_implementation('cython', cython_code,
+
+cpp_code = '''
+ 
+#include <iostream>
+#include <random>
+#include <algorithm>
+#include <cmath>
+
+int Binomial_fun(int n, double p) {
+    // Simple validation for input parameters
+    if (n <= 0 || p <= 0.0) return 0;
+    if (p >= 1.0) return n;
+
+    // Use a thread_local Mersenne Twister engine seeded by random_device.
+    // This provides a high-quality, efficient, and thread-safe way to generate
+    // random numbers, effectively replacing the context-aware 'rand(_vectorisation_idx)'.
+    static thread_local std::mt19937 generator(std::random_device{}());
+
+    // Uniform distribution over the range [0.0, 1.0)
+    std::uniform_real_distribution<double> distribution(0.0, 1.0);
+
+    int count = 0;
+    
+    // Simulate n independent Bernoulli trials
+    for (int i = 0; i < n; ++i) {
+        // Draw a uniform random number
+        double uniform = distribution(generator);
+
+        // Success if the random number falls below the probability threshold 'p'
+        if (uniform < p) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+'''
+Binomial_fun.implementations.add_implementation('cpp', cpp_code,
                                                     dependencies={'rand': DEFAULT_FUNCTIONS['rand']})
 
 
