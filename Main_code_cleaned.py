@@ -1,7 +1,6 @@
 
 
 
-
 import matplotlib.pyplot as plt
 from brian2 import *
 
@@ -80,44 +79,9 @@ TODO:
 #%
 
 
-
-def exponential_rand(n,p, _vectorisation_idx):
-    '''Generate a number from an exponential distribution using inverse
-       transform sampling'''
-    uniform = np.random.rand(n)
-    return sum(uniform < p)
-
-exponential_rand = Function(exponential_rand, arg_units=[1,1], return_unit=1,
-                            stateless=False, auto_vectorise=True
-                            )
-
-cython_code = '''
- 
-
-cdef double exponential_rand(int n,double p,_vectorisation_idx):
-
-    cdef int count = 0
-    cdef double uniform
-    cdef int i
-  
-    
-    for i in range(n):
-        uniform=rand(_vectorisation_idx)
-        
-        if uniform < p:
-            count = count+1
-            
-    return count;
-
-'''
-exponential_rand.implementations.add_implementation('cython', cython_code,
-                                                    dependencies={'rand': DEFAULT_FUNCTIONS['rand']})
-
-
-
 # Saving 
 Out_path = r'C:\Users\Admin\Desktop\Leonardo\ASN\Output Temp'
-
+connections_path = r'C:\Users\Admin\Desktop\Leonardo\ASN\Output connectivity'
 
 BrianLogger.suppress_hierarchy('brian2.devices')
 BrianLogger.suppress_hierarchy('brian2.parsing')
@@ -131,6 +95,7 @@ start_scope()
 
 # 1. Define the filename
 os.chdir(r'C:\Users\Admin\Desktop\Leonardo\ASN')
+
 filename = 'synapse_pdist.csv'
 # 2. Load the file
 Syn_pdist = pd.read_csv(filename)
@@ -138,10 +103,13 @@ Syn_pdist = pd.read_csv(filename)
 Syn_Currents_model = 'TM-coupled' # 'Kinetic','Nina','TM-coupled'
 
 
+set_connections = False
+
+
 # ------------------------- PARAMETERS -------------------------
 
 # --------- SIMULATION -----------
-simtime =15 * second               # simulation time
+simtime =   20 * second               # simulation time
 # transient = 3 * second  
 seed_device = 50            # time omitted as transient
 seed_neuron = 39                             # random number seed
@@ -158,9 +126,22 @@ Nn = 100
 neuron_radius = 9 #[um]
 # --------- SYNAPTIC -----------
 
-# ----- Connectivity -----
-
+# ---------- CONNECTIVITY ----------
+connections = None
 conn_prob_ = 0.13
+
+
+if set_connections == True:
+    connections = True
+    
+    
+elif set_connections == False:
+    Connections_dict = extract_synaptic_connections(connections_path)    
+    
+    
+    
+
+
 
 # --------- ASTROCYTE and GJ ----------- 
 '''
@@ -186,9 +167,16 @@ c_max = 1100 #[um]
 # ------------------------- GROUPS BUILD-UP -------------------------
 
 if Simulated_network == 'Full':
+    
     # --------- NEURON and SYNAPSE -----------
+    
+    # Load connections
+    if set_connections == False:
+        
+        connections = [Connections_dict['S_source'],Connections_dict['S_target']]
+    
     N,S = Neuronal_Network(Nn,Syn_pdist = Syn_pdist,ics = False, Simulated_network = Simulated_network,
-                         Decay_type = 'Double_exp',synapse_type = 'facilitating', conn_prob_ = conn_prob_,seed_neu=seed_neuron,seed_syn=seed_synapse)
+                         Decay_type = 'Double_exp',synapse_type = 'facilitating', conn_prob_ = conn_prob_,seed_neu=seed_neuron,seed_syn=seed_synapse,connections = connections)
     
     
 
@@ -199,7 +187,12 @@ if Simulated_network == 'Full':
     
     
     # --------- ASTROCYTE -----------
-    Astro,GJ = Astrocyte_Group(Na,Simulated_network,seed_astro = seed_astro)
+    # Load connections
+    if set_connections == False:
+        
+        connections = [Connections_dict['GJ_source'],Connections_dict['GJ_target']]
+    
+    Astro,GJ = Astrocyte_Group(Na,Simulated_network,seed_astro = seed_astro,connections = connections)
     
     
     
@@ -211,10 +204,19 @@ if Simulated_network == 'Full':
     
     # --------- ASTRO-NEURON LINKS ----------- 
     # --- Synapse to astro ---
-    StoA,Source_syn,Target_astro  = Synapse_to_astro(S,Astro)
+    # Load connections
+    if set_connections == False:
+        
+        connections = [Connections_dict['StoA_source'],Connections_dict['StoA_target']]
+        
+        
+    StoA,Connections_list  = Synapse_to_astro(S,Astro,connections = connections)
     
-    # --- Astro to synapse ---
-    AtoS = Astro_to_Syn(GT,S,Target_astro,Source_syn)   # Astro_to_Syn(Glio_release,synapse,Source_astro, Target_syn)
+    # --- Astro to synapse ---  
+    # Load connections
+    
+    
+    AtoS = Astro_to_Syn(GT,S,connections = Connections_list)   # Astro_to_Syn(Glio_release,synapse,Source_astro, Target_syn)
     
     
     
@@ -223,7 +225,7 @@ elif Simulated_network == 'Neuronal':
 
     # --------- NEURON and SYNAPSE -----------
     N,S = Neuronal_Network(Nn,Syn_pdist = Syn_pdist,ics = False, Simulated_network = Simulated_network,
-                         Decay_type = 'Double_exp',synapse_type = 'facilitating', conn_prob_ = conn_prob_,seed_neu=seed_neuron,seed_syn=seed_synapse)
+                         Decay_type = 'Double_exp',synapse_type = 'facilitating', conn_prob_ = conn_prob_,seed_neu=seed_neuron,seed_syn=seed_synapse,connections = connections)
     
     
     # N.namespace['sigma']=4.1*mV
@@ -246,6 +248,11 @@ elif Simulated_network == 'Astrocytic':
     
 
 
+# -------------- Save Connections -------------
+
+if set_connections == True:
+
+    save_synaptic_connections(connections_path, S, GJ, StoA, AtoS, N, Astro)
 
 # ------------------------- NETWORK SIMULATION -------------------------
 
@@ -279,7 +286,12 @@ elif Simulated_network == 'Astrocytic':
     SpikesA = SpikeMonitor(Astro)
     SpikesP = SpikeMonitor(P)
     
-#%
+
+
+
+
+    
+#%%
 # # %matplotlib
 # plot_connections(N, Astro, S, StoA)
 # --- Collect and add monitors ---
@@ -1312,4 +1324,6 @@ ax3.set_xlabel('Time [s]')
 # plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
 
 show()
+
+
 
