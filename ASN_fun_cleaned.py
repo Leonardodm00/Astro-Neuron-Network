@@ -33,79 +33,79 @@ Version: cython friendly, connections and positions randomly placed
 
 # ---------------------- BINOMIAL FUNCTION ------------------------
 
-def Binomial_fun(n,p, _vectorisation_idx):
-    '''Generate a number from an exponential distribution using inverse
-       transform sampling'''
-    uniform = np.random.rand(n)
-    return sum(uniform < p)
+# def Binomial_fun(n,p, _vectorisation_idx):
+#     '''Generate a number from an exponential distribution using inverse
+#         transform sampling'''
+#     uniform = np.random.rand(n)
+#     return sum(uniform < p)
 
 
 
 
-Binomial_fun = Function(Binomial_fun, arg_units=[1,1], return_unit=1,
-                            stateless=False, auto_vectorise=True
-                            )
+# Binomial_fun = Function(Binomial_fun, arg_units=[1,1], return_unit=1,
+#                             stateless=False, auto_vectorise=True
+#                             )
 
-cython_code = '''
+# cython_code = '''
  
 
 
-cdef double Binomial_fun(int n,double p,_vectorisation_idx):
+# cdef double Binomial_fun(int n,double p,_vectorisation_idx):
 
-    cdef int count = 0
-    cdef double uniform
-    cdef int i
+#     cdef int count = 0
+#     cdef double uniform
+#     cdef int i
   
     
-    for i in range(n):
-        uniform=rand(_vectorisation_idx)
+#     for i in range(n):
+#         uniform=rand(_vectorisation_idx)
         
-        if uniform < p:
-            count = count+1
+#         if uniform < p:
+#             count = count+1
             
-    return count;
+#     return count;
 
-'''
+# '''
 
-cpp_code = '''
+# cpp_code = '''
  
-#include <iostream>
-#include <random>
-#include <algorithm>
-#include <cmath>
+# #include <iostream>
+# #include <random>
+# #include <algorithm>
+# #include <cmath>
 
-int Binomial_fun(int n, double p) {
-    // Simple validation for input parameters
-    if (n <= 0 || p <= 0.0) return 0;
-    if (p >= 1.0) return n;
+# int Binomial_fun(int n, double p) {
+#     // Simple validation for input parameters
+#     if (n <= 0 || p <= 0.0) return 0;
+#     if (p >= 1.0) return n;
 
-    // Use a thread_local Mersenne Twister engine seeded by random_device.
-    // This provides a high-quality, efficient, and thread-safe way to generate
-    // random numbers, effectively replacing the context-aware 'rand(_vectorisation_idx)'.
-    static thread_local std::mt19937 generator(std::random_device{}());
+#     // Use a thread_local Mersenne Twister engine seeded by random_device.
+#     // This provides a high-quality, efficient, and thread-safe way to generate
+#     // random numbers, effectively replacing the context-aware 'rand(_vectorisation_idx)'.
+#     static thread_local std::mt19937 generator(std::random_device{}());
 
-    // Uniform distribution over the range [0.0, 1.0)
-    std::uniform_real_distribution<double> distribution(0.0, 1.0);
+#     // Uniform distribution over the range [0.0, 1.0)
+#     std::uniform_real_distribution<double> distribution(0.0, 1.0);
 
-    int count = 0;
+#     int count = 0;
     
-    // Simulate n independent Bernoulli trials
-    for (int i = 0; i < n; ++i) {
-        // Draw a uniform random number
-        double uniform = distribution(generator);
+#     // Simulate n independent Bernoulli trials
+#     for (int i = 0; i < n; ++i) {
+#         // Draw a uniform random number
+#         double uniform = distribution(generator);
 
-        // Success if the random number falls below the probability threshold 'p'
-        if (uniform < p) {
-            count++;
-        }
-    }
+#         // Success if the random number falls below the probability threshold 'p'
+#         if (uniform < p) {
+#             count++;
+#         }
+#     }
 
-    return count;
-}
+#     return count;
+# }
 
-'''
-Binomial_fun.implementations.add_implementation('cpp', cpp_code,
-                                                    dependencies={'rand': DEFAULT_FUNCTIONS['rand']})
+# '''
+# Binomial_fun.implementations.add_implementation('cpp', cpp_code,
+#                                                     dependencies={'rand': DEFAULT_FUNCTIONS['rand']})
 
 
 
@@ -602,7 +602,7 @@ def get_Astroparam(oscillations = 'AM',**kwargs):
         'f_in': 1.*Hz,              # Input frequency (synapse)
         'f_c' : 1.*Hz,              # Input frequency (gliotransmission)
         # 't_on' : 0*second,         # Start of synaptic stimulation (used in STDP)
-        't_off' : Inf*second,      # End of astrocyte stimulation (used in standalone gliotransmission)
+        # 't_off' : Inf*second,      # End of astrocyte stimulation (used in standalone gliotransmission)
         # --- IP_3R kinectics
         'd_1': 0.13*umole,         # IP_3 binding affinity
         'O_2': 0.2/umole/second,   # Inactivating Ca^2+ binding rate
@@ -1167,7 +1167,7 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
                         method='exponential_euler',dtype=float32,
                         )
     
-    S.namespace['Binomial_fun'] = Binomial_fun
+    # S.namespace['Binomial_fun'] = Binomial_fun
     
     # -------------- Connections --------------
     
@@ -1327,7 +1327,7 @@ def Astrocyte_Group(N_astro,Simulated_network,seed_astro = None,ics =None, conne
     Astro = NeuronGroup(N_astro, eqs_A,
                         threshold='C>C_osc',
                         refractory='C>C_osc',
-                        method='gsl_rkf45',
+                        method='gsl',
                         namespace=Params_astroGT,
                         name='astrocyte*',dtype=float32)
     
@@ -1360,7 +1360,7 @@ def Astrocyte_Group(N_astro,Simulated_network,seed_astro = None,ics =None, conne
     
     GJ = Synapses(Astro,Astro,
                   model=Gap_Eq,
-                  method='rk4',
+                  method='gsl',
                   namespace= Params_astroGT,
                   name = 'Gap_junctions*',dtype=float32
                   )
