@@ -1,0 +1,298 @@
+!pip install brian2 -q
+from brian2 import *
+import numpy as np
+from time import time
+import os
+import pandas as pd
+!apt-get update
+!apt-get install libgsl-dev -y
+set_device('cpp_standalone', build_on_run=False)
+
+from google.colab import drive
+drive.mount('/content/drive',force_remount=True)
+
+# Change the current working directory to the location of the Python file in Google Drive
+# Replace 'My Drive/path/to/your/file' with the actual path to the directory containing 'ASN_fun_BD.py'
+try:
+    os.chdir('/content/drive/MyDrive')
+    from ASN_fun_BD import *
+except FileNotFoundError:
+    print("Error: The specified directory was not found in your Google Drive. Please check the path.")
+except ModuleNotFoundError:
+    print("Error: The file 'ASN_fun_BD.py' was not found in the specified directory.")
+
+BrianLogger.suppress_hierarchy('brian2.devices')
+BrianLogger.suppress_hierarchy('brian2.parsing')
+
+
+# Clear the cache for the 'cython' code generation target
+start_scope()
+ # ------------------------- SET OPTIONS -------------------------
+
+def Binomial_fun(n,p, _vectorisation_idx):
+    '''Generate a number from an exponential distribution using inverse
+        transform sampling'''
+    uniform = np.random.rand(n)
+    return sum(uniform < p)
+
+
+
+
+Binomial_fun = Function(Binomial_fun, arg_units=[1,1], return_unit=1,
+                            stateless=False, auto_vectorise=True
+                            )
+
+cython_code = '''
+ 
+
+
+cdef double Binomial_fun(int n,double p,_vectorisation_idx):
+
+    cdef int count = 0
+    cdef double uniform
+    cdef int i
+  
+    
+    for i in range(n):
+        uniform=rand(_vectorisation_idx)
+        
+        if uniform < p:
+            count = count+1
+            
+    return count;
+
+'''
+
+cpp_code = '''
+int Binomial_fun(int n, double p, int _vectorisation_idx) {
+int count = 0;
+for (int i = 0; i < n; ++i) {
+if (rand(_vectorisation_idx) < p) {
+count = count + 1;
+}
+}
+return count;
+}
+'''
+Binomial_fun.implementations.add_implementation('cython', cython_code,
+                                                    dependencies={'rand': DEFAULT_FUNCTIONS['rand']})
+
+
+# ------- Synapses -------
+
+# 1. Define the filename
+# os.chdir(r'C:\Users\Admin\Desktop\Leonardo\ASN')
+
+filename = 'synapse_pdist.csv'
+# 2. Load the file
+Syn_pdist = pd.read_csv(filename)
+
+Syn_Currents_model = 'TM-coupled' # 'Kinetic','Nina','TM-coupled'
+
+
+set_connections = True
+
+
+# ------------------------- PARAMETERS -------------------------
+
+# --------- SIMULATION -----------
+simtime =   20 * second               # simulation time
+# transient = 3 * second  
+seed_device = 50            # time omitted as transient
+seed_neuron = 39                             # random number seed
+seed_synapse = 35
+seed_astro= 60
+devices.device.seed(seed_device)            # set the seed for all the random number realisations
+defaultclock.dt = 0.05*ms
+
+Simulated_network = 'Full' # Astrocytic/Neuronal/Full
+
+
+# --------- NEURON -----------
+Nn = 100
+neuron_radius = 9 #[um]
+# --------- SYNAPTIC -----------
+
+# ---------- CONNECTIVITY ----------
+connections = None
+conn_prob_ = 0.13
+
+
+if set_connections == True:
+    connections = True
+    
+    
+elif set_connections == False:
+    Connections_dict = extract_synaptic_connections(connections_path)    
+    
+    
+    
+
+
+
+# --------- ASTROCYTE and GJ ----------- 
+'''
+Given the nature of the link hte adjency matrix is ALWAYS symmetric
+
+'''
+Na = 43
+
+
+# --------- ELECTRODE RECORDINGS ----------- 
+pitch = 300 #[um] 
+electrode_radius = 15 #[um]
+
+pitch_recsites = 7.5 # [um]  
+shift = 11.25 # [um]
+
+electrode_dist = 300 # [um]
+
+c_min = 0 #[um]
+c_max = 1100 #[um]
+
+
+# ------------------------- GROUPS BUILD-UP -------------------------
+
+if Simulated_network == 'Full':
+    
+    # --------- NEURON and SYNAPSE -----------
+    
+    # Load connections
+    if set_connections == False:
+        
+        connections = [Connections_dict['S_source'],Connections_dict['S_target']]
+    
+    N,S = Neuronal_Network(Nn,Syn_pdist = Syn_pdist,ics = False, Simulated_network = Simulated_network,
+                         Decay_type = 'Double_exp',synapse_type = 'facilitating', conn_prob_ = conn_prob_,seed_neu=seed_neuron,seed_syn=seed_synapse,connections = connections)
+    
+    S.namespace['Binomial_fun'] = Binomial_fun
+
+    N.I = '(rand() -0.5) * I_inj'          # Make neurons heterogeneously excitable
+    
+
+    
+    
+    
+    # --------- ASTROCYTE -----------
+    # Load connections
+    if set_connections == False:
+        
+        connections = [Connections_dict['GJ_source'],Connections_dict['GJ_target']]
+    
+    Astro,GJ = Astrocyte_Group(Na,Simulated_network,seed_astro = seed_astro,connections = connections)
+    
+    
+    
+    
+    # --------- GLIOTRANSMISSION ----------- 
+    GT = Gliotransmission(Na,Astro)
+    # GT.namespace['U_A'] = 0.*mmole
+    
+    
+    # --------- ASTRO-NEURON LINKS ----------- 
+    # --- Synapse to astro ---
+    # Load connections
+    if set_connections == False:
+        
+        connections = [Connections_dict['StoA_source'],Connections_dict['StoA_target']]
+        
+        
+    StoA,Connections_list  = Synapse_to_astro(S,Astro,connections = connections)
+    
+    # --- Astro to synapse ---  
+    # Load connections
+    
+    
+    AtoS = Astro_to_Syn(GT,S,connections = Connections_list)   # Astro_to_Syn(Glio_release,synapse,Source_astro, Target_syn)
+    
+    
+    
+    
+elif Simulated_network == 'Neuronal':
+    
+    
+    if set_connections == False:
+        
+        connections = [Connections_dict['S_source'],Connections_dict['S_target']]
+
+    # --------- NEURON and SYNAPSE -----------
+    N,S = Neuronal_Network(Nn,Syn_pdist = Syn_pdist,ics = False, Simulated_network = Simulated_network,
+                        Decay_type = 'Double_exp',synapse_type = 'facilitating', conn_prob_ = conn_prob_,seed_neu=seed_neuron,seed_syn=seed_synapse,connections = connections)
+    S.namespace['Binomial_fun'] = Binomial_fun
+    # N.namespace['sigma']=4.1*mV
+    # N.namespace['I_inj']=0*pA
+    N.I = '(rand() -0.5) * I_inj'          # Make neurons heterogeneously excitable
+   
+
+
+    
+    
+    
+elif Simulated_network == 'Astrocytic':   
+ 
+    '''
+    Glutamate stimulation is delivered to randomly choosen astrocytes in number 
+    N_stim in the parameters.
+    '''
+    # --------- ASTROCYTE -----------
+    Astro, GJ,P,Glu_Input = Astrocyte_Group(Na,Simulated_network,seed_astro = seed_astro)
+    
+
+
+# -------------- Save Connections -------------
+
+# if set_connections == True:
+
+    # save_synaptic_connections(connections_path, S, GJ, StoA, AtoS, N, Astro)
+
+# ------------------------- NETWORK SIMULATION -------------------------
+
+# --- Monitors ---
+# recording_stringN = ['V','I_syn','I_ampa','I_nmda','I_cell']
+recording_stringN = ['V']
+# recording_stringS = ['Y_S','G_A_syn']
+# recording_stringA = ['C','Gamma_A','I_coupling_tot','Y_extra']
+# recording_stringGT = ['G_A','C']
+
+
+if Simulated_network == 'Full':
+    
+    # MonitorS = StateMonitor(S, recording_stringS, record=True)
+    #MonitorA = StateMonitor(Astro, recording_stringA, record=True)
+    #MonitorN = StateMonitor(N, recording_stringN, record=True)
+    #MonitorGT = StateMonitor(GT, recording_stringGT, record=True)
+    SpikesN = SpikeMonitor(N)
+    SpikesA = SpikeMonitor(Astro)
+    
+
+elif Simulated_network == 'Neuronal':
+    # MonitorS = StateMonitor(S, recording_stringS, record=True)
+    MonitorN = StateMonitor(N, recording_stringN, record=True)
+    SpikesN = SpikeMonitor(N)
+    
+    
+elif Simulated_network == 'Astrocytic': 
+    MonitorG = StateMonitor(Glu_Input, ['Y_bias_in'], record=True)
+    MonitorA = StateMonitor(Astro, recording_stringA, record=True)
+    SpikesA = SpikeMonitor(Astro)
+    SpikesP = SpikeMonitor(P)
+    
+
+
+
+
+    
+#%
+# # %matplotlib
+# plot_connections(N, Astro, S, StoA)
+# --- Collect and add monitors ---
+#%
+net_ = Network(collect())  # automatically include all the stated groups
+# BUILD
+# for param in param_list:
+#   device.rum(run_args={param})
+net_.run(simtime,report='text', profile=True)
+device.build(run=False, clean=True)
+device.run()
+#%%
+
