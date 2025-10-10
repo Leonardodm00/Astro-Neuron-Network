@@ -6,7 +6,7 @@ import os
 import pandas as pd
 !apt-get update
 !apt-get install libgsl-dev -y
-set_device('cpp_standalone', build_on_run=False)
+
 
 from google.colab import drive
 drive.mount('/content/drive',force_remount=True)
@@ -43,7 +43,7 @@ Binomial_fun = Function(Binomial_fun, arg_units=[1,1], return_unit=1,
                             )
 
 cython_code = '''
- 
+
 
 
 cdef double Binomial_fun(int n,double p,_vectorisation_idx):
@@ -51,14 +51,14 @@ cdef double Binomial_fun(int n,double p,_vectorisation_idx):
     cdef int count = 0
     cdef double uniform
     cdef int i
-  
-    
+
+
     for i in range(n):
         uniform=rand(_vectorisation_idx)
-        
+
         if uniform < p:
             count = count+1
-            
+
     return count;
 
 '''
@@ -74,10 +74,12 @@ count = count + 1;
 return count;
 }
 '''
-Binomial_fun.implementations.add_implementation('cython', cython_code,
+Binomial_fun.implementations.add_implementation('cpp', cpp_code,
                                                     dependencies={'rand': DEFAULT_FUNCTIONS['rand']})
 
-
+device.reinit()
+device.activate()
+set_device('cpp_standalone', build_on_run=False)
 # ------- Synapses -------
 
 # 1. Define the filename
@@ -88,16 +90,16 @@ filename = 'synapse_pdist.csv'
 Syn_pdist = pd.read_csv(filename)
 
 Syn_Currents_model = 'TM-coupled' # 'Kinetic','Nina','TM-coupled'
+connections_path = r'/content/drive/MyDrive/Output connectivity'
 
-
-set_connections = True
+set_connections = False
 
 
 # ------------------------- PARAMETERS -------------------------
 
 # --------- SIMULATION -----------
 simtime =   20 * second               # simulation time
-# transient = 3 * second  
+# transient = 3 * second
 seed_device = 50            # time omitted as transient
 seed_neuron = 39                             # random number seed
 seed_synapse = 35
@@ -120,17 +122,17 @@ conn_prob_ = 0.13
 
 if set_connections == True:
     connections = True
-    
-    
+
+
 elif set_connections == False:
-    Connections_dict = extract_synaptic_connections(connections_path)    
-    
-    
-    
+    Connections_dict = extract_synaptic_connections(connections_path)
 
 
 
-# --------- ASTROCYTE and GJ ----------- 
+
+
+
+# --------- ASTROCYTE and GJ -----------
 '''
 Given the nature of the link hte adjency matrix is ALWAYS symmetric
 
@@ -138,11 +140,11 @@ Given the nature of the link hte adjency matrix is ALWAYS symmetric
 Na = 43
 
 
-# --------- ELECTRODE RECORDINGS ----------- 
-pitch = 300 #[um] 
+# --------- ELECTRODE RECORDINGS -----------
+pitch = 300 #[um]
 electrode_radius = 15 #[um]
 
-pitch_recsites = 7.5 # [um]  
+pitch_recsites = 7.5 # [um]
 shift = 11.25 # [um]
 
 electrode_dist = 300 # [um]
@@ -154,65 +156,65 @@ c_max = 1100 #[um]
 # ------------------------- GROUPS BUILD-UP -------------------------
 
 if Simulated_network == 'Full':
-    
+
     # --------- NEURON and SYNAPSE -----------
-    
+
     # Load connections
     if set_connections == False:
-        
+
         connections = [Connections_dict['S_source'],Connections_dict['S_target']]
-    
+
     N,S = Neuronal_Network(Nn,Syn_pdist = Syn_pdist,ics = False, Simulated_network = Simulated_network,
                          Decay_type = 'Double_exp',synapse_type = 'facilitating', conn_prob_ = conn_prob_,seed_neu=seed_neuron,seed_syn=seed_synapse,connections = connections)
-    
+
     S.namespace['Binomial_fun'] = Binomial_fun
 
     N.I = '(rand() -0.5) * I_inj'          # Make neurons heterogeneously excitable
-    
 
-    
-    
-    
+
+
+
+
     # --------- ASTROCYTE -----------
     # Load connections
     if set_connections == False:
-        
+
         connections = [Connections_dict['GJ_source'],Connections_dict['GJ_target']]
-    
+
     Astro,GJ = Astrocyte_Group(Na,Simulated_network,seed_astro = seed_astro,connections = connections)
-    
-    
-    
-    
-    # --------- GLIOTRANSMISSION ----------- 
+
+
+
+
+    # --------- GLIOTRANSMISSION -----------
     GT = Gliotransmission(Na,Astro)
     # GT.namespace['U_A'] = 0.*mmole
-    
-    
-    # --------- ASTRO-NEURON LINKS ----------- 
+
+
+    # --------- ASTRO-NEURON LINKS -----------
     # --- Synapse to astro ---
     # Load connections
     if set_connections == False:
-        
+
         connections = [Connections_dict['StoA_source'],Connections_dict['StoA_target']]
-        
-        
+
+
     StoA,Connections_list  = Synapse_to_astro(S,Astro,connections = connections)
-    
-    # --- Astro to synapse ---  
+
+    # --- Astro to synapse ---
     # Load connections
-    
-    
+
+
     AtoS = Astro_to_Syn(GT,S,connections = Connections_list)   # Astro_to_Syn(Glio_release,synapse,Source_astro, Target_syn)
-    
-    
-    
-    
+
+
+
+
 elif Simulated_network == 'Neuronal':
-    
-    
+
+
     if set_connections == False:
-        
+
         connections = [Connections_dict['S_source'],Connections_dict['S_target']]
 
     # --------- NEURON and SYNAPSE -----------
@@ -222,21 +224,21 @@ elif Simulated_network == 'Neuronal':
     # N.namespace['sigma']=4.1*mV
     # N.namespace['I_inj']=0*pA
     N.I = '(rand() -0.5) * I_inj'          # Make neurons heterogeneously excitable
-   
 
 
-    
-    
-    
-elif Simulated_network == 'Astrocytic':   
- 
+
+
+
+
+elif Simulated_network == 'Astrocytic':
+
     '''
-    Glutamate stimulation is delivered to randomly choosen astrocytes in number 
+    Glutamate stimulation is delivered to randomly choosen astrocytes in number
     N_stim in the parameters.
     '''
     # --------- ASTROCYTE -----------
     Astro, GJ,P,Glu_Input = Astrocyte_Group(Na,Simulated_network,seed_astro = seed_astro)
-    
+
 
 
 # -------------- Save Connections -------------
@@ -248,51 +250,300 @@ elif Simulated_network == 'Astrocytic':
 # ------------------------- NETWORK SIMULATION -------------------------
 
 # --- Monitors ---
-# recording_stringN = ['V','I_syn','I_ampa','I_nmda','I_cell']
+recording_stringN = ['V','I_syn','I_ampa','I_nmda','I_cell']
 recording_stringN = ['V']
-# recording_stringS = ['Y_S','G_A_syn']
-# recording_stringA = ['C','Gamma_A','I_coupling_tot','Y_extra']
-# recording_stringGT = ['G_A','C']
+recording_stringS = ['Y_S','G_A_syn']
+recording_stringA = ['C','Gamma_A','I_coupling_tot','Y_extra']
+recording_stringGT = ['G_A','C']
 
 
 if Simulated_network == 'Full':
-    
-    # MonitorS = StateMonitor(S, recording_stringS, record=True)
-    #MonitorA = StateMonitor(Astro, recording_stringA, record=True)
-    #MonitorN = StateMonitor(N, recording_stringN, record=True)
-    #MonitorGT = StateMonitor(GT, recording_stringGT, record=True)
+
+    MonitorS = StateMonitor(S, recording_stringS, record=True)
+    MonitorA = StateMonitor(Astro, recording_stringA, record=True)
+    MonitorN = StateMonitor(N, recording_stringN, record=True)
+    MonitorGT = StateMonitor(GT, recording_stringGT, record=True)
     SpikesN = SpikeMonitor(N)
     SpikesA = SpikeMonitor(Astro)
-    
+
 
 elif Simulated_network == 'Neuronal':
     # MonitorS = StateMonitor(S, recording_stringS, record=True)
     MonitorN = StateMonitor(N, recording_stringN, record=True)
     SpikesN = SpikeMonitor(N)
-    
-    
-elif Simulated_network == 'Astrocytic': 
+
+
+elif Simulated_network == 'Astrocytic':
     MonitorG = StateMonitor(Glu_Input, ['Y_bias_in'], record=True)
     MonitorA = StateMonitor(Astro, recording_stringA, record=True)
     SpikesA = SpikeMonitor(Astro)
     SpikesP = SpikeMonitor(P)
-    
 
 
 
 
-    
+
+
 #%
 # # %matplotlib
 # plot_connections(N, Astro, S, StoA)
 # --- Collect and add monitors ---
 #%
+
 net_ = Network(collect())  # automatically include all the stated groups
 # BUILD
 # for param in param_list:
 #   device.rum(run_args={param})
 net_.run(simtime,report='text', profile=True)
+
+print('Building the network...')
 device.build(run=False, clean=True)
+
+print('Running the network...')
 device.run()
 #%%
+def check_nan_synapse_states(monitor_s, recording_vars_s):
+    """
+    Finds synapses where state variables have NaN values and reports the time
+    of the first NaN occurrence.
+
+    Args:
+        monitor_s (StateMonitor): The Brian2 StateMonitor object for the synapse group.
+        recording_vars_s (list): A list of state variable names to check for NaNs.
+    """
+    nan_synapses = set()
+    num_synapses = len(monitor_s)
+
+    print("\n--- Identifying Synapses with NaN Values ---")
+
+    for syn_index in range(num_synapses):
+        print(f'Evaluated Synapse: {syn_index}')
+        found_nan_in_syn = False
+
+        # Iterate through each state variable we are monitoring
+        for var_name in recording_vars_s:
+            state_trace = getattr(monitor_s, var_name)[syn_index]
+            nan_indices = np.where(np.isnan(state_trace))[0]
+
+            if nan_indices.size > 0:
+                nan_synapses.add(syn_index)
+
+                # Get the time of the first NaN for this specific synapse and variable
+                first_nan_index = nan_indices[0]
+                time_of_nan = monitor_s.t[first_nan_index]
+                formatted_time = f"{time_of_nan/second:.3f} s"
+                print(f"❌ Synapse {syn_index} failed in variable '{var_name}' at {formatted_time}.")
+                found_nan_in_syn = True
+                break # Move to the next synapse once a NaN is found
+
+    if not nan_synapses:
+        print("✅ No NaN values were found in any synapse's state variables. No further check needed.")
+    else:
+        print(f"\n--- {len(nan_synapses)} Synapse(s) with NaN values found. ---\n")
+
+def check_nan_neuron_astro_link(monitor_n, N, S, AtoS):
+    """
+    1. Finds neurons where voltage has NaN values.
+    2. Determines if the synapses targeting those neurons are involved in
+       Astrocyte-to-Synapse (AtoS) modulation, and identifies the
+       linked astrocyte.
+
+    Args:
+        monitor_n (StateMonitor): The Brian2 StateMonitor object for the neuronal group (N).
+        N (NeuronGroup): The main neuron group.
+        S (Synapses): The main synapse group (N to N connections).
+        AtoS (Synapses): The Astro-to-Synapse modulation group.
+    """
+    # 1. --- Identify Neurons with NaN Values ---
+    nan_neurons = set()
+    num_neurons = 50
+
+    print("\n--- Identifying Neurons with NaN Values ---")
+    for neuron_index in range(num_neurons):
+        voltage_trace = monitor_n.V[neuron_index]
+        nan_indices = np.where(np.isnan(voltage_trace))[0]
+
+        if nan_indices.size > 0:
+            nan_neurons.add(neuron_index)
+            # Get the time of the first NaN for this specific neuron
+            first_nan_index_for_neuron = nan_indices[0]
+            time_of_nan = monitor_n.t[first_nan_index_for_neuron]
+            formatted_time = f"{time_of_nan/second:.3f} s"
+            print(f"❌ Neuron {neuron_index} failed (NaN detected) at {formatted_time}.")
+
+    if not nan_neurons:
+        print("✅ No NaN values were found in any neuron's voltage. No further check needed.")
+        return # Exit the function early
+
+    print(f"\n--- {len(nan_neurons)} Neuron(s) with NaN values found. ---\n")
+
+    # 2. --- Check Linkage to Astrocyte-Modulated Synapses ---
+    print("\n--- Checking Astrocyte Involvement ---\n")
+
+    # Get the indices of the synapses that are modulated by the astrocyte (AtoS)
+    astro_modulated_synapse_indices = AtoS.j[:]
+    # Get the pre-synaptic astrocyte indices for the AtoS synapses
+    astrocyte_indices = AtoS.i[:]
+
+    # Get the post-synaptic neuron indices for ALL synapses (S)
+    synapse_post_indices = S.j[:]
+
+    neurons_with_astro_modulated_input = set()
+
+    # Check each failed neuron
+    for nan_neuron in nan_neurons:
+        is_astro_linked = False
+        linked_astrocytes = set()
+
+        # Find all synapses in S that target the current nan_neuron
+        synapse_indices_to_nan_neuron = np.where(synapse_post_indices == nan_neuron)[0]
+
+        # Check if any of these synapses are in the set of astrocyte-modulated synapses
+        for syn_index in synapse_indices_to_nan_neuron:
+            # Check if this synapse index is in the list of astro-modulated synapses
+            if syn_index in astro_modulated_synapse_indices:
+                is_astro_linked = True
+                neurons_with_astro_modulated_input.add(nan_neuron)
+
+                # Find the index of the synapse in the AtoS group
+                atos_syn_index = np.where(astro_modulated_synapse_indices == syn_index)[0]
+                if atos_syn_index.size > 0:
+                    # Use that index to find the linked astrocyte
+                    linked_astro_index = astrocyte_indices[atos_syn_index[0]]
+                    linked_astrocytes.add(linked_astro_index)
+
+        # 3. --- Report Result ---
+        if is_astro_linked:
+            linked_astrocytes_str = ', '.join(map(str, sorted(list(linked_astrocytes))))
+            print(f"🔥 Neuron {nan_neuron} IS CONNECTED to Astrocyte(s): {linked_astrocytes_str}.")
+        else:
+            print(f"❓ Neuron {nan_neuron} is NOT connected to an Astrocyte-Modulated Synapse (Failure likely propagated).")
+
+def check_nan_neuron_astro_link(monitor_n, N, S, AtoS):
+    """
+    1. Finds neurons where voltage has NaN values.
+    2. Determines if the synapses targeting those neurons are involved in
+       Astrocyte-to-Synapse (AtoS) modulation, and identifies the
+       linked astrocyte.
+
+    Args:
+        monitor_n (StateMonitor): The Brian2 StateMonitor object for the neuronal group (N).
+        N (NeuronGroup): The main neuron group.
+        S (Synapses): The main synapse group (N to N connections).
+        AtoS (Synapses): The Astro-to-Synapse modulation group.
+    """
+    # 1. --- Identify Neurons with NaN Values ---
+    nan_neurons = set()
+    num_neurons = 50
+
+    print("\n--- Identifying Neurons with NaN Values ---")
+    for neuron_index in range(num_neurons):
+        voltage_trace = monitor_n.V[neuron_index]
+        nan_indices = np.where(np.isnan(voltage_trace))[0]
+
+        if nan_indices.size > 0:
+            nan_neurons.add(neuron_index)
+            # Get the time of the first NaN for this specific neuron
+            first_nan_index_for_neuron = nan_indices[0]
+            time_of_nan = monitor_n.t[first_nan_index_for_neuron]
+            formatted_time = f"{time_of_nan/second:.3f} s"
+            print(f"❌ Neuron {neuron_index} failed (NaN detected) at {formatted_time}.")
+
+    if not nan_neurons:
+        print("✅ No NaN values were found in any neuron's voltage. No further check needed.")
+        return # Exit the function early
+
+    print(f"\n--- {len(nan_neurons)} Neuron(s) with NaN values found. ---\n")
+
+    # 2. --- Check Linkage to Astrocyte-Modulated Synapses ---
+    print("\n--- Checking Astrocyte Involvement ---\n")
+
+    # Get the indices of the synapses that are modulated by the astrocyte (AtoS)
+    astro_modulated_synapse_indices = AtoS.j[:]
+    # Get the pre-synaptic astrocyte indices for the AtoS synapses
+    astrocyte_indices = AtoS.i[:]
+
+    # Get the post-synaptic neuron indices for ALL synapses (S)
+    synapse_post_indices = S.j[:]
+
+    neurons_with_astro_modulated_input = set()
+
+    # Check each failed neuron
+    for nan_neuron in nan_neurons:
+        is_astro_linked = False
+        linked_astrocytes = set()
+
+        # Find all synapses in S that target the current nan_neuron
+        synapse_indices_to_nan_neuron = np.where(synapse_post_indices == nan_neuron)[0]
+
+        # Check if any of these synapses are in the set of astrocyte-modulated synapses
+        for syn_index in synapse_indices_to_nan_neuron:
+            # Check if this synapse index is in the list of astro-modulated synapses
+            if syn_index in astro_modulated_synapse_indices:
+                is_astro_linked = True
+                neurons_with_astro_modulated_input.add(nan_neuron)
+
+                # Find the index of the synapse in the AtoS group
+                atos_syn_index = np.where(astro_modulated_synapse_indices == syn_index)[0]
+                if atos_syn_index.size > 0:
+                    # Use that index to find the linked astrocyte
+                    linked_astro_index = astrocyte_indices[atos_syn_index[0]]
+                    linked_astrocytes.add(linked_astro_index)
+
+        # 3. --- Report Result ---
+        if is_astro_linked:
+            linked_astrocytes_str = ', '.join(map(str, sorted(list(linked_astrocytes))))
+            print(f"🔥 Neuron {nan_neuron} IS CONNECTED to Astrocyte(s): {linked_astrocytes_str}.")
+        else:
+            print(f"❓ Neuron {nan_neuron} is NOT connected to an Astrocyte-Modulated Synapse (Failure likely propagated).")
+
+
+# Example Usage (requires the groups and monitor from your simulation)
+# check_nan_neuron_astro_link(MonitorN, N, S, AtoS)
+
+def check_nan_astrocyte_states(monitor_a, recording_vars_a):
+    """
+    Finds astrocytes where state variables have NaN values and reports the time
+    of the first NaN occurrence.
+
+    Args:
+        monitor_a (StateMonitor): The Brian2 StateMonitor object for the astrocyte group.
+        recording_vars_a (list): A list of state variable names to check for NaNs.
+    """
+    nan_astrocytes = set()
+    num_astrocytes = 3
+
+    print("\n--- Identifying Astrocytes with NaN Values ---")
+
+    for astro_index in range(num_astrocytes):
+        found_nan_in_astro = False
+
+        # Iterate through each state variable we are monitoring
+        for var_name in recording_vars_a:
+            state_trace = getattr(monitor_a, var_name)[astro_index]
+            nan_indices = np.where(np.isnan(state_trace))[0]
+
+            if nan_indices.size > 0:
+                nan_astrocytes.add(astro_index)
+
+                # Get the time of the first NaN for this specific astrocyte and variable
+                first_nan_index = nan_indices[0]
+                time_of_nan = monitor_a.t[first_nan_index]
+                formatted_time = f"{time_of_nan/second:.3f} s"
+                print(f"❌ Astrocyte {astro_index} failed in variable '{var_name}' at {formatted_time}.")
+                found_nan_in_astro = True
+                break # Move to the next astrocyte once a NaN is found
+
+    if not nan_astrocytes:
+        print("✅ No NaN values were found in any astrocyte's state variables. No further check needed.")
+    else:
+        print(f"\n--- {len(nan_astrocytes)} Astrocyte(s) with NaN values found. ---\n")
+
+check_nan_neuron_astro_link(MonitorN, N, S, AtoS)
+check_nan_astrocyte_states(MonitorA, recording_stringA)
+check_nan_synapse_states(MonitorS, recording_stringS)
+%matplotlib inline
+plt.figure()
+plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=4)
+plt.show()
 
