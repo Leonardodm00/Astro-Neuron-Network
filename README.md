@@ -13,9 +13,12 @@
 *NOT PARALLELIZED VERSIONS ARE DEPRECATED AND NOT KEPT UPDATED*
 
 ## HPC
-- Main_code
+The scripts are used to be run in a HPC.
+- Main_code_notebook.ipyn: Main interface to run the code
+- ASN_fun_BD_cpp : Main functions repository to run the code in a HPC 
 
 
 ## TO DO
-
+Finish to make the data processing in the wrapper
+finish to prepare the functions for the HPC.
 
