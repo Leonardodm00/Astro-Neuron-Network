@@ -12,8 +12,10 @@
 *Culture_growth_class.py* and *Growing_fun.py* have the parallel version that explits cpu-based multiprocessing.
 *NOT PARALLELIZED VERSIONS ARE DEPRECATED AND NOT KEPT UPDATED*
 
+## HPC
+- Main_code
+
 
 ## TO DO
-**Write down the C++ friendly code**
-- Implement Binomial Distribution in the code to model Asynchronous release.
+
 
