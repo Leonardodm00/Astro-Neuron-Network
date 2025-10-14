@@ -12,7 +12,6 @@ import os
 
 os.chdir(r'C:\Users\Admin\Desktop\Leonardo\ASN')
 from ASN_fun_BD import *
-#%
 '''
 Version: cython friendly, connections and positions randomly placed
 
@@ -76,8 +75,11 @@ TODO:
 '''
 
 
-#%
 
+
+
+#%
+# set_device('cpp_standalone', build_on_run=False)
 
 # Saving 
 Out_path = r'C:\Users\Admin\Desktop\Leonardo\ASN\Output Temp'
@@ -91,6 +93,55 @@ BrianLogger.suppress_hierarchy('brian2.parsing')
 start_scope()
  # ------------------------- SET OPTIONS -------------------------
 
+def Binomial_fun(n,p, _vectorisation_idx):
+    '''Generate a number from an exponential distribution using inverse
+        transform sampling'''
+    uniform = np.random.rand(n)
+    return sum(uniform < p)
+
+
+
+
+Binomial_fun = Function(Binomial_fun, arg_units=[1,1], return_unit=1,
+                            stateless=False, auto_vectorise=True
+                            )
+
+cython_code = '''
+ 
+
+
+cdef double Binomial_fun(int n,double p,_vectorisation_idx):
+
+    cdef int count = 0
+    cdef double uniform
+    cdef int i
+  
+    
+    for i in range(n):
+        uniform=rand(_vectorisation_idx)
+        
+        if uniform < p:
+            count = count+1
+            
+    return count;
+
+'''
+
+cpp_code = '''
+int Binomial_fun(int n, double p, int _vectorisation_idx) {
+int count = 0;
+for (int i = 0; i < n; ++i) {
+if (rand(_vectorisation_idx) < p) {
+count = count + 1;
+}
+}
+return count;
+}
+'''
+Binomial_fun.implementations.add_implementation('cython', cython_code,
+                                                    dependencies={'rand': DEFAULT_FUNCTIONS['rand']})
+
+
 # ------- Synapses -------
 
 # 1. Define the filename
@@ -103,13 +154,13 @@ Syn_pdist = pd.read_csv(filename)
 Syn_Currents_model = 'TM-coupled' # 'Kinetic','Nina','TM-coupled'
 
 
-set_connections = False
+set_connections = True
 
 
 # ------------------------- PARAMETERS -------------------------
 
 # --------- SIMULATION -----------
-simtime =   20 * second               # simulation time
+simtime =   30 * second               # simulation time
 # transient = 3 * second  
 seed_device = 50            # time omitted as transient
 seed_neuron = 39                             # random number seed
@@ -178,8 +229,8 @@ if Simulated_network == 'Full':
     N,S = Neuronal_Network(Nn,Syn_pdist = Syn_pdist,ics = False, Simulated_network = Simulated_network,
                          Decay_type = 'Double_exp',synapse_type = 'facilitating', conn_prob_ = conn_prob_,seed_neu=seed_neuron,seed_syn=seed_synapse,connections = connections)
     
+    S.namespace['Binomial_fun'] = Binomial_fun
     
-
     N.I = '(rand() -0.5) * I_inj'          # Make neurons heterogeneously excitable
     
     
@@ -222,18 +273,21 @@ if Simulated_network == 'Full':
     
     
 elif Simulated_network == 'Neuronal':
+    
+    
+    if set_connections == False:
+        
+        connections = [Connections_dict['S_source'],Connections_dict['S_target']]
 
     # --------- NEURON and SYNAPSE -----------
     N,S = Neuronal_Network(Nn,Syn_pdist = Syn_pdist,ics = False, Simulated_network = Simulated_network,
-                         Decay_type = 'Double_exp',synapse_type = 'facilitating', conn_prob_ = conn_prob_,seed_neu=seed_neuron,seed_syn=seed_synapse,connections = connections)
-    
-    
+                        Decay_type = 'Double_exp',synapse_type = 'facilitating', conn_prob_ = conn_prob_,seed_neu=seed_neuron,seed_syn=seed_synapse,connections = connections)
+    S.namespace['Binomial_fun'] = Binomial_fun
     # N.namespace['sigma']=4.1*mV
     # N.namespace['I_inj']=0*pA
     N.I = '(rand() -0.5) * I_inj'          # Make neurons heterogeneously excitable
    
-    
-
+   
     
     
     
@@ -258,25 +312,25 @@ if set_connections == True:
 
 # --- Monitors ---
 # recording_stringN = ['V','I_syn','I_ampa','I_nmda','I_cell']
-recording_stringN = ['V']
-# recording_stringS = ['Y_S','r_Ar','nar']
-# recording_stringA = ['C','I','Gamma_A','I_coupling_tot','Y_extra']
-# recording_stringGT = ['G_A','x_A']
+recording_stringN = ['V','I_cell']
+recording_stringS = ['Y_S','G_A_syn']
+recording_stringA = ['C','Gamma_A','I_coupling_tot','Y_extra']
+recording_stringGT = ['G_A','C']
 
 
 if Simulated_network == 'Full':
     
     # MonitorS = StateMonitor(S, recording_stringS, record=True)
     # MonitorA = StateMonitor(Astro, recording_stringA, record=True)
-    MonitorN1 = StateMonitor(N, recording_stringN, record=True)
+    MonitorN = StateMonitor(N, recording_stringN, record=True)
     # MonitorGT = StateMonitor(GT, recording_stringGT, record=True)
-    SpikesN2 = SpikeMonitor(N)
-    SpikesA2 = SpikeMonitor(Astro)
+    SpikesN = SpikeMonitor(N)
+    SpikesA = SpikeMonitor(Astro)
     
 
 elif Simulated_network == 'Neuronal':
-    MonitorS = StateMonitor(S, recording_stringS, record=True)
-    MonitorN = StateMonitor(N, recording_stringN, record=True)
+    # MonitorS = StateMonitor(S, recording_stringS, record=True)
+    # MonitorN = StateMonitor(N, recording_stringN, record=True)
     SpikesN = SpikeMonitor(N)
     
     
@@ -289,9 +343,8 @@ elif Simulated_network == 'Astrocytic':
 
 
 
-
     
-#%%
+#%
 # # %matplotlib
 # plot_connections(N, Astro, S, StoA)
 # --- Collect and add monitors ---
@@ -301,15 +354,80 @@ net_ = Network(collect())  # automatically include all the stated groups
 # for param in param_list:
 #   device.rum(run_args={param})
 net_.run(simtime,report='text', profile=True)
-
+# device.build(run=False, clean=True)
+# device.run()
 #%%
 %matplotlib
 plt.figure()
-plt.plot(SpikesN2.t / second, SpikesN2.i, '.k', ms=4)
+plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=4)
 plt.show()
 
+#%%
 
+def plot_all_astrocytic_C(monitor, unit=mmole):
+    """
+    Plots the 'C' state variable for all recorded astrocytes over time, overlaid.
 
+    Parameters:
+    - monitor (StateMonitor): The Brian2 StateMonitor object recording the 'C' state.
+    - unit (Unit): The unit to display the C variable in (e.g., mmole, mole).
+    """
+    # Create the figure and axes
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Iterate over all recorded indices and plot the C state
+    # monitor.t is the time array.
+    # monitor.C is the 2D array of C values (index, time).
+    for i in monitor.record:
+        # Plot the C state for astrocyte 'i'
+        ax.plot(monitor.t / ms, monitor.C[i] / unit, 
+                alpha=0.6, # Use transparency for overlapping lines
+                label=f'Astrocyte {i}' if i == monitor.record[-1] else None) 
+        # Only label the last one for the legend if desired, or skip the label
+
+    # --- Formatting the Plot ---
+    
+    # Label the axes
+    ax.set_xlabel('Time (ms)')
+    ax.set_ylabel(f'C Concentration ({unit.name})')
+    ax.set_title('Astrocytic C Concentration Over Time (All Cells)')
+    
+    # Optional: Add a legend (can be noisy for many cells, so we might skip it)
+    # if len(monitor.record) <= 10:
+    #     ax.legend(loc='best')
+        
+    ax.grid(True, linestyle='--', alpha=0.7)
+    
+    plt.tight_layout()
+    plt.show()
+    
+plot_all_astrocytic_C(MonitorA)
+def plot_all_GT_GA(monitor, unit=mmole):
+    """
+    Plots the 'GA' state variable for all recorded GT units over time, overlaid.
+
+    Parameters:
+    - monitor (StateMonitor): The Brian2 StateMonitor recording the 'GA' state.
+    - unit (Unit): The unit to display the GA variable in (e.g., mmole).
+    """
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Plot all traces at once using the transpose (.T) to overlap
+    # This automatically assigns a consistent color sequence.
+    ax.plot(monitor.t / ms, monitor.G_A.T / unit, 
+            alpha=0.6)
+    
+    # --- Formatting the Plot ---
+    ax.set_xlabel('Time (ms)')
+    ax.set_ylabel(f'GA Concentration ({unit.name})')
+    ax.set_title('Gliotransmission (GT) GA Concentration Over Time (All Units)')
+    ax.grid(True, linestyle='--', alpha=0.7)
+    
+    plt.tight_layout()
+    plt.show()
+
+# --- Example Usage ---
+plot_all_GT_GA(MonitorGT)
 #%%
 # Convert coordinates for plotting
 neuron_x = N.x_neuron 
@@ -381,44 +499,44 @@ ax4.set_xlabel('Time [s]')
 ax4.set_ylabel('Voltage [mV]')
 
 #%%
-# def check_nan_synapse_states(monitor_s, recording_vars_s):
-#     """
-#     Finds synapses where state variables have NaN values and reports the time
-#     of the first NaN occurrence.
+def check_nan_synapse_states(monitor_s, recording_vars_s):
+    """
+    Finds synapses where state variables have NaN values and reports the time
+    of the first NaN occurrence.
 
-#     Args:
-#         monitor_s (StateMonitor): The Brian2 StateMonitor object for the synapse group.
-#         recording_vars_s (list): A list of state variable names to check for NaNs.
-#     """
-#     nan_synapses = set()
-#     num_synapses = monitor_s.N
+    Args:
+        monitor_s (StateMonitor): The Brian2 StateMonitor object for the synapse group.
+        recording_vars_s (list): A list of state variable names to check for NaNs.
+    """
+    nan_synapses = set()
+    num_synapses = len(monitor_s)
 
-#     print("\n--- Identifying Synapses with NaN Values ---")
+    print("\n--- Identifying Synapses with NaN Values ---")
     
-#     for syn_index in range(num_synapses):
-#         print(f'Evaluated Synapse: {')
-#         found_nan_in_syn = False
+    for syn_index in range(num_synapses):
+        print(f'Evaluated Synapse: {syn_index}')
+        found_nan_in_syn = False
         
-#         # Iterate through each state variable we are monitoring
-#         for var_name in recording_vars_s:
-#             state_trace = getattr(monitor_s, var_name)[syn_index]
-#             nan_indices = np.where(np.isnan(state_trace))[0]
+        # Iterate through each state variable we are monitoring
+        for var_name in recording_vars_s:
+            state_trace = getattr(monitor_s, var_name)[syn_index]
+            nan_indices = np.where(np.isnan(state_trace))[0]
 
-#             if nan_indices.size > 0:
-#                 nan_synapses.add(syn_index)
+            if nan_indices.size > 0:
+                nan_synapses.add(syn_index)
                 
-#                 # Get the time of the first NaN for this specific synapse and variable
-#                 first_nan_index = nan_indices[0]
-#                 time_of_nan = monitor_s.t[first_nan_index]
-#                 formatted_time = f"{time_of_nan/second:.3f} s"
-#                 print(f"❌ Synapse {syn_index} failed in variable '{var_name}' at {formatted_time}.")
-#                 found_nan_in_syn = True
-#                 break # Move to the next synapse once a NaN is found
+                # Get the time of the first NaN for this specific synapse and variable
+                first_nan_index = nan_indices[0]
+                time_of_nan = monitor_s.t[first_nan_index]
+                formatted_time = f"{time_of_nan/second:.3f} s"
+                print(f"❌ Synapse {syn_index} failed in variable '{var_name}' at {formatted_time}.")
+                found_nan_in_syn = True
+                break # Move to the next synapse once a NaN is found
 
-#     if not nan_synapses:
-#         print("✅ No NaN values were found in any synapse's state variables. No further check needed.")
-#     else:
-#         print(f"\n--- {len(nan_synapses)} Synapse(s) with NaN values found. ---\n")
+    if not nan_synapses:
+        print("✅ No NaN values were found in any synapse's state variables. No further check needed.")
+    else:
+        print(f"\n--- {len(nan_synapses)} Synapse(s) with NaN values found. ---\n")
 
 def check_nan_neuron_astro_link(monitor_n, N, S, AtoS):
     """
@@ -540,9 +658,9 @@ def check_nan_astrocyte_states(monitor_a, recording_vars_a):
     else:
         print(f"\n--- {len(nan_astrocytes)} Astrocyte(s) with NaN values found. ---\n")
 
-check_nan_neuron_astro_link(MonitorN1, N, S, AtoS)
-# check_nan_astrocyte_states(MonitorA, recording_stringA)
-# check_nan_synapse_states(MonitorS2, recording_stringS,S)
+check_nan_neuron_astro_link(MonitorN, N, S, AtoS)
+check_nan_astrocyte_states(MonitorA, recording_stringA)
+check_nan_synapse_states(MonitorS, recording_stringS)
 #%%
 def find_first_nan_index(Simulated_network, monitors):
     """
@@ -736,38 +854,71 @@ fig, (ax1, ax2, ax3,ax4) = plt.subplots(4, 1) # Added figsize for better viewing
 
 
 # ax1.plot(SpikesN.t/second,spike_trains[0],'.g', ms=5,label='Spikes')
-ax1.plot(MonitorN.t / second, MonitorN[3].V/mV, 'k', linewidth=0.7,label='Membrane Potential pre-syn')
+ax1.plot(MonitorA.t / second, MonitorA[18].C/mmole, 'k', linewidth=0.7,label='[C astro]')
+ax1.set_xlim(0, 20)
+ax1.set_ylabel('mM')
+# ax1.legend()
+# ax1.plot(MonitorS.t / second, MonitorS1[0].uar/hertz,'--', linewidth=0.7,label=' uar')
+
+ax1.legend()
+
+
+# ax2.plot(SpikesN.t/second,spike_trains[1],'.g', ms=5,label='Spikes')
+ax2.plot(MonitorGT.t / second, MonitorGT[18].C/mmole, 'k', linewidth=0.7,label='[C gt]')
+ax2.set_xlim(0, 20)
+ax2.set_ylabel('mM')
+# ax2.plot(MonitorS.t / second, MonitorS1[100].uar/hertz, '--', linewidth=0.7)
+ax2.legend()
+
+
+# ax3.plot(SpikesN.t/second,spike_trains[2],'.g', ms=5,label='Spikes')
+ax3.plot(MonitorGT.t / second, MonitorGT[18].G_A/mmole, 'k', linewidth=0.7,label='Gliotransmitter gt')
+ax3.set_xlim(0, 20)
+ax3.set_ylabel('mM')
+# ax3.plot(MonitorS.t / second, MonitorS1[2].uar/hertz,'--',  linewidth=0.7)
+ax3.legend()
+
+
+
+ax4.plot(MonitorS.t / second,MonitorS[3].G_A_syn/mmole,'k',label='Gliotransmitter syn')
+ax4.set_ylabel('mM')
+ax4.set_xlabel('Time [s]')
+ax4.set_xlim(0, 20)
+ax4.legend()
+# fig.show()
+
+
+
+fig, (ax1, ax2, ax3) = plt.subplots(3, 1) # Added figsize for better viewing
+
+
+# ax1.plot(SpikesN.t/second,spike_trains[0],'.g', ms=5,label='Spikes')
+ax1.plot(MonitorN.t / second, MonitorN[0].V/mV, 'k', linewidth=0.7,label='Mem pot pre')
 ax1.set_xlim(0, 20)
 ax1.set_ylabel('mV')
-# ax1.legend()
+ax1.legend()
 # ax1.plot(MonitorS.t / second, MonitorS1[0].uar/hertz,'--', linewidth=0.7,label=' uar')
 
 
 
 
 # ax2.plot(SpikesN.t/second,spike_trains[1],'.g', ms=5,label='Spikes')
-ax2.plot(MonitorS.t / second, MonitorS[14].nar/hertz*defaultclock.dt, 'k', linewidth=0.7,label='Released vescicles')
+ax2.plot(MonitorS.t / second, MonitorS[3].Y_S/mmole, 'k', linewidth=0.7,label='NT syn')
 ax2.set_xlim(0, 20)
-ax2.set_ylabel('#')
+ax2.set_ylabel('mM')
 # ax2.plot(MonitorS.t / second, MonitorS1[100].uar/hertz, '--', linewidth=0.7)
 ax2.legend()
 
 
 # ax3.plot(SpikesN.t/second,spike_trains[2],'.g', ms=5,label='Spikes')
-ax3.plot(MonitorN.t / second, MonitorN[5].I_syn/nA, 'k', linewidth=0.7,label='Synaptic currents')
+ax3.plot(MonitorA.t / second, MonitorA[18].Y_extra/mmole, 'k', linewidth=0.7,label='NT_astro')
 ax3.set_xlim(0, 20)
-ax3.set_ylabel('nA')
+ax3.set_ylabel('mM')
 # ax3.plot(MonitorS.t / second, MonitorS1[2].uar/hertz,'--',  linewidth=0.7)
 ax3.legend()
 
 
 
-ax4.plot(MonitorS.t / second,MonitorS[14].avail,'k',label='Available vescicles')
-ax4.set_ylabel('#')
-ax4.set_xlabel('Time [s]')
-ax4.set_xlim(0, 20)
-ax4.legend()
-# fig.show()
 
 # plt.figure(dpi=200)
 # plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
@@ -1226,12 +1377,16 @@ plt.show()
 
 #%%
 
-# --------------- ELECTRODE RECORDINGS NEURONAL CULTURE ---------------
-Traces,MEA_dict = Electrode_traces(pitch,pitch_recsites,shift,N,MonitorN,electrode_dist,neuron_radius,electrode_radius)
+
+
+
+
+#%%
+
 
 clock_dt = defaultclock.dt 
 
-Raster,Raster_array = get_Raster(Traces,clock_dt)
+Raster,Raster_array = get_Raster(Traces,clock_dt,Visible=False)
 
 # ------- SAVE -------
 #%%
@@ -1324,6 +1479,7 @@ ax3.set_xlabel('Time [s]')
 # plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
 
 show()
+
 
 
 
