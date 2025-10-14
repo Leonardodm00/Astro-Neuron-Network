@@ -1,4 +1,5 @@
 
+
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
 import matplotlib.colors as mcolors
@@ -639,7 +640,7 @@ def get_Astroparam(oscillations = 'AM',**kwargs):
         'zeta': 2.,                # Maximal reduction of receptor affinity by PKC
         'n': 1.,                   # Cooperativity of agonist binding reaction
         # --- Gliotransmitter release and time course        
-        'C_Theta': 0.3*umole,      # Ca^2+ threshold for exocytosis
+        'C_Theta': 0.5*umole,      # Ca^2+ threshold for exocytosis
         'Omega_A': 0.6/second,     # Gliotransmitter recycling rate
         'U_A': 0.6,                # Gliotransmitter release probability
         'G_T': 200.*mmole,         # Total vesicular gliotransmitter
@@ -810,7 +811,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
        # Asynchronous Release parameters (uncommented and added to dictionary)
  
        'Omega_f_ar': 1/ (0.7 * second),
-       'Uar': 0.003, #0.003
+       'U_0_ar': 0.003, #0.003
        'Umax': 0.5/ms,
        'x0': 0.2, # x0 seems to be unitless here
     
@@ -973,6 +974,9 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
             # Positions
             x_syn : metre
             y_syn : metre
+            
+       
+        
           
             ''')
         
@@ -985,7 +989,7 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
             usr += U_0 * (1 - usr)
             r_Sr = usr * x_S # synchronously released synaptic neurotransmitter resources
             x_S -= r_Sr     
-            uar += Uar*(Umax-uar)
+            uar += U_0_ar*(Umax-uar)
             '''
         post = None
         
@@ -1027,6 +1031,10 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
             # Positions
             x_syn : metre
             y_syn : metre
+           
+            
+            
+            
             ''')
         
         # -------------- Event based update --------------
@@ -1038,7 +1046,7 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
             usr += U_0 * (1 - usr)
             r_Sr = usr * x_S # synchronously released synaptic neurotransmitter resources
             x_S -= r_Sr     
-            uar += Uar*(Umax-uar)
+            uar += U_0_ar*(Umax-uar)
             
         '''
         post = None
@@ -1140,7 +1148,7 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
     params_NN = get_Neuronparam()
     
     
-    N = NeuronGroup(Nn, model=eqs_NN, name='Neuron*',namespace= params_NN, threshold='V>20*mV',  reset='Ca += alpha_Ca',refractory=2 * ms,
+    N = NeuronGroup(Nn, model=eqs_NN, name='Neuron',namespace= params_NN, threshold='V>20*mV',  reset='Ca += alpha_Ca',refractory=2 * ms,
                         method='exponential_euler',dtype=float32)
     
     # Initialize neuron parameters
@@ -1162,7 +1170,7 @@ def Neuronal_Network(Nn,Syn_pdist = None,ics = False, Simulated_network = 'Neuro
     S = Synapses(N,N, model=eqs_Syn,
                         on_pre=pre,
                         on_post=post,
-                        name='Synapse*',
+                        name='Synapse',
                         namespace=params_Syn,
                         method='exponential_euler',dtype=float32,
                         )
@@ -1327,9 +1335,9 @@ def Astrocyte_Group(N_astro,Simulated_network,seed_astro = None,ics =None, conne
     Astro = NeuronGroup(N_astro, eqs_A,
                         threshold='C>C_osc',
                         refractory='C>C_osc',
-                        method='gsl',
+                        method='rk4',
                         namespace=Params_astroGT,
-                        name='astrocyte*',dtype=float32)
+                        name='Astrocyte',dtype=float32)
     
     # Random initialization of initial conditions
     if ics=='rand':
@@ -1360,9 +1368,9 @@ def Astrocyte_Group(N_astro,Simulated_network,seed_astro = None,ics =None, conne
     
     GJ = Synapses(Astro,Astro,
                   model=Gap_Eq,
-                  method='gsl',
+                  method='rk4',
                   namespace= Params_astroGT,
-                  name = 'Gap_junctions*',dtype=float32
+                  name = 'Gap_junctions',dtype=float32
                   )
     
     
@@ -1484,8 +1492,8 @@ def Gliotransmission(N_astro,Astro,ics = None):
                             # considered a "reset"
                           
                             reset=gliot_release,
-                            method='gsl',
-                            name='gliot_release*',
+                            method='rk4',
+                            name='Gliot_release',
                             namespace=Params_astroGT,dtype=float32)
     
     # Assign initial conditions
@@ -1516,10 +1524,10 @@ def Synapse_to_astro(synapse,Astro,connections):
                         Y_extra_post = Y_S_pre : mole (summed)
                         ''',
                         namespace=synapse.namespace,
-                        method = 'gsl ',
+                        method = 'rk4',
              
                         
-                        name="ecs_syn_to_astro*")
+                        name="ecs_syn_to_astro")
     
     
         
@@ -1578,7 +1586,7 @@ def Astro_to_Syn(Glio_release,synapse,connections):
                              ''',
                              method = 'gsl ',
                   
-                             name="ecs_astro_to_syn*",dtype=float32
+                             name="ecs_astro_to_syn",dtype=float32
                              )
     
     # ---- Connections ----
@@ -1652,107 +1660,7 @@ def Electrode_recording(MEA_dict,Neuron_group,State_Monitor,electrode_dist,neuro
     
     
 
-# def Electrode_traces(rec_sites, Neuron_group, Neuron_positions, State_Monitor, electrode_dist, neuron_radius, electrode_radius):
-#     """
-#     Optimized version of the Electrode_trace function using vectorization.
-    
-    
-   
-#         For neurons below d_lim a simplyfied EEI model is used
-#         For neurons below d_lim a Dipole approximation is implemented 
-        
-#         Two contributes for background noise: 1) distant neurons, 2) White noise
-        
-#         White noise: gaussian distribution of mean 0 and std 1uV --> 1e-3 mV
-        
-#         For each recording site the sum of all the contributing neurons is taken and 
-#         for the whole electrode the mean across the recording sites.
-        
-#         electrode_dist = max senstivity distance of the electrode
-#         Neuron_psoitions = sklearn.neighbors.NearestNeighbors object
-#         neuron_radius = radiu of the neurons expressed in micrometers.
-#                 it is used to because the distance is calculated between centers
-#         electrode_radius = radius of the electrode  
-#         # --- Papers:
-            
-#             1) Multi-program approach for simulating recorded extracellular signals
-#               generated by neurons coupled to microelectrode arrays.
-              
-#             2) A Detailed and Fast Model of Extracellular Recordings.
-        
-        
-#     """
-#     d_lim = 50  # [um]
-#     White_noise = 1e-3  # [mV]
-#     Rho_s = 0.7 * 1e6  # [ Ohm * um ] Saline bath resistivity
-    
-#     # Pre-allocate a list to store the voltage traces for each site
-#     site_voltage_traces = []
 
-#     dt_ = defaultclock.dt
-    
-#     # Pre-calculate the neuron state monitor data for efficiency
-#     # This assumes State_Monitor is a list-like object
-#     state_V_mV = [monitor.V/mV for monitor in State_Monitor]
-#     state_I_mA = [monitor.I_cell/mA for monitor in State_Monitor]
-    
-#     for site in rec_sites:
-#         # For each recording site extract the recorded neurons
-#         NN_idx, NN_dist = Neuron_positions.query_radius(site.reshape(1, -1), r=electrode_dist, return_distance=True)
-#         NN_idx = NN_idx[0]
-#         NN_dist = NN_dist[0]
-        
-#         if len(NN_idx) == 0:
-#             site_voltage_traces.append(np.zeros_like(state_V_mV[0]))
-#             continue
-        
-#         # Determine which model to use with boolean indexing
-#         close_neurons_mask = NN_dist < (d_lim + neuron_radius + electrode_radius)
-        
-#         # Initialize an array for voltages for the current site
-#         num_time_steps = state_V_mV[NN_idx[0]].shape[0]
-#         voltages_for_site = np.zeros(num_time_steps)
-        
-#         # Handle distant neurons (Dipole approximation)
-#         distant_idx = NN_idx[~close_neurons_mask]
-#         if len(distant_idx) > 0:
-#             # Get pre-calculated V and I data for distant neurons
-#             distant_V = np.array([state_V_mV[i] for i in distant_idx])
-#             distant_dist = NN_dist[~close_neurons_mask]
-            
-#             # Vectorized calculation for distant neurons
-#             V_dipole = distant_V * (1 / (distant_dist**2))[:, np.newaxis]
-#             voltages_for_site += np.sum(V_dipole, axis=0)
-
-#         # Handle close neurons (Monopole model)
-#         close_idx = NN_idx[close_neurons_mask]
-#         if len(close_idx) > 0:
-#             # Get pre-calculated V and I data for close neurons
-#             close_I = np.array([state_I_mA[i] for i in close_idx])
-#             close_dist = NN_dist[close_neurons_mask]
-            
-#             # Vectorized calculation for close neurons
-#             V_monopole = (Rho_s * close_I) / (4 * np.pi * close_dist[:, np.newaxis])
-#             voltages_for_site += np.sum(V_monopole, axis=0)
-        
-#         # Save the summed voltage trace for the current site
-#         site_voltage_traces.append(voltages_for_site)
-
-#     # --- MEAN ---
-#     # Take the mean across all recording sites
-#     if len(site_voltage_traces) > 0:
-#         rec_list_ = np.vstack(site_voltage_traces)
-#         Electrode_trace = np.mean(rec_list_, axis=0)
-#     else:
-#         # Handle the case where no neurons were found near any site
-#         return np.zeros(Neuron_group.N) # Adjust size as needed
-
-#     # Add white noise
-#     white_noise_vector = np.random.normal(loc=0, scale=White_noise, size=len(Electrode_trace))
-#     Electrode_trace = Electrode_trace + white_noise_vector
-    
-#     return Electrode_trace    
-    
     
     
 
@@ -1857,7 +1765,22 @@ def Electrode_trace(rec_sites,Neuron_group,Neuron_positions,State_Monitor,electr
 
     Electrode_trace_ = Electrode_trace_ + white_noise_vector
     return Electrode_trace_
-                 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 def Voltage_trace(alpha,beta,V,dt_):
     
