@@ -26,87 +26,104 @@ import math
 
 
 
+
 '''
 
 Version: cython friendly, connections and positions randomly placed
 
 '''
 
-# ---------------------- BINOMIAL FUNCTION ------------------------
+# ---------------------- EFFICIENT SAVING ------------------------
+class ArrayQuantizer:
+    """
+    A utility class to quantize a floating-point NumPy array (like voltage traces)
+    to a space-saving 8-bit unsigned integer (np.uint8) format.
 
-# def Binomial_fun(n,p, _vectorisation_idx):
-#     '''Generate a number from an exponential distribution using inverse
-#         transform sampling'''
-#     uniform = np.random.rand(n)
-#     return sum(uniform < p)
+    This implements "per-tensor" affine quantization, which requires saving
+    the scale and zero_point along with the quantized data.
+    """
+    def __init__(self, target_dtype=np.uint8):
+        """Initializes the quantizer with the target integer type."""
+        self.target_dtype = target_dtype
+        # Determine the target integer range (e.g., 0 to 255 for uint8)
+        info = np.iinfo(target_dtype)
+        self.q_min = info.min
+        self.q_max = info.max
 
+    def quantize(self, array: np.ndarray) -> tuple[np.ndarray, float, int]:
+        """
+        Quantizes the floating-point array to the target integer format.
 
+        Args:
+            array: The input floating-point NumPy array (e.g., MonitorN.V).
 
-
-# Binomial_fun = Function(Binomial_fun, arg_units=[1,1], return_unit=1,
-#                             stateless=False, auto_vectorise=True
-#                             )
-
-# cython_code = '''
- 
-
-
-# cdef double Binomial_fun(int n,double p,_vectorisation_idx):
-
-#     cdef int count = 0
-#     cdef double uniform
-#     cdef int i
-  
-    
-#     for i in range(n):
-#         uniform=rand(_vectorisation_idx)
+        Returns:
+            A tuple containing:
+            1. The quantized array (np.uint8).
+            2. The float scale factor (S).
+            3. The integer zero-point (Z).
+        """
+        print(f"\n--- Starting Quantization to {self.target_dtype} ---")
         
-#         if uniform < p:
-#             count = count+1
-            
-#     return count;
+        # 1. Determine the actual data range (V_min, V_max)
+        V_min = np.min(array)
+        V_max = np.max(array)
 
-# '''
+        # 2. Calculate Scale (S): (Float Range) / (Integer Range)
+        scale = (V_max - V_min) / (self.q_max - self.q_min)
 
-# cpp_code = '''
- 
-# #include <iostream>
-# #include <random>
-# #include <algorithm>
-# #include <cmath>
+        # Handle edge case where array is constant (scale is zero)
+        if scale == 0:
+            scale = 1.0 # Use a default scale to prevent division by zero
+            # If all values are the same, they all map to the zero-point
+            zero_point = self.q_min
+        else:
+            # 3. Calculate Zero-Point (Z): The integer value representing 0.0
+            zero_point_unclipped = self.q_min - (V_min / scale)
+            # Round and clip the zero-point to the target integer range
+            zero_point = np.round(zero_point_unclipped).astype(np.int32)
+            zero_point = np.clip(zero_point, self.q_min, self.q_max)
 
-# int Binomial_fun(int n, double p) {
-#     // Simple validation for input parameters
-#     if (n <= 0 || p <= 0.0) return 0;
-#     if (p >= 1.0) return n;
+        # Print calculated parameters
+        print(f"  V_range: [{V_min:.4f}, {V_max:.4f}]")
+        print(f"  Q_range: [{self.q_min}, {self.q_max}]")
+        print(f"  Scale (S): {scale:.8f}")
+        print(f"  Zero-Point (Z): {zero_point}")
 
-#     // Use a thread_local Mersenne Twister engine seeded by random_device.
-#     // This provides a high-quality, efficient, and thread-safe way to generate
-#     // random numbers, effectively replacing the context-aware 'rand(_vectorisation_idx)'.
-#     static thread_local std::mt19937 generator(std::random_device{}());
+        # 4. Quantization (Q = Round(V / S + Z))
+        quantized_array = np.round(array / scale + zero_point)
 
-#     // Uniform distribution over the range [0.0, 1.0)
-#     std::uniform_real_distribution<double> distribution(0.0, 1.0);
+        # 5. Final Clip and Cast to the target integer type
+        quantized_array = np.clip(quantized_array, self.q_min, self.q_max).astype(self.target_dtype)
 
-#     int count = 0;
-    
-#     // Simulate n independent Bernoulli trials
-#     for (int i = 0; i < n; ++i) {
-#         // Draw a uniform random number
-#         double uniform = distribution(generator);
+        print(f"Quantization complete. Array shape: {quantized_array.shape}, dtype: {quantized_array.dtype}")
+        
+        return quantized_array, scale, zero_point
 
-#         // Success if the random number falls below the probability threshold 'p'
-#         if (uniform < p) {
-#             count++;
-#         }
-#     }
+    @staticmethod
+    def dequantize(quantized_array: np.ndarray, scale: float, zero_point: int) -> np.ndarray:
+        """
+        Recovers the floating-point array from the quantized integer array
+        using the saved scale and zero_point.
 
-#     return count;
-# }
+        Args:
+            quantized_array: The input integer array (e.g., np.uint8).
+            scale: The float scale factor (S).
+            zero_point: The integer zero-point (Z).
 
-# '''
-# Binomial_fun.implementations.add_implementation('cpp', cpp_code,
-#                                                     dependencies={'rand': DEFAULT_FUNCTIONS['rand']})
+        Returns:
+            The recovered floating-point NumPy array (np.float32).
+        """
+        print("\n--- Starting De-Quantization ---")
+        
+        # De-Quantization Formula: V' = (Q - Z) * S
+        # Cast to float32 before subtraction to avoid overflow/underflow
+        # and ensure floating-point math is used.
+        recovered_array = (quantized_array.astype(np.float32) - zero_point) * scale
+
+        print(f"De-Quantization complete. Array shape: {recovered_array.shape}, dtype: {recovered_array.dtype}")
+        return recovered_array
+
 
 
 
@@ -220,28 +237,28 @@ def save_synaptic_connections(output_folder, S, GJ, StoA, AtoS, neuron_group, as
             # Handle cases where the input object might not be a valid Brian2 Synapses object
             print(f"Error: Object for group '{name}' does not appear to have '.i' and '.j' attributes (Is it a Brian2 Synapses object?). Skipping.")
 
-    # 4. Save the state variables (the "namespace") for the neuronal and astrocytic groups
-    state_groups = {
-        "Neuron": neuron_group,
-        "Astrocyte": astrocyte_group
-    }
+    # # 4. Save the state variables (the "namespace") for the neuronal and astrocytic groups
+    # state_groups = {
+    #     "Neuron": neuron_group,
+    #     "Astrocyte": astrocyte_group
+    # }
 
-    for name, group in state_groups.items():
-        try:
-            # Brian2's .get_states() returns a dictionary of all state variables and their values (as arrays)
-            state_data = group.get_states()
-            state_path = os.path.join(output_folder, f'{name}_state_namespace.npz')
+    # for name, group in state_groups.items():
+    #     try:
+    #         # Brian2's .get_states() returns a dictionary of all state variables and their values (as arrays)
+    #         state_data = group.get_states()
+    #         state_path = os.path.join(output_folder, f'{name}_state_namespace.npz')
 
-            # Use savez_compressed to save a dictionary into a single compressed file
-            np.savez_compressed(state_path, **state_data)
+    #         # Use savez_compressed to save a dictionary into a single compressed file
+    #         np.savez_compressed(state_path, **state_data)
 
-            print(f"Successfully saved state namespace (variables) for group '{name}'.")
-            print(f"  State namespace saved to: {state_path}")
-            print(f"  Variables saved: {list(state_data.keys())}")
+    #         print(f"Successfully saved state namespace (variables) for group '{name}'.")
+    #         print(f"  State namespace saved to: {state_path}")
+    #         print(f"  Variables saved: {list(state_data.keys())}")
 
-        except Exception as e:
-            # Catch general exceptions during state saving
-            print(f"Error saving state namespace for group '{name}': {e}. Skipping.")
+    #     except Exception as e:
+    #         # Catch general exceptions during state saving
+    #         print(f"Error saving state namespace for group '{name}': {e}. Skipping.")
 
 
     print("--- Connection and namespace saving complete ---")
@@ -1657,12 +1674,8 @@ def Electrode_recording(MEA_dict,Neuron_group,State_Monitor,electrode_dist,neuro
         
     return Electrode_recordings
     
-    
-    
 
 
-    
-    
 
 
 
@@ -1699,7 +1712,6 @@ def Electrode_trace(rec_sites,Neuron_group,Neuron_positions,State_Monitor,electr
     Rho_s = 0.7 * 1e6 #[ Ohm * um ] Saline bath resistivity 
     Site_voltages = {}
     s = 0
-    dt_ = defaultclock.dt
     for site in rec_sites:
         # For each recording site extract the recorded neurons
         NN_idx,NN_dist = Neuron_positions.query_radius(site.reshape(1, -1), r=electrode_dist, return_distance=True)
@@ -1914,24 +1926,104 @@ def Get_12grid(pitch):
 
 
     
-def Recording_sites(pitch_recsites,shift,Grid):
+def Recording_sites(pitch_recsites,shift,Grid,n_rec=3,Visible= False,electrode_radius= 15):
     MEA_dict = {}
     
     el = 0
-    for point in Grid:  
+    for point in Grid: 
         
-        # The x0 and y0 are the bottom left coordinates of the first rec site.
-        # the 'point' coordinate is the center. A shift in coordinates is needed.
-        # The 'point' coordinates are shifted along the diagonal about half the diameter.
-        # Both x and y of the 'point' are shifted about sqrt(2)*radius
+        if n_rec == 3:
         
-        x0 = point[0]-shift
-        y0 = point[1]-shift
-        rec_points = generate_grid_points(4, 4, pitch_recsites,x0,y0)
-        MEA_dict[el] = np.array(rec_points)
+            # The x0 and y0 are the bottom left coordinates of the first rec site.
+            # the 'point' coordinate is the center. A shift in coordinates is needed.
+            # The 'point' coordinates are shifted along the diagonal about half the diameter.
+            # Both x and y of the 'point' are shifted about sqrt(2)*radius
+            
+            # x0 = point[0]-shift
+            # y0 = point[1]-shift
+            x0 = point[0]-pitch_recsites
+            y0 = point[1]-pitch_recsites
+            rec_points = generate_grid_points(n_rec, n_rec, pitch_recsites,x0,y0)
+            MEA_dict[el] = np.array(rec_points)
+            
+           
+            el = el+1
+            
+        elif n_rec == 4:
         
-       
-        el = el+1
+            # The x0 and y0 are the bottom left coordinates of the first rec site.
+            # the 'point' coordinate is the center. A shift in coordinates is needed.
+            # The 'point' coordinates are shifted along the diagonal about half the diameter.
+            # Both x and y of the 'point' are shifted about sqrt(2)*radius
+            
+            x0 = point[0]-shift
+            y0 = point[1]-shift
+
+            rec_points = generate_grid_points(n_rec, n_rec, pitch_recsites,x0,y0)
+            MEA_dict[el] = np.array(rec_points)
+            
+           
+            el = el+1
+        
+    if Visible == True:
+        # 2. Setup the plot
+        fig, ax = plt.subplots()
+
+        # Ensure the plot scales correctly to show the circles
+        ax.set_aspect('equal', adjustable='box') 
+        ax.autoscale_view()
+
+        radius = electrode_radius
+        # 3. Plot the circles
+        for cn in range(len(Grid[:,0])):
+            # Create a Circle patch
+            circle = Circle(
+                (Grid[cn,0], Grid[cn,1]),  # Center (x, y)
+                radius,                # Radius
+                color='blue',          # Color of the circle
+                alpha=0.3,             # Transparency (makes overlapping easier to see)
+                fill=True,             # Fill the circle
+                edgecolor='black',     # Color of the outline
+                linewidth=1            # Thickness of the outline
+            )
+            
+            # Add the circle to the Axes
+            ax.add_patch(circle)
+            
+            # Optional: Plot the center point as a dot
+            ax.plot(Grid[cn,0], Grid[cn,1], 'ro', markersize=5)
+            
+            
+           
+        for j in range(len(Grid[:,0])):
+            
+            rec_s = MEA_dict[j]
+            
+            for cn in range(len(rec_s[:,0])):
+                
+                
+                # Optional: Plot the center point as a dot
+                ax.plot(rec_s[cn,0], rec_s[cn,1], 'ro', markersize=10) 
+                
+        # 4. Set plot limits (important for seeing all circles)
+        # Find the min/max coordinates and add a buffer equal to the radius
+        min_x = np.min(Grid[:,0]) - radius * 1.5
+        max_x = np.max(Grid[:,0]) + radius * 1.5
+        min_y = np.min(Grid[:,1]) - radius * 1.5
+        max_y = np.max(Grid[:,1]) + radius * 1.5
+
+        ax.set_xlim(min_x, max_x)
+        ax.set_ylim(min_y, max_y)
+
+        # 5. Add labels and title
+        ax.set_xlabel("X Coordinate")
+        ax.set_ylabel("Y Coordinate")
+        ax.set_title(f"Circles with Radius = {radius}")
+        ax.grid(True)
+
+        # 6. Show the plot
+        plt.show()
+    
         
         
     return MEA_dict
@@ -2145,7 +2237,7 @@ def Electrode_traces(pitch,pitch_recsites,shift,N,MonitorN,electrode_dist,neuron
     
     Grid = Get_12grid(pitch)
     
-    MEA_dict = Recording_sites(pitch_recsites,shift,Grid)
+    MEA_dict = Recording_sites(pitch_recsites,shift,Grid,n_rec = 3)
     
     # --- Plot Device + Neurons
     
