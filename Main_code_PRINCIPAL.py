@@ -1,6 +1,5 @@
 
 
-
 import matplotlib.pyplot as plt
 from brian2 import *
 
@@ -142,6 +141,7 @@ Binomial_fun.implementations.add_implementation('cython', cython_code,
                                                     dependencies={'rand': DEFAULT_FUNCTIONS['rand']})
 
 
+
 # ------- Synapses -------
 
 # 1. Define the filename
@@ -160,7 +160,7 @@ set_connections = True
 # ------------------------- PARAMETERS -------------------------
 
 # --------- SIMULATION -----------
-simtime =   30 * second               # simulation time
+simtime =   180 * second               # simulation time
 # transient = 3 * second  
 seed_device = 50            # time omitted as transient
 seed_neuron = 39                             # random number seed
@@ -206,7 +206,7 @@ Na = 43
 pitch = 300 #[um] 
 electrode_radius = 15 #[um]
 
-pitch_recsites = 7.5 # [um]  
+pitch_recsites = 10 # [um]  
 shift = 11.25 # [um]
 
 electrode_dist = 300 # [um]
@@ -300,13 +300,33 @@ elif Simulated_network == 'Astrocytic':
     # --------- ASTROCYTE -----------
     Astro, GJ,P,Glu_Input = Astrocyte_Group(Na,Simulated_network,seed_astro = seed_astro)
     
+    
+    
+    
+# # Construct the new folder name, incorporating the variable 'i'
+# # Example names: 'data_01', 'data_02', etc.
+# folder_name = f"Connectivity_data_{cp:02f}" 
 
+# # Create the full path for the new folder
+# new_folder_path = os.path.join(connections_path, folder_name)
 
+# # Use os.makedirs() with exist_ok=True to create the folder.
+# # exist_ok=True prevents an error if the folder already exists.
+# try:
+#     os.makedirs(new_folder_path, exist_ok=True)
+#     print(f"Created folder: {new_folder_path}")
+# except OSError as e:
+#     print(f"Error creating folder {new_folder_path}: {e}")
+# 
+    
+    
 # -------------- Save Connections -------------
 
-if set_connections == True:
+# if set_connections == True:
 
-    save_synaptic_connections(connections_path, S, GJ, StoA, AtoS, N, Astro)
+#     save_synaptic_connections(new_folder_path, S, GJ, StoA, AtoS, N, Astro)
+
+
 
 # ------------------------- NETWORK SIMULATION -------------------------
 
@@ -341,10 +361,6 @@ elif Simulated_network == 'Astrocytic':
     SpikesP = SpikeMonitor(P)
     
 
-
-
-    
-#%
 # # %matplotlib
 # plot_connections(N, Astro, S, StoA)
 # --- Collect and add monitors ---
@@ -361,6 +377,49 @@ net_.run(simtime,report='text', profile=True)
 plt.figure()
 plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=4)
 plt.show()
+#%%
+# Save with compression
+spikes_dir = r'C:\Users\Admin\Desktop\Leonardo\ASN\Temp'
+file_path = os.path.join(spikes_dir, f"Spikes_111.npz")
+np.savez_compressed(file_path, MonitorN.V.astype(np.float16))
+
+#%%
+os.chdir(r'C:\Users\Admin\Desktop\Leonardo\ASN')
+from ASN_fun_BD import *
+
+QT_fun = ArrayQuantizer()
+
+
+qt_array,scale,off = QT_fun.quantize(MonitorN.V.astype(np.float16))
+# Save the data and parameters to a file (for persistent storage)
+np.savez_compressed('quantized_voltages_file.npz',
+                    data=qt_array,
+                    scale=np.array(scale, dtype=np.float32),
+                    zero_point=np.array(off, dtype=np.int32))
+
+
+
+
+
+#%%
+os.chdir(r'C:\Users\Admin\Desktop\Leonardo\ASN')
+from ASN_fun_BD import *
+import time 
+# %matplotlib
+Grid = Get_12grid(pitch)
+
+MEA_dict = Recording_sites(pitch_recsites,shift,Grid,n_rec = 3,Visible= True)
+
+
+start_time = time.time()
+Electr = Electrode_recording(MEA_dict,N,MonitorN,electrode_dist,neuron_radius,electrode_radius)
+end_time = time.time()
+print(f'Enalpsed time original fun: {end_time - start_time}')
+
+#%%
+fs = 1/(defaultclock.dt * second)
+get_Raster(Electr,fs,low_f=200,high_f=2000,Visible=True)
+
 
 #%%
 
@@ -1377,7 +1436,12 @@ plt.show()
 
 #%%
 
+# os.chdir(r'C:\Users\Admin\Desktop\Leonardo\ASN')
+# from ASN_fun_BD import *
 
+# %matplotlib
+Grid = Get_12grid(pitch)
+Mea_dict = Recording_sites(pitch_recsites,shift,Grid,n_rec = 3,Visible= True)
 
 
 
@@ -1479,6 +1543,7 @@ ax3.set_xlabel('Time [s]')
 # plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
 
 show()
+
 
 
 
