@@ -11,6 +11,7 @@ import os
 
 os.chdir(r'C:\Users\Admin\Desktop\Leonardo\ASN')
 from ASN_fun_BD import *
+#%%
 '''
 Version: cython friendly, connections and positions randomly placed
 
@@ -160,7 +161,7 @@ set_connections = True
 # ------------------------- PARAMETERS -------------------------
 
 # --------- SIMULATION -----------
-simtime =   180 * second               # simulation time
+simtime =   100 * second               # simulation time
 # transient = 3 * second  
 seed_device = 50            # time omitted as transient
 seed_neuron = 39                             # random number seed
@@ -377,6 +378,101 @@ net_.run(simtime,report='text', profile=True)
 plt.figure()
 plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=4)
 plt.show()
+
+#%%
+
+
+# 1. Define the variables you want
+variables_to_get = ['V', 'I_cell']
+
+# 2. Call the function
+# It returns the dictionary of snippets and the time vector
+snippets_dict, window_time = extract_spike_windows(
+    SpikesN, 
+    MonitorN,
+    vars_to_extract=variables_to_get,
+    n_windows=50,
+    window_size=4.5*ms,
+    dt = defaultclock.dt,
+    center_offset = 1*ms
+)
+
+# 3. Access the dictionary to get your separate lists
+# This is the key step!
+v_snippets_list = snippets_dict['V']/mV
+I_cell_snippets_list = snippets_dict['I_cell']/mA
+
+#%
+# --- Check results ---
+
+# === 4. Plot the results ===
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 9), sharex=True)
+
+# --- Plot voltage (v) ---
+for snippet in v_snippets_list:
+    ax1.plot(window_time / ms, snippet, 'b-', alpha=0.15)
+    # Plot average
+    ax1.plot(window_time / ms, np.mean(v_snippets_list, axis=0), 'r-', lw=2)
+    ax1.set_title(f'Spike-Triggered Waveforms (Average in Red)')
+    ax1.set_ylabel('Membrane Potential (v)')
+    ax1.axvline(0, color='black', linestyle='--')
+    ax1.grid(True)
+
+# --- Plot current (I_cell) ---
+for snippet in I_cell_snippets_list:
+    ax2.plot(window_time / ms, snippet, 'g-', alpha=0.15)
+# Plot average
+    ax2.plot(window_time / ms, np.mean(I_cell_snippets_list, axis=0), 'k-', lw=2)
+    ax2.set_title(f'Spike-Triggered Current (Average in Black)')
+    ax2.set_ylabel('Cell Current (I_cell)')
+    ax2.set_xlabel('Time relative to spike (ms)')
+    ax2.axvline(0, color='black', linestyle='--')
+    ax2.grid(True)
+    
+    plt.tight_layout()
+    plt.show()
+
+
+spikes_dir = r'C:\Users\Admin\Desktop\Leonardo\ASN\Output Temp\Virtual electrodes reconstruction'
+
+
+sp_t = SpikesN.t
+sp_i = SpikesN.i
+
+
+ 
+file_path_spk = os.path.join(spikes_dir, f"Spikes.npz")
+np.savez_compressed(file_path_spk, np.vstack((
+                                           sp_t / second,
+                                           sp_i
+                                           )
+                                           ).T)
+file_path_spk = os.path.join(spikes_dir, f"VI_data.npz")
+# 1. Convert the lists of lists to 2D NumPy arrays
+v_array = np.array(v_snippets_list)
+i_array = np.array(I_cell_snippets_list)
+
+# 2. Save both arrays into a single compressed file
+# We give them names inside the file, like 'v_data' and 'i_data'
+
+np.savez_compressed(file_path_spk, 
+                    v_data=v_array, 
+                    i_data=i_array)
+
+
+# Save coordinates
+file_path_spk = os.path.join(spikes_dir, f"Coord.npy")
+# 1. Get the unitless x and y arrays
+# We divide by the unit (e.g., meter) to get a pure NumPy array
+x_values = N.x / um 
+y_values = N.y / um
+
+# 2. Stack them as columns
+positions_array = np.column_stack((x_values, y_values))
+
+
+save(file_path_spk,positions_array)
+
 #%%
 # Save with compression
 spikes_dir = r'C:\Users\Admin\Desktop\Leonardo\ASN\Temp'
@@ -416,7 +512,7 @@ Electr = Electrode_recording(MEA_dict,N,MonitorN,electrode_dist,neuron_radius,el
 end_time = time.time()
 print(f'Enalpsed time original fun: {end_time - start_time}')
 
-#%%
+
 fs = 1/(defaultclock.dt * second)
 get_Raster(Electr,fs,low_f=200,high_f=2000,Visible=True)
 
@@ -1543,6 +1639,7 @@ ax3.set_xlabel('Time [s]')
 # plt.plot(SpikesN.t / second, SpikesN.i, '.k', ms=0.7)
 
 show()
+
 
 
 
