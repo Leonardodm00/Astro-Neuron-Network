@@ -3285,3 +3285,129 @@ def get_synapse_coordinates(Synapse,Neuron,Syn_prob,rarius_val,displ_bias=15):
         synapse_coords.append(tuple(new_coord))
 
     return synapse_coords
+
+
+
+# ----------------------- EXTRACT SNIPPETS -----------------------
+
+def extract_spike_windows(spike_mon, state_mon, vars_to_extract,
+                                       n_windows=50, window_size=3*ms,dt = None,
+                                       center_offset=0*ms):
+    """
+    Extracts windows of specified state variables around randomly selected spikes,
+    with an optional time offset from the spike.
+
+    Args:
+        spike_mon (SpikeMonitor): The Brian2 SpikeMonitor object.
+        state_mon (StateMonitor): The Brian2 StateMonitor object.
+        vars_to_extract (list of str): A list of variable names to extract
+                                        (e.g., ['v', 'I_cell']).
+        n_windows (int): The number of windows to extract.
+        window_size (Quantity): The total duration of the window (e.g., 3*ms).
+        center_offset (Quantity): The time relative to the spike to center
+                                  the window.
+                                  - 0*ms (default): centers ON the spike.
+                                  - 1*ms: centers 1ms AFTER the spike.
+
+    Returns:
+        tuple: (snippet_results, time_vector)
+            - snippet_results (dict): A dictionary where keys are the variable
+                                      names from `vars_to_extract` and values
+                                      are lists of lists (each inner list is
+                                      one snippet).
+            - time_vector (np.ndarray): A 1D array of time points relative to the
+                                        WINDOW CENTER (e.g., -1.5 ms to 1.5 ms).
+    """
+
+    # --- 1. Get data from monitors ---
+    spike_times = spike_mon.t
+    spike_indices = spike_mon.i
+    monitor_times = state_mon.t
+
+
+    # Validate that all requested variables are in the StateMonitor
+    all_monitored_vars = state_mon.recorded_variables
+    var_data = {}
+    for var_name in vars_to_extract:
+        if var_name not in all_monitored_vars:
+            raise ValueError(f"Variable '{var_name}' was requested but is not "
+                             f"in the StateMonitor. Available variables are: "
+                             f"{list(all_monitored_vars)}")
+        try:
+            var_data[var_name] = getattr(state_mon, var_name)
+        except (AttributeError, BrianObjectException):
+             raise ValueError(f"Could not retrieve data for '{var_name}' from "
+                              f"StateMonitor. Make sure it was recorded.")
+
+    if len(spike_times) == 0:
+        print("Warning: No spikes found. Returning empty results.")
+        empty_results = {var: [] for var in vars_to_extract}
+        return empty_results, np.array([])
+
+    # --- 2. Calculate window parameters ---
+    window_radius = window_size / 2
+    window_radius_steps = int(round(window_radius / dt))
+    window_total_steps = 2 * window_radius_steps + 1
+
+    # --- 3. Filter for spikes where the *shifted window* is valid ---
+    sim_duration = monitor_times[-1]
+    
+    # We need the window start and end to be within the simulation time
+    # Window start: t_spike + center_offset - window_radius
+    # Window end:   t_spike + center_offset + window_radius
+    
+    min_spike_time = window_radius - center_offset
+    max_spike_time = sim_duration - window_radius - center_offset
+    
+    valid_mask = (spike_times >= min_spike_time) & \
+                 (spike_times <= max_spike_time)
+    
+    valid_spike_times = spike_times[valid_mask]
+    valid_spike_indices = spike_indices[valid_mask]
+    n_valid_spikes = len(valid_spike_times)
+
+    if n_valid_spikes == 0:
+        print(f"Warning: No spikes found far enough from simulation edges "
+              f"to extract a full {window_size} window with offset {center_offset}. "
+              f"Returning empty results.")
+        empty_results = {var: [] for var in vars_to_extract}
+        return empty_results, np.array([])
+
+    # --- 4. Select spikes to use ---
+    n_to_extract = min(n_windows, n_valid_spikes)
+    if n_to_extract < n_windows:
+        print(f"Warning: Found only {n_valid_spikes} valid spikes. "
+              f"Extracting {n_to_extract} windows instead of {n_windows}.")
+    selected_indices = np.random.choice(n_valid_spikes, n_to_extract, replace=False)
+
+    # --- 5. Create output structure ---
+    snippet_results = {var_name: [] for var_name in vars_to_extract}
+
+    # --- 6. Extract windows ---
+    for i, spike_idx in enumerate(selected_indices):
+        t_spike = valid_spike_times[spike_idx]
+        i_neuron = valid_spike_indices[spike_idx]
+        
+        # *** KEY CHANGE HERE ***
+        # Calculate the center of the window, including the offset
+        t_window_center = t_spike + center_offset
+        
+        # Find the index of this new center time
+        center_idx = int(round(t_window_center / dt))
+
+        # Calculate start/end indices for the window
+        start_idx = center_idx - window_radius_steps
+        end_idx = center_idx + window_radius_steps + 1  # +1 for Python slicing
+
+        # Extract the window for each requested variable
+        for var_name in vars_to_extract:
+            all_traces = var_data[var_name]
+            snippet_numpy = all_traces[i_neuron, start_idx:end_idx]
+            snippet_results[var_name].append(list(snippet_numpy))
+
+    # --- 7. Create the relative time vector ---
+    # This vector is relative to the WINDOW CENTER.
+    # e.g., -1.5 ms to +1.5 ms
+    time_vector = np.linspace(-window_radius, window_radius, window_total_steps)
+    
+    return snippet_results, time_vector
