@@ -537,7 +537,8 @@ def get_Astroparam(oscillations = 'AM',**kwargs):
         'spill_over': 0.75,         # Spill over parameter
         
         # Connection probability
-        'conn_dist' : 200, # [um] 
+        'conn_dist' : 200, # [um] — legacy 'distance' rule radius
+        'gj_max_dist': 150, # [um] — soft cap for the 'wallach' Voronoi rule
         'c_min' : 0, #[um]
         'c_max' : 1100, # [um]
         
@@ -1269,47 +1270,105 @@ def _astrocyte_steady_state(params_astroGT, t_max=300.0):
     }
 
 
-def astrocyte_connections(Astrocyte_group, Connection_dist):
+def astrocyte_connections(Astrocyte_group, Connection_dist,
+                          topology_mode='distance',
+                          Neuron_group=None,
+                          gj_max_dist=150.0):
     """
-    Build the gap-junction adjacency: every pair of astrocytes whose
-    centre-to-centre distance is less than `Connection_dist` (in um) is
-    connected in BOTH directions (the radius query is symmetric, so the
-    final list contains both (i, j) and (j, i)).
+    Build the gap-junction adjacency between astrocytes.
 
-    Self-loops are filtered out (Report 3 §A.5).
+    Two modes are supported, selected by `topology_mode`:
+
+      * 'distance' (legacy, default for backward compatibility):
+        Every pair of astrocytes whose centre-to-centre distance is less than
+        `Connection_dist` (in µm) is GJ-coupled bidirectionally.
+
+      * 'wallach':
+        Two astrocytes are GJ-coupled iff (i) they share a border in the
+        JOINT Voronoi tessellation of neurons ∪ astrocytes (i.e. they are
+        Delaunay-adjacent in the joint point set, Wallach et al. 2014) AND
+        (ii) their centre-to-centre distance does not exceed `gj_max_dist`.
+        Requires `Neuron_group` to expose `.x` and `.y` (positions in metres
+        or as Brian2 Quantity).
+
+    Both modes return BIDIRECTIONAL pair lists: each undirected edge appears
+    as both (i, j) and (j, i). Self-loops are excluded.
+
+    Parameters
+    ----------
+    Astrocyte_group : Brian2 NeuronGroup
+        Must expose `.x_astro` and `.y_astro` (Quantity in metres).
+    Connection_dist : float
+        Radius in µm for the 'distance' mode (ignored in 'wallach' mode).
+    topology_mode : {'distance', 'wallach'}
+    Neuron_group : Brian2 NeuronGroup, optional
+        Required for 'wallach' mode. Must expose `.x` and `.y`.
+    gj_max_dist : float
+        Soft cap in µm applied on top of the Voronoi adjacency in 'wallach'
+        mode (ignored in 'distance' mode). Default 150 µm.
+
+    Returns
+    -------
+    Source, Target : 1-D arrays of int
+        Bidirectional pair list.
     """
-    # Coordinates as plain NumPy
+    # Astrocyte coordinates as plain NumPy in µm.
     x_pos = np.array(Astrocyte_group[:].x_astro / um)
     y_pos = np.array(Astrocyte_group[:].y_astro / um)
-    pos = np.column_stack((x_pos, y_pos))
+    A_pos = np.column_stack((x_pos, y_pos))
 
-    Astro_positions = KDTree(pos)
+    if topology_mode == 'wallach':
+        if Neuron_group is None:
+            raise ValueError(
+                "astrocyte_connections(topology_mode='wallach', ...) "
+                "requires Neuron_group so that the joint (neurons ∪ "
+                "astrocytes) Voronoi tessellation can be computed."
+            )
+        N_pos = np.column_stack((
+            np.asarray(Neuron_group[:].x / um),
+            np.asarray(Neuron_group[:].y / um),
+        ))
+        return voronoi_astro_gj_pairs(N_pos, A_pos, gj_max_dist=gj_max_dist)
 
-    Source = []
-    Target = []
+    elif topology_mode == 'distance':
+        Astro_positions = KDTree(A_pos)
 
-    for astro_idx, astro in enumerate(pos):
-        A_idx = Astro_positions.query_radius(astro.reshape(1, -1), r=Connection_dist)
-        A_idx = np.array(A_idx[0])
+        Source = []
+        Target = []
 
-        # Drop self (KDTree includes the query point itself).
-        A_idx = A_idx[A_idx != astro_idx]
+        for astro_idx, astro in enumerate(A_pos):
+            A_idx = Astro_positions.query_radius(astro.reshape(1, -1),
+                                                 r=Connection_dist)
+            A_idx = np.array(A_idx[0])
 
-        if A_idx.size == 0:
-            continue
+            # Drop self (KDTree includes the query point itself).
+            A_idx = A_idx[A_idx != astro_idx]
 
-        source_astro = np.full(len(A_idx), astro_idx)
-        Source.append(source_astro)
-        Target.append(A_idx)
+            if A_idx.size == 0:
+                continue
 
-    if not Source:
-        # No astrocyte has any neighbour — return empty arrays.
-        return np.array([], dtype=int), np.array([], dtype=int)
+            source_astro = np.full(len(A_idx), astro_idx)
+            Source.append(source_astro)
+            Target.append(A_idx)
 
-    return np.concatenate(Source), np.concatenate(Target)
+        if not Source:
+            # No astrocyte has any neighbour — return empty arrays.
+            return np.array([], dtype=int), np.array([], dtype=int)
+
+        return np.concatenate(Source), np.concatenate(Target)
+
+    else:
+        raise ValueError(
+            f"astrocyte_connections: unknown topology_mode={topology_mode!r}. "
+            "Expected 'wallach' or 'distance'."
+        )
 
 
-def Astrocyte_Group(N_astro, Simulated_network, seed_astro=None, ics='steady', connections=None):
+def Astrocyte_Group(N_astro, Simulated_network, seed_astro=None, ics='steady',
+                    connections=None,
+                    topology_mode='distance',
+                    Neuron_group=None,
+                    gj_max_dist=150.0):
     """
     Build the astrocyte NeuronGroup ('Astrocyte') and the gap-junction Synapses
     group ('Gap_junctions'). In `'Astrocytic'` mode additionally builds a
@@ -1331,6 +1390,18 @@ def Astrocyte_Group(N_astro, Simulated_network, seed_astro=None, ics='steady', c
         - None: leave Brian2 defaults (all zeros) — not recommended.
     connections : {None, True, list}
         See Neuronal_Network docstring.
+    topology_mode : {'distance', 'wallach'}
+        Only consulted when `connections is True`. Selects the rule used to
+        generate the GJC adjacency from cell positions:
+          - 'distance' (legacy default): pairs within `conn_dist` µm.
+          - 'wallach': Delaunay-adjacency in the joint (neurons ∪ astrocytes)
+            tessellation, capped at `gj_max_dist` µm.
+        Ignored when `connections` is a list (explicit pair list — pre-built
+        upstream by e.g. HPC_single_run.build_topology).
+    Neuron_group : Brian2 NeuronGroup, optional
+        Required when `topology_mode='wallach'` and `connections is True`.
+    gj_max_dist : float
+        Soft cap in µm for the Wallach branch (ignored in 'distance' mode).
 
     Returns
     -------
@@ -1436,12 +1507,21 @@ def Astrocyte_Group(N_astro, Simulated_network, seed_astro=None, ics='steady', c
                   )
 
     # ----- Connections -----
-    # Astros are connected by gap-junctions within `conn_dist` of each other.
-    # Reference: "A Computational Model of Interactions Between Neuronal and
-    # Astrocytic Networks: The Role of Astrocytes in the Stability of the
-    # Neuronal Firing Rate".
+    # Two rules are supported (selected by `topology_mode`):
+    #   - 'distance' (legacy): KDTree-based pairs within `conn_dist`.
+    #     Reference: "A Computational Model of Interactions Between Neuronal
+    #     and Astrocytic Networks..." (legacy approach used in early reports).
+    #   - 'wallach' : Delaunay-adjacency in the joint Voronoi tessellation of
+    #     neurons ∪ astrocytes, capped at `gj_max_dist` µm.
+    #     Reference: Wallach et al. 2014, PLOS Comput. Biol. 10(12) e1003964;
+    #     and De Pittà & Berry (eds.), Computational Glioscience, 2019, ch. 7.
     if connections is True:
-        Source, Target = astrocyte_connections(Astro, Params_astroGT['conn_dist'])
+        Source, Target = astrocyte_connections(
+            Astro, Params_astroGT['conn_dist'],
+            topology_mode=topology_mode,
+            Neuron_group=Neuron_group,
+            gj_max_dist=gj_max_dist,
+        )
         GJ.connect(i=Source, j=Target)
 
     elif isinstance(connections, list):
@@ -1562,17 +1642,37 @@ def Gliotransmission(N_astro, Astro, ics='jitter', seed_astro=None):
 
 # -------------- SYNAPSE-ASTRO LINK ---------------
 
-def Synapse_to_astro(synapse, Astro, connections):
+def Synapse_to_astro(synapse, Astro, connections,
+                     topology_mode='distance',
+                     stoa_cutoff=70.0):
     """
     Build the (summed) glutamate-spillover link from synapses onto astrocytes.
+
+    Two `topology_mode` rules are supported when `connections is True`:
+
+      * 'distance' (legacy):
+        Brian2-internal Gaussian-probability connection within a hard cutoff.
+        Each synapse-astrocyte pair within `Conn_syn_astro_cutoff` µm is
+        sampled independently with p = exp(-d² / (2·sigma_A²)). As a
+        consequence a single synapse can end up linked to multiple astrocytes.
+
+      * 'wallach' (new default, Wallach et al. 2014-compatible):
+        Each synaptic bouton is assigned to AT MOST ONE astrocyte — the
+        nearest one within `stoa_cutoff` µm. Distance is measured from the
+        bouton position (x_syn, y_syn).
 
     Parameters
     ----------
     connections : {True, list}
-        - True: distance-based rule using x_syn, y_syn, x_astro, y_astro
-          (requires `connections=True` to have been used to build S so that
-          x_syn, y_syn are real positions).
-        - list [Source, Target]: explicit (i_synapse, j_astrocyte) pairs.
+        - True: build connectivity from cell positions using `topology_mode`.
+          Requires `synapse` to expose `.x_syn`, `.y_syn` and `Astro` to
+          expose `.x_astro`, `.y_astro`.
+        - list [Source, Target]: explicit (i_synapse, j_astrocyte) pairs
+          (typically supplied by HPC_single_run.build_topology).
+    topology_mode : {'distance', 'wallach'}
+        Only consulted when `connections is True`.
+    stoa_cutoff : float
+        Hard distance cutoff in µm for the 'wallach' branch. Default 70 µm.
 
     Returns
     -------
@@ -1592,14 +1692,39 @@ def Synapse_to_astro(synapse, Astro, connections):
 
     # Errors NOT swallowed (Report 3 §A.2).
     if connections is True:
-        p_conn = 'exp(- ((sqrt((x_syn_pre - x_astro_post)**2 + (y_syn_pre - y_astro_post)**2))**2) / (2 * sigma_A**2))'
-        Syn_Astro.connect(
-            condition='sqrt((x_syn_pre - x_astro_post)**2 + (y_syn_pre - y_astro_post)**2) < Conn_syn_astro_cutoff',
-            p=p_conn,
-        )
-        Source = list(Syn_Astro.i)         # Synapse as pre unit
-        Target = list(Syn_Astro.j)         # Astro as target unit
-        Connections_list = [Target, Source]
+        if topology_mode == 'wallach':
+            # Pull bouton + astrocyte positions out into numpy and run the
+            # 1-to-1 nearest-astrocyte assignment.
+            bouton_pos = np.column_stack((
+                np.asarray(synapse.x_syn / um),
+                np.asarray(synapse.y_syn / um),
+            ))
+            A_pos = np.column_stack((
+                np.asarray(Astro.x_astro / um),
+                np.asarray(Astro.y_astro / um),
+            ))
+            Source, Target = nearest_astro_for_synapse(
+                bouton_pos, A_pos, stoa_cutoff=stoa_cutoff
+            )
+            Syn_Astro.connect(i=Source, j=Target)
+            Connections_list = [Target, Source]
+
+        elif topology_mode == 'distance':
+            p_conn = ('exp(- ((sqrt((x_syn_pre - x_astro_post)**2 + '
+                      '(y_syn_pre - y_astro_post)**2))**2) / (2 * sigma_A**2))')
+            Syn_Astro.connect(
+                condition='sqrt((x_syn_pre - x_astro_post)**2 + (y_syn_pre - y_astro_post)**2) < Conn_syn_astro_cutoff',
+                p=p_conn,
+            )
+            Source = list(Syn_Astro.i)         # Synapse as pre unit
+            Target = list(Syn_Astro.j)         # Astro as target unit
+            Connections_list = [Target, Source]
+
+        else:
+            raise ValueError(
+                f"Synapse_to_astro: unknown topology_mode={topology_mode!r}. "
+                "Expected 'wallach' or 'distance'."
+            )
 
     elif isinstance(connections, list):
         Source, Target = connections[0], connections[1]
@@ -2079,6 +2204,150 @@ def get2D_rnd_coordinates(N,c_min,c_max,sed):
         y = random.uniform(c_min, c_max)
         coordinates.append((x, y))
     return np.array(coordinates)
+
+
+# -----------------------------------------------------------------------------
+# Wallach/De Pittà 2014-style topology helpers (numpy-only, importable from
+# HPC_single_run.build_topology and from the Brian2 fallback path in
+# Astrocyte_Group / Synapse_to_astro). These DO NOT touch Brian2 — they only
+# manipulate numpy arrays of (x, y) coordinates.
+#
+# Why these live here rather than in HPC_single_run.py:
+#   ASD_fun_BD_cpp.py is the lower-level module imported by HPC_single_run.py
+#   (no circular dependency that way), and Astrocyte_Group / Synapse_to_astro
+#   need to call the same code path when used outside the HPC two-pass
+#   pipeline.
+# -----------------------------------------------------------------------------
+
+def voronoi_astro_gj_pairs(N_pos, A_pos, gj_max_dist=150.0):
+    """
+    Build GJC adjacency between astrocytes from the JOINT Voronoi tessellation
+    of neurons + astrocytes (Wallach et al., 2014; De Pittà & Berry, 2019).
+
+    Two astrocytes are GJC-coupled iff:
+      1. their Voronoi cells share a border in the joint (neurons ∪ astrocytes)
+         tessellation — equivalently, they are connected by a Delaunay edge in
+         the joint point set;
+      2. the centre-to-centre distance does not exceed `gj_max_dist`.
+
+    Condition (2) is the soft cap that filters out long-range "spurious"
+    Voronoi neighbours arising in sparse or boundary regions, where the
+    Voronoi adjacency would otherwise stretch across implausible distances
+    (cf. Lallouette et al., 2014: d_max = 150 µm).
+
+    Parameters
+    ----------
+    N_pos : (Nn, 2) array
+        Neuron (x, y) positions in µm.
+    A_pos : (Na, 2) array
+        Astrocyte (x, y) positions in µm.
+    gj_max_dist : float
+        Soft cap, in µm. Set to numpy.inf to disable.
+
+    Returns
+    -------
+    GJ_i, GJ_j : 1-D int32 arrays
+        Bidirectional pair list (each undirected edge appears as both (i, j)
+        and (j, i)), matching the convention used by the legacy
+        `astrocyte_connections` function.
+    """
+    from scipy.spatial import Delaunay
+
+    Nn = int(len(N_pos))
+    Na = int(len(A_pos))
+
+    # Degenerate cases — Delaunay needs at least 3 non-collinear points.
+    if Na < 2 or (Nn + Na) < 3:
+        return (np.array([], dtype=np.int32), np.array([], dtype=np.int32))
+
+    # Joint point cloud: neurons first (global indices 0..Nn-1),
+    # then astrocytes (global indices Nn..Nn+Na-1).
+    points = np.vstack([N_pos, A_pos])
+
+    try:
+        tri = Delaunay(points)
+    except Exception:
+        # Falls back to empty GJ network if the point set is degenerate
+        # (e.g. all collinear). Caller is responsible for noticing.
+        return (np.array([], dtype=np.int32), np.array([], dtype=np.int32))
+
+    # Extract undirected edges from the simplex list (each simplex is a
+    # triangle in 2D, contributing 3 edges; duplicates collapse via the set).
+    edge_set = set()
+    for simplex in tri.simplices:
+        a, b, c = int(simplex[0]), int(simplex[1]), int(simplex[2])
+        edge_set.add((min(a, b), max(a, b)))
+        edge_set.add((min(b, c), max(b, c)))
+        edge_set.add((min(a, c), max(a, c)))
+
+    # Keep only astrocyte–astrocyte edges, convert to local astro indices,
+    # apply the soft distance cap.
+    src, tgt = [], []
+    for (gi, gj) in edge_set:
+        if gi < Nn or gj < Nn:
+            continue                          # at least one endpoint is a neuron
+        ai = gi - Nn
+        aj = gj - Nn
+        d = float(np.hypot(A_pos[ai, 0] - A_pos[aj, 0],
+                           A_pos[ai, 1] - A_pos[aj, 1]))
+        if d <= gj_max_dist:
+            # Emit both directions to match the existing GJ convention.
+            src.append(ai); tgt.append(aj)
+            src.append(aj); tgt.append(ai)
+
+    if not src:
+        return (np.array([], dtype=np.int32), np.array([], dtype=np.int32))
+
+    return (np.asarray(src, dtype=np.int32),
+            np.asarray(tgt, dtype=np.int32))
+
+
+def nearest_astro_for_synapse(bouton_pos, A_pos, stoa_cutoff=70.0):
+    """
+    Assign each synaptic bouton to AT MOST ONE astrocyte — the nearest one
+    within `stoa_cutoff` µm.
+
+    This enforces a strict 1-synapse-to-1-astrocyte mapping at the bouton
+    level (the reverse direction, many synapses → one astrocyte, is
+    unconstrained, as is biologically expected: a single astrocyte
+    ensheathes thousands of synapses).
+
+    Distance is measured from the BOUTON position (S_x_syn, S_y_syn), not
+    from any neuronal soma.
+
+    Parameters
+    ----------
+    bouton_pos : (n_syn, 2) array
+        Bouton (x, y) positions in µm.
+    A_pos : (Na, 2) array
+        Astrocyte (x, y) positions in µm.
+    stoa_cutoff : float
+        Hard distance cutoff in µm. Synapses whose nearest astrocyte lies
+        farther than this are left unassigned (no StoA link).
+
+    Returns
+    -------
+    StoA_i, StoA_j : 1-D int32 arrays
+        Synapse → astrocyte pair list. By construction `StoA_i` contains no
+        duplicates (each synapse appears at most once).
+    """
+    from scipy.spatial import cKDTree
+
+    n_syn = int(len(bouton_pos))
+    Na    = int(len(A_pos))
+    if n_syn == 0 or Na == 0:
+        return (np.array([], dtype=np.int32), np.array([], dtype=np.int32))
+
+    tree = cKDTree(A_pos)
+    # k=1 nearest neighbour for each bouton.
+    dists, idx_nearest = tree.query(bouton_pos, k=1)
+
+    keep = dists <= float(stoa_cutoff)
+    syn_idx   = np.where(keep)[0].astype(np.int32)
+    astro_idx = idx_nearest[keep].astype(np.int32)
+
+    return (syn_idx, astro_idx)
+
 
 def get_Raster(Traces,fs,low_f=200,high_f=2000,Visible=True):
     from scipy import signal
