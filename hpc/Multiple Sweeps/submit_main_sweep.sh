@@ -36,7 +36,7 @@ OUTPUT_DIR="./sweep_${PBS_JOBID%%.*}"       # one dir per PBS job
 SYN_PDIST_CSV=""                            # leave empty → auto-discover in LIB_DIR
 
 # ─── Sweep size ─────────────────────────────────────────────────────────
-N_TOPOLOGIES=10000          # upper bound; loop exits on walltime kill
+N_TOPOLOGIES=2          # upper bound; loop exits on walltime kill
 N_PARAMS_PER_WORKER=1       # 1 = max-parallelism design (one param vector
                             #     per worker per topology, fresh compile each)
                             # >1 = each worker compiles once then runs k
@@ -48,7 +48,7 @@ CONN_PROB_LO=0.1
 CONN_PROB_HI=0.6
 
 # ─── Simulation settings ────────────────────────────────────────────────
-SIMTIME=180             # simulated duration [seconds]
+SIMTIME=50             # simulated duration [seconds]
 MODE="Full"             # Full | Neuronal
 
 # ─── Population sizes ───────────────────────────────────────────────────
@@ -81,7 +81,7 @@ module load python
 
 # Activate the conda env
 source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate prova
+conda activate brian_env
 
 # Make output dir
 mkdir -p "$OUTPUT_DIR"
