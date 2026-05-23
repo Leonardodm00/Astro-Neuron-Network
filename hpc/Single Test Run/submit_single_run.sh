@@ -38,9 +38,14 @@ C_MAX=1100              # side length of the square arena [µm]
 # ─── Connectivity parameters ────────────────────────────────────────────
 CONN_PROB=0.107         # neuron→neuron Bernoulli connection probability
 DISPL_BIAS=15           # constant offset added to every sampled distance [µm]
-GJ_DIST=200             # KDTree radius for gap-junction coupling [µm]
+
+# Astrocyte topology rule — Wallach et al. 2014 joint-Voronoi (default)
+# or legacy distance-based. See Report5_Topology_Wallach.md.
+TOPOLOGY_MODE="wallach" # wallach | distance
+GJ_DIST=200             # [distance only] KDTree radius for GJC [µm]
+GJ_MAX_DIST=150         # [wallach  only] soft cap on Voronoi-adjacent GJC [µm]
 STOA_CUTOFF=70          # hard distance cutoff for synapse→astrocyte links [µm]
-STOA_SIGMA=200          # σ of Gaussian StoA connection probability [µm]
+STOA_SIGMA=200          # [distance only] σ of Gaussian StoA acceptance [µm]
 
 # ─── Seeds ──────────────────────────────────────────────────────────────
 SEED_DEVICE=50
@@ -105,7 +110,8 @@ echo "Library dir:           $LIB_DIR"
 echo "Output dir:            $OUTPUT_DIR"
 echo "Mode:                  $MODE   (Nn=$NN, Na=$NA, c_max=$C_MAX µm)"
 echo "Simtime:               $SIMTIME s"
-echo "Connectivity:          p=$CONN_PROB   gj_dist=$GJ_DIST µm   stoa_cutoff=$STOA_CUTOFF µm   stoa_sigma=$STOA_SIGMA µm"
+echo "Topology rule:         $TOPOLOGY_MODE   (gj_dist=$GJ_DIST µm [distance]   gj_max_dist=$GJ_MAX_DIST µm [wallach])"
+echo "Connectivity:          p=$CONN_PROB   stoa_cutoff=$STOA_CUTOFF µm   stoa_sigma=$STOA_SIGMA µm [distance]"
 echo "Bouton placement:      Sholl PDF + displ_bias=$DISPL_BIAS µm"
 echo "Seeds:                 device=$SEED_DEVICE  neuron=$SEED_NEURON  synapse=$SEED_SYNAPSE  astro=$SEED_ASTRO  run=${SEED_RUN:-replay}"
 echo "Compilation:           OMP_NUM_THREADS=$OMP_NUM_THREADS   MAKEFLAGS='$MAKEFLAGS'"
@@ -122,7 +128,9 @@ ARGS=(
     --c_max         "$C_MAX"
     --conn_prob     "$CONN_PROB"
     --displ_bias    "$DISPL_BIAS"
+    --topology_mode "$TOPOLOGY_MODE"
     --gj_dist       "$GJ_DIST"
+    --gj_max_dist   "$GJ_MAX_DIST"
     --stoa_cutoff   "$STOA_CUTOFF"
     --stoa_sigma    "$STOA_SIGMA"
     --seed_device   "$SEED_DEVICE"
