@@ -401,6 +401,31 @@ int Binomial_fun(int n, double p, int _vectorisation_idx) {
     device.build(run=False, directory=None)
     t_compile = time.time() - t0_compile
 
+    # ── Detect whether this Brian2 supports device.run(seed=...) ─────────────
+    # The kwarg was added in Brian2 ≥2.5.  Older installs (which is what
+    # davinci-1 ships by default) raise TypeError on first use.  Detect once,
+    # before the inner loop, so we don't spam _failures.jsonl with the same
+    # 48 spurious TypeErrors per topology.
+    import inspect
+    try:
+        _run_sig = inspect.signature(device.run)
+        _supports_seed = 'seed' in _run_sig.parameters
+    except (TypeError, ValueError):
+        _supports_seed = False   # can't introspect → assume old API
+    noise_mode = 'fresh' if _supports_seed else 'paired'
+
+    if not _supports_seed:
+        print(
+            f'[worker {worker_id:03d}] NOTE: This Brian2 install lacks '
+            f"device.run(seed=...).  Falling back to PAIRED-COMPARISON mode "
+            f"(the cpp_standalone binary replays the build-time RNG sequence; "
+            f"all parameter vectors within topo_{topo_idx:05d} see the same "
+            f"(rand()-0.5)*I_inj initialisation and the same xi noise stream). "
+            f"To enable true fresh-noise-per-run, upgrade Brian2 ≥2.5 in the "
+            f"conda env:  pip install --upgrade brian2",
+            flush=True,
+        )
+
     # ── Inner loop: device.run() once per parameter vector ──────────────────
     # Each iteration is wrapped in try/except.  A run that crashes the
     # cpp_standalone binary, raises a Brian2 exception, or yields non-finite
@@ -440,7 +465,10 @@ int Binomial_fun(int n, double p, int _vectorisation_idx) {
         # ──────────────────────────────────────────────────────────────────
         try:
             t0_run = time.time()
-            device.run(run_args=run_args, seed=int(seed_run))
+            if _supports_seed:
+                device.run(run_args=run_args, seed=int(seed_run))
+            else:
+                device.run(run_args=run_args)
             t_run = time.time() - t0_run
 
             # Harvest --------------------------------------------------------
@@ -525,6 +553,11 @@ int Binomial_fun(int n, double p, int _vectorisation_idx) {
         # ───── Success path: save .npz + .json ─────────────────────────────
         n_consecutive_failures = 0
 
+        # In paired mode, store seed_run as -1: that draw was not actually
+        # applied to the binary, so keeping its sampled value would be
+        # misleading (would imply reproducibility we don't have).
+        seed_run_saved = int(seed_run) if _supports_seed else -1
+
         npz_name = f'iter_{iter_idx:05d}.npz'
         npz_path = os.path.join(topo_dir, npz_name)
         np.savez_compressed(
@@ -532,7 +565,8 @@ int Binomial_fun(int n, double p, int _vectorisation_idx) {
             params=params,
             conn_prob=np.float64(conn_prob),
             topo_idx=np.int32(topo_idx),
-            seed_run=np.int64(seed_run),
+            seed_run=np.int64(seed_run_saved),
+            noise_mode=np.array(noise_mode),     # 'fresh' or 'paired'
             spk_N_t=spk_N_t, spk_N_i=spk_N_i,
             spk_A_t=spk_A_t, spk_A_i=spk_A_i,
         )
@@ -547,7 +581,8 @@ int Binomial_fun(int n, double p, int _vectorisation_idx) {
             'conn_prob':          float(conn_prob),
             'params':             params.tolist(),
             'param_names':        PARAM_NAMES,
-            'seed_run':           int(seed_run),
+            'seed_run':           seed_run_saved,
+            'noise_mode':         noise_mode,
             'n_neuronal_spikes':  int(len(spk_N_t)),
             'n_astrocyte_events': int(len(spk_A_t)),
             'mean_FR_Hz':         float(len(spk_N_t) / (cli['simtime'] * max(Nn, 1))),
