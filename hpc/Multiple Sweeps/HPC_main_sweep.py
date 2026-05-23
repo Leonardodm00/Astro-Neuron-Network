@@ -681,9 +681,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('--Na',          type=int,   default=43)
     p.add_argument('--c_max',       type=float, default=1100.0, metavar='UM')
     p.add_argument('--displ_bias',  type=float, default=15.0,   metavar='UM')
-    p.add_argument('--gj_dist',     type=float, default=200.0,  metavar='UM')
+    p.add_argument('--topology_mode', default='wallach',
+                   choices=['wallach', 'distance'],
+                   help='Astrocyte connectivity rule (Wallach 2014 joint '
+                        'Voronoi or legacy distance-based). '
+                        'Default: %(default)s.')
+    p.add_argument('--gj_dist',     type=float, default=200.0,  metavar='UM',
+                   help='[topology_mode=distance only] KDTree radius for '
+                        'GJC. Default: %(default)s.')
+    p.add_argument('--gj_max_dist', type=float, default=150.0,  metavar='UM',
+                   help='[topology_mode=wallach only] Soft distance cap on '
+                        'top of the Voronoi rule. Default: %(default)s.')
     p.add_argument('--stoa_cutoff', type=float, default=70.0,   metavar='UM')
-    p.add_argument('--stoa_sigma',  type=float, default=200.0,  metavar='UM')
+    p.add_argument('--stoa_sigma',  type=float, default=200.0,  metavar='UM',
+                   help='[topology_mode=distance only] σ of the Gaussian '
+                        'StoA acceptance. Default: %(default)s.')
 
     # Simulation --------------------------------------------------------------
     p.add_argument('--simtime', type=float, default=180.0, metavar='SECONDS')
@@ -750,7 +762,9 @@ def _print_banner(args, n_workers, seed_master) -> None:
     print(f'  c_max                : {args.c_max} µm')
     print(f'  simtime              : {args.simtime} s')
     print(f'  conn_prob range      : [{args.conn_prob_lo}, {args.conn_prob_hi}]')
+    print(f'  topology_mode        : {args.topology_mode}')
     print(f'  topology fixed args  : displ_bias={args.displ_bias} gj_dist={args.gj_dist} '
+          f'gj_max_dist={args.gj_max_dist} '
           f'stoa_cutoff={args.stoa_cutoff} stoa_sigma={args.stoa_sigma}')
     print(f'  n_workers            : {n_workers}')
     print(f'  n_params_per_worker  : {args.n_params_per_worker}')
@@ -850,6 +864,8 @@ def main():
                 seed_synapse=seed_synapse_k,
                 seed_astro=seed_astro_k,
                 mode=args.mode,
+                topology_mode=args.topology_mode,
+                gj_max_dist=args.gj_max_dist,
             )
         except Exception as e:
             print(f'[main] topo_{topo_idx:05d}: FAILED to build topology '
@@ -863,6 +879,8 @@ def main():
             topo, c_max=args.c_max, mode=args.mode,
             out_path=os.path.join(topo_dir, 'spatial_layout.png'),
             dpi=args.dpi,
+            topology_mode=args.topology_mode,
+            also_connectivity=True,
         )
 
         # 3) Topology metadata (sidecar) -------------------------------------
@@ -878,7 +896,9 @@ def main():
             'Na':                Na_eff,
             'c_max':             float(args.c_max),
             'displ_bias':        float(args.displ_bias),
+            'topology_mode':     args.topology_mode,
             'gj_dist':           float(args.gj_dist),
+            'gj_max_dist':       float(args.gj_max_dist),
             'stoa_cutoff':       float(args.stoa_cutoff),
             'stoa_sigma':        float(args.stoa_sigma),
             'n_synapses':        int(len(topo['S_i'])),
