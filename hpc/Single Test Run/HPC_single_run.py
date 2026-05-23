@@ -150,15 +150,35 @@ def build_parser() -> argparse.ArgumentParser:
                         'with the soma centre (default: %(default)s).')
 
     # ── Astrocyte connectivity ────────────────────────────────────────────────
+    p.add_argument('--topology_mode', default='wallach',
+                   choices=['wallach', 'distance'],
+                   help='Rule for building astrocyte connectivity from cell '
+                        'positions. "wallach" (Wallach et al. 2014, default) '
+                        'uses the joint (neurons ∪ astrocytes) Voronoi '
+                        'tessellation: GJC = Delaunay-adjacent astrocyte '
+                        'pairs capped at --gj_max_dist; StoA = each bouton '
+                        'is assigned to its nearest astrocyte within '
+                        '--stoa_cutoff (strictly 1-to-1). "distance" is the '
+                        'legacy rule (KDTree radius for GJC, per-astrocyte '
+                        'Gaussian acceptance for StoA, may yield 1-syn → '
+                        'many-astro). Default: %(default)s.')
     p.add_argument('--gj_dist', type=float, default=200.0, metavar='UM',
-                   help='KDTree radius for gap-junction coupling between '
-                        'astrocytes (µm, default: %(default)s).')
+                   help='[topology_mode=distance only] KDTree radius for '
+                        'gap-junction coupling between astrocytes '
+                        '(µm, default: %(default)s).')
+    p.add_argument('--gj_max_dist', type=float, default=150.0, metavar='UM',
+                   help='[topology_mode=wallach only] Soft distance cap '
+                        'applied on top of the Voronoi-adjacency rule; '
+                        'astrocyte pairs farther than this are NOT GJ-coupled '
+                        'even if their Voronoi cells are contiguous '
+                        '(µm, default: %(default)s).')
     p.add_argument('--stoa_cutoff', type=float, default=70.0, metavar='UM',
                    help='Hard distance cutoff for synapse→astrocyte links '
                         '(µm, default: %(default)s).')
     p.add_argument('--stoa_sigma', type=float, default=200.0, metavar='UM',
-                   help='σ of the Gaussian connection probability for '
-                        'synapse→astrocyte links (µm, default: %(default)s).')
+                   help='[topology_mode=distance only] σ of the Gaussian '
+                        'connection probability for synapse→astrocyte links '
+                        '(µm, default: %(default)s).')
 
     # ── Seeds ────────────────────────────────────────────────────────────────
     p.add_argument('--seed_device',  type=int, default=50)
@@ -222,7 +242,9 @@ def build_topology(Nn, Na, c_max,
                    syn_prob_csv, displ_bias,
                    gj_dist, stoa_cutoff, stoa_sigma,
                    seed_neuron, seed_synapse, seed_astro,
-                   mode='Full') -> dict:
+                   mode='Full',
+                   topology_mode='wallach',
+                   gj_max_dist=150.0) -> dict:
     """
     Build the full network topology using plain NumPy / SciPy.
     No Brian2 device is touched.
@@ -233,6 +255,25 @@ def build_topology(Nn, Na, c_max,
     `displ_bias` µm) and the bouton is placed along the line connecting
     the pre and post somata, moving toward the pre-soma — exactly
     mirroring `get_synapse_coordinates` in the library.
+
+    Two topology rules for astrocyte connectivity are supported, selected
+    by `topology_mode`:
+
+      * 'wallach' (default, Wallach et al. 2014):
+        GJC: Delaunay-adjacency in the JOINT (neurons ∪ astrocytes) Voronoi
+             tessellation, capped at `gj_max_dist` µm.
+        StoA: each bouton is assigned to its NEAREST astrocyte within
+              `stoa_cutoff` µm — strictly 1 astrocyte per synapse.
+        The `gj_dist` and `stoa_sigma` parameters are ignored.
+
+      * 'distance' (legacy):
+        GJC: every astrocyte pair within `gj_dist` µm is connected (KDTree
+             radius query).
+        StoA: every (synapse, astrocyte) pair within `stoa_cutoff` µm is
+              independently accepted with probability
+              p = exp(-d² / (2·stoa_sigma²)). A synapse may be linked to
+              multiple astrocytes under this rule.
+        The `gj_max_dist` parameter is ignored.
 
     Returns
     -------
@@ -340,46 +381,71 @@ def build_topology(Nn, Na, c_max,
             StoA_i=np.array([], dtype=np.int32),
             StoA_j=np.array([], dtype=np.int32),
         )
-        _log_topology(topo, _wall.time() - t0)
+        _log_topology(topo, _wall.time() - t0, topology_mode=topology_mode)
         return topo
 
     # ── Astrocyte positions ───────────────────────────────────────────────────
     A_pos = rng_a.uniform(0.0, c_max, (Na, 2))
 
-    # ── Gap-junction connectivity (KDTree, bidirectional) ─────────────────────
-    tree_a = KDTree(A_pos)
-    gj_pairs_set = tree_a.query_pairs(r=gj_dist)        # set of (i, j) with i < j
-    if gj_pairs_set:
-        gj_arr = np.array(sorted(gj_pairs_set), dtype=np.int32)
-        # Make bidirectional.
-        GJ_i = np.concatenate([gj_arr[:, 0], gj_arr[:, 1]])
-        GJ_j = np.concatenate([gj_arr[:, 1], gj_arr[:, 0]])
+    # Validate topology_mode early — fail fast in pass 1 rather than partway
+    # through pass 2.
+    if topology_mode not in ('wallach', 'distance'):
+        raise ValueError(
+            f"build_topology: unknown topology_mode={topology_mode!r}. "
+            "Expected 'wallach' or 'distance'."
+        )
+
+    # ── Gap-junction connectivity ─────────────────────────────────────────────
+    if topology_mode == 'wallach':
+        # Joint Voronoi (≡ Delaunay) over neurons ∪ astrocytes; keep only
+        # astrocyte–astrocyte edges; soft cap at `gj_max_dist` µm.
+        # Wallach et al. 2014, Fig. 2; De Pittà & Berry 2019, ch. 7, eq. (7.9).
+        from ASD_fun_BD_cpp import voronoi_astro_gj_pairs
+        GJ_i, GJ_j = voronoi_astro_gj_pairs(N_pos, A_pos,
+                                            gj_max_dist=gj_max_dist)
     else:
-        GJ_i = np.array([], dtype=np.int32)
-        GJ_j = np.array([], dtype=np.int32)
+        # Legacy KDTree radius rule — every pair within `gj_dist` µm.
+        tree_a = KDTree(A_pos)
+        gj_pairs_set = tree_a.query_pairs(r=gj_dist)        # set of (i, j) with i < j
+        if gj_pairs_set:
+            gj_arr = np.array(sorted(gj_pairs_set), dtype=np.int32)
+            # Make bidirectional.
+            GJ_i = np.concatenate([gj_arr[:, 0], gj_arr[:, 1]])
+            GJ_j = np.concatenate([gj_arr[:, 1], gj_arr[:, 0]])
+        else:
+            GJ_i = np.array([], dtype=np.int32)
+            GJ_j = np.array([], dtype=np.int32)
 
     # ── Synapse → Astrocyte connectivity ──────────────────────────────────────
-    # For each astrocyte, find all boutons within stoa_cutoff µm.
-    # Accept each candidate with Gaussian probability p ~ exp(-d²/2σ²).
     bouton_pos = np.column_stack([S_x_syn, S_y_syn])    # (n_syn, 2)
-    tree_s     = KDTree(bouton_pos)
 
-    candidates = tree_s.query_ball_point(A_pos, r=stoa_cutoff, workers=1)
+    if topology_mode == 'wallach':
+        # Each bouton → nearest astrocyte within `stoa_cutoff`. By
+        # construction every synapse appears at most once in StoA_i.
+        from ASD_fun_BD_cpp import nearest_astro_for_synapse
+        StoA_i, StoA_j = nearest_astro_for_synapse(
+            bouton_pos, A_pos, stoa_cutoff=stoa_cutoff
+        )
+    else:
+        # Legacy per-astrocyte Gaussian acceptance — a synapse may end up
+        # linked to multiple astrocytes.
+        tree_s     = KDTree(bouton_pos)
+        candidates = tree_s.query_ball_point(A_pos, r=stoa_cutoff, workers=1)
 
-    StoA_i_list, StoA_j_list = [], []
-    for aj, syn_indices in enumerate(candidates):
-        if not syn_indices:
-            continue
-        syn_idx = np.array(syn_indices, dtype=np.int32)
-        d = np.linalg.norm(bouton_pos[syn_idx] - A_pos[aj], axis=1)
-        p = np.exp(-(d ** 2) / (2.0 * stoa_sigma ** 2))
-        accept = rng_s.random(len(syn_idx)) < p
-        for si in syn_idx[accept]:
-            StoA_i_list.append(si)
-            StoA_j_list.append(aj)
+        StoA_i_list, StoA_j_list = [], []
+        for aj, syn_indices in enumerate(candidates):
+            if not syn_indices:
+                continue
+            syn_idx = np.array(syn_indices, dtype=np.int32)
+            d = np.linalg.norm(bouton_pos[syn_idx] - A_pos[aj], axis=1)
+            p = np.exp(-(d ** 2) / (2.0 * stoa_sigma ** 2))
+            accept = rng_s.random(len(syn_idx)) < p
+            for si in syn_idx[accept]:
+                StoA_i_list.append(si)
+                StoA_j_list.append(aj)
 
-    StoA_i = np.array(StoA_i_list, dtype=np.int32)
-    StoA_j = np.array(StoA_j_list, dtype=np.int32)
+        StoA_i = np.array(StoA_i_list, dtype=np.int32)
+        StoA_j = np.array(StoA_j_list, dtype=np.int32)
 
     topo = dict(
         N_pos=N_pos,
@@ -388,11 +454,11 @@ def build_topology(Nn, Na, c_max,
         GJ_i=GJ_i, GJ_j=GJ_j,
         StoA_i=StoA_i, StoA_j=StoA_j,
     )
-    _log_topology(topo, _wall.time() - t0)
+    _log_topology(topo, _wall.time() - t0, topology_mode=topology_mode)
     return topo
 
 
-def _log_topology(topo: dict, elapsed: float) -> None:
+def _log_topology(topo: dict, elapsed: float, topology_mode: str = '') -> None:
     """Print a compact topology summary."""
     n_syn  = len(topo['S_i'])
     n_gj   = len(topo['GJ_i'])
@@ -403,8 +469,9 @@ def _log_topology(topo: dict, elapsed: float) -> None:
     print(f'         {Nn} neurons     {n_syn} synapses '
           f'(p_actual = {n_syn / max(Nn*(Nn-1), 1):.4f})')
     if Na > 0:
+        mode_tag = f' ({topology_mode})' if topology_mode else ''
         print(f'         {Na} astrocytes  {n_gj} GJ links  '
-              f'{n_stoa} StoA links')
+              f'{n_stoa} StoA links{mode_tag}')
 
 
 def save_topology(topo: dict, out_dir: str) -> str:
@@ -752,77 +819,287 @@ def plot_astrocyte_raster(spk_A_t, spk_A_i, simtime_s, Na, params,
     print(f'[plot] Astrocyte raster → {out_path}')
 
 
-def plot_spatial_layout(topo: dict, c_max: float, mode: str,
-                        out_path: str, dpi: int = 200):
+# =============================================================================
+# Topology visualisations
+# =============================================================================
+# Three complementary views are produced for every topology:
+#   1) plot_spatial_layout  — 2D anatomy:    cells + boutons + Voronoi overlay
+#   2) plot_spatial_connectivity — 2D wiring: cells + Voronoi + GJ + StoA links
+#   3) plot_3d_layered_topology  — 3D layered: neurons / astrocytes z-stacked
+#                                  with all link classes (single_run only)
+# -----------------------------------------------------------------------------
+
+# Visual palette — colour-blind safe (Wong, 2011), shared across all 3 plots.
+_VIZ_NEURON_FACE  = '#1f4e79'   # deep blue
+_VIZ_NEURON_EDGE  = '#0a2a40'
+_VIZ_ASTRO_FACE   = '#2e7d32'   # green (Wallach Fig. 2 convention)
+_VIZ_ASTRO_EDGE   = '#0e3010'
+_VIZ_ASTRO_FILL   = '#a5d6a7'   # pale green fill for astrocyte Voronoi cells
+_VIZ_NEURON_FILL  = '#fff7eb'   # warm cream fill for neuron Voronoi cells
+_VIZ_BOUTON       = '#c62828'   # red dots
+_VIZ_VORONOI      = '#9aa0a6'   # gray Voronoi ridges
+_VIZ_GJ           = '#f9a825'   # amber GJ links
+_VIZ_STOA         = '#6a1b9a'   # purple StoA links
+
+
+def _voronoi_finite_polygons_2d(vor, radius=None):
     """
-    Single-panel top-down view of the network topology.
+    Reconstruct infinite Voronoi regions in a 2D diagram into finite polygons,
+    by clipping rays to a large bounding circle of radius `radius`.
 
-    Drawn elements (back to front):
-        • arena boundary
-        • gap-junction links between astrocytes      (faint amber lines)
-        • synapse → astrocyte links                  (faint olive lines)
-        • synapse boutons                            (small red dots)
-        • astrocytes                                 (amber diamonds)
-        • neurons                                    (navy circles)
+    Adapted from a widely-used SciPy cookbook recipe
+    (https://gist.github.com/pv/8036995). Returns (regions, vertices) where
+    `regions` is a list of vertex-index lists (one polygon per input point),
+    and `vertices` is the corresponding (n_vertices, 2) coordinate array.
+    """
+    if vor.points.shape[1] != 2:
+        raise ValueError("voronoi_finite_polygons_2d requires 2D input")
 
-    All inputs are plain numpy arrays from `build_topology`; no Brian2.
+    new_regions = []
+    new_vertices = vor.vertices.tolist()
+    center = vor.points.mean(axis=0)
+
+    if radius is None:
+        radius = float(vor.points.ptp().max()) * 2.0
+
+    # Build ridge map: input point index → list of (other point, v1, v2)
+    all_ridges = {}
+    for (p1, p2), (v1, v2) in zip(vor.ridge_points, vor.ridge_vertices):
+        all_ridges.setdefault(p1, []).append((p2, v1, v2))
+        all_ridges.setdefault(p2, []).append((p1, v1, v2))
+
+    for p1, region_idx in enumerate(vor.point_region):
+        vertices = vor.regions[region_idx]
+        if all(v >= 0 for v in vertices):
+            new_regions.append(vertices)
+            continue
+
+        ridges = all_ridges.get(p1, [])
+        new_region = [v for v in vertices if v >= 0]
+
+        for p2, v1, v2 in ridges:
+            if v2 < 0:
+                v1, v2 = v2, v1
+            if v1 >= 0:
+                continue                   # already finite
+
+            # Compute the missing endpoint by extending the bisector.
+            t = vor.points[p2] - vor.points[p1]
+            t /= np.linalg.norm(t)
+            n = np.array([-t[1], t[0]])
+
+            midpoint = vor.points[[p1, p2]].mean(axis=0)
+            direction = np.sign(np.dot(midpoint - center, n)) * n
+            far_point = vor.vertices[v2] + direction * radius
+
+            new_region.append(len(new_vertices))
+            new_vertices.append(far_point.tolist())
+
+        # Sort polygon vertices counter-clockwise around their centroid.
+        vs = np.asarray([new_vertices[v] for v in new_region])
+        c  = vs.mean(axis=0)
+        angles = np.arctan2(vs[:, 1] - c[1], vs[:, 0] - c[0])
+        new_region = [new_region[i] for i in np.argsort(angles)]
+
+        new_regions.append(new_region)
+
+    return new_regions, np.asarray(new_vertices)
+
+
+def _draw_voronoi_overlay(ax, N_pos, A_pos, c_max,
+                          fill_astro=True, fill_neuron=False,
+                          line_alpha=0.35, line_width=0.4):
+    """
+    Draw the JOINT Voronoi tessellation of neurons + astrocytes on `ax`,
+    clipped to the [0, c_max]² arena. Astrocyte Voronoi cells are lightly
+    tinted to make the astrocyte "anatomical domains" visible at a glance,
+    in the spirit of Wallach et al. 2014, Fig. 2B/C.
+
+    Cell positions must be supplied as (N, 2) numpy arrays in µm.
+    """
+    from scipy.spatial import Voronoi
+    from matplotlib.patches import Polygon as MplPolygon
+    from matplotlib.collections import PatchCollection
+
+    Nn = int(len(N_pos))
+    Na = int(len(A_pos))
+    if Nn + Na < 3:
+        return                                 # cannot build a Voronoi diagram
+
+    points = np.vstack([N_pos, A_pos])
+    try:
+        vor = Voronoi(points)
+    except Exception:
+        return                                 # degenerate (all collinear etc.)
+
+    regions, vertices = _voronoi_finite_polygons_2d(vor, radius=4.0 * c_max)
+
+    # Clip polygons to the arena rectangle [0, c_max]² (Sutherland–Hodgman).
+    arena = np.array([
+        [0.0, 0.0], [c_max, 0.0], [c_max, c_max], [0.0, c_max]
+    ])
+
+    astro_patches  = []
+    neuron_patches = []
+    for pt_idx, region in enumerate(regions):
+        if not region:
+            continue
+        poly = vertices[region]
+        poly = _clip_polygon_to_rect(poly, 0.0, 0.0, c_max, c_max)
+        if poly is None or len(poly) < 3:
+            continue
+        if pt_idx >= Nn:
+            astro_patches.append(MplPolygon(poly, closed=True))
+        else:
+            neuron_patches.append(MplPolygon(poly, closed=True))
+
+    if fill_neuron and neuron_patches:
+        pc = PatchCollection(neuron_patches, facecolor=_VIZ_NEURON_FILL,
+                             edgecolor=_VIZ_VORONOI,
+                             linewidths=line_width, alpha=0.55, zorder=0.5)
+        ax.add_collection(pc)
+    if fill_astro and astro_patches:
+        pc = PatchCollection(astro_patches, facecolor=_VIZ_ASTRO_FILL,
+                             edgecolor=_VIZ_VORONOI,
+                             linewidths=line_width, alpha=0.55, zorder=0.5)
+        ax.add_collection(pc)
+
+    if not (fill_astro or fill_neuron):
+        # Pure outline mode — draw all polygons' edges in pale gray.
+        pc = PatchCollection(astro_patches + neuron_patches,
+                             facecolor='none',
+                             edgecolor=_VIZ_VORONOI,
+                             linewidths=line_width, alpha=line_alpha,
+                             zorder=0.5)
+        ax.add_collection(pc)
+
+
+def _clip_polygon_to_rect(poly, xmin, ymin, xmax, ymax):
+    """
+    Sutherland–Hodgman polygon clipping against an axis-aligned rectangle.
+    Returns the clipped polygon as an (n, 2) array, or None if the polygon
+    lies entirely outside the rectangle.
+    """
+    def clip(subject, edge):
+        if len(subject) == 0:
+            return subject
+        output = []
+        s = subject[-1]
+        for e in subject:
+            if _inside(e, edge, xmin, ymin, xmax, ymax):
+                if not _inside(s, edge, xmin, ymin, xmax, ymax):
+                    output.append(_intersect(s, e, edge, xmin, ymin, xmax, ymax))
+                output.append(e)
+            elif _inside(s, edge, xmin, ymin, xmax, ymax):
+                output.append(_intersect(s, e, edge, xmin, ymin, xmax, ymax))
+            s = e
+        return output
+
+    subject = list(map(tuple, poly))
+    for edge in ('left', 'right', 'bottom', 'top'):
+        subject = clip(subject, edge)
+        if not subject:
+            return None
+    return np.asarray(subject)
+
+
+def _inside(p, edge, xmin, ymin, xmax, ymax):
+    if edge == 'left':   return p[0] >= xmin
+    if edge == 'right':  return p[0] <= xmax
+    if edge == 'bottom': return p[1] >= ymin
+    if edge == 'top':    return p[1] <= ymax
+    raise ValueError(edge)
+
+
+def _intersect(p1, p2, edge, xmin, ymin, xmax, ymax):
+    # Parametric intersection of the segment p1→p2 with the clip edge.
+    x1, y1 = p1
+    x2, y2 = p2
+    if   edge == 'left':   x, y = xmin, y1 + (y2 - y1) * (xmin - x1) / (x2 - x1)
+    elif edge == 'right':  x, y = xmax, y1 + (y2 - y1) * (xmax - x1) / (x2 - x1)
+    elif edge == 'bottom': x, y = x1 + (x2 - x1) * (ymin - y1) / (y2 - y1), ymin
+    elif edge == 'top':    x, y = x1 + (x2 - x1) * (ymax - y1) / (y2 - y1), ymax
+    return (x, y)
+
+
+def _topology_summary_str(topo, mode, topology_mode=''):
+    n_syn  = len(topo['S_i'])
+    Nn     = len(topo['N_pos'])
+    Na     = len(topo['A_pos']) if mode == 'Full' else 0
+    n_gj_u = _count_undirected_pairs(topo.get('GJ_i', []), topo.get('GJ_j', []))
+    n_stoa = len(topo.get('StoA_i', []))
+    if mode == 'Full':
+        tag = f' [{topology_mode}]' if topology_mode else ''
+        return (f'{Nn} neurons · {Na} astrocytes · {n_syn} synapses · '
+                f'{n_gj_u} GJ pairs · {n_stoa} StoA links{tag}')
+    return f'{Nn} neurons · {n_syn} synapses (Neuronal mode)'
+
+
+def _count_undirected_pairs(I, J):
+    seen = set()
+    for i, j in zip(I, J):
+        seen.add((int(min(i, j)), int(max(i, j))))
+    return len(seen)
+
+
+def plot_spatial_layout(topo: dict, c_max: float, mode: str,
+                        out_path: str, dpi: int = 200,
+                        topology_mode: str = '',
+                        also_connectivity: bool = True):
+    """
+    Anatomy view (2D top-down): joint Voronoi tessellation of neurons +
+    astrocytes (astrocyte cells tinted pale green), with all somata and
+    boutons drawn on top. This is the "what does the tissue look like?"
+    plot — connectivity is drawn on a separate companion figure (see
+    `plot_spatial_connectivity` below), unless `also_connectivity=False`.
+
+    Output written to `out_path`. If `also_connectivity=True` (default), the
+    companion connectivity plot is written to the same directory with the
+    filename derived from `out_path` (e.g. spatial_layout.png →
+    spatial_connectivity.png).
     """
     from matplotlib.patches import Rectangle
 
-    fig, ax = plt.subplots(figsize=(9, 9))
+    fig, ax = plt.subplots(figsize=(9.0, 9.0))
     fig.patch.set_facecolor('white')
-    ax.set_facecolor('white')
+    ax.set_facecolor('#fafafa')
+
+    # ── Voronoi tessellation (neurons ∪ astrocytes) ─────────────────────────
+    if mode == 'Full' and len(topo['A_pos']):
+        _draw_voronoi_overlay(
+            ax, topo['N_pos'], topo['A_pos'], c_max,
+            fill_astro=True, fill_neuron=False,
+            line_alpha=0.5, line_width=0.4,
+        )
 
     # ── Arena boundary ───────────────────────────────────────────────────────
     ax.add_patch(Rectangle((0.0, 0.0), c_max, c_max,
-                           fill=False, edgecolor='#888888',
-                           linewidth=1.0, linestyle='--', alpha=0.6, zorder=0))
+                           fill=False, edgecolor='#666666',
+                           linewidth=1.0, linestyle='--', alpha=0.7, zorder=1))
 
-    # ── Connectivity (drawn first so markers sit on top) ─────────────────────
-    # Gap-junction links: deduplicate (i, j) since they were stored bidirectionally.
-    if mode == 'Full' and len(topo['GJ_i']):
-        seen = set()
-        for i, j in zip(topo['GJ_i'], topo['GJ_j']):
-            key = (int(min(i, j)), int(max(i, j)))
-            if key in seen:
-                continue
-            seen.add(key)
-            ax.plot([topo['A_pos'][i, 0], topo['A_pos'][j, 0]],
-                    [topo['A_pos'][i, 1], topo['A_pos'][j, 1]],
-                    color=_C_ASTRO, alpha=0.25, linewidth=0.7, zorder=1)
-        n_gj_unique = len(seen)
-    else:
-        n_gj_unique = 0
-
-    # Synapse → astrocyte links.
-    if mode == 'Full' and len(topo['StoA_i']):
-        for si, aj in zip(topo['StoA_i'], topo['StoA_j']):
-            ax.plot([topo['S_x_syn'][si], topo['A_pos'][aj, 0]],
-                    [topo['S_y_syn'][si], topo['A_pos'][aj, 1]],
-                    color='#8a6a00', alpha=0.18, linewidth=0.4, zorder=1)
-
-    # ── Markers ──────────────────────────────────────────────────────────────
+    # ── Boutons (small red dots) ─────────────────────────────────────────────
     n_syn = len(topo['S_i'])
     if n_syn:
         ax.scatter(topo['S_x_syn'], topo['S_y_syn'],
-                   s=6, c='#c62828', alpha=0.55, marker='.',
-                   linewidths=0, zorder=2,
-                   label=f'Synapses ({n_syn})',
+                   s=5, c=_VIZ_BOUTON, alpha=0.55, marker='.',
+                   linewidths=0, zorder=2.5,
+                   label=f'Boutons ({n_syn})',
                    rasterized=True)
 
+    # ── Somata ───────────────────────────────────────────────────────────────
     if mode == 'Full' and len(topo['A_pos']):
         ax.scatter(topo['A_pos'][:, 0], topo['A_pos'][:, 1],
-                   s=80, c=_C_ASTRO, alpha=0.85, marker='D',
-                   edgecolors='#3a1900', linewidths=0.7, zorder=3,
+                   s=85, c=_VIZ_ASTRO_FACE, alpha=0.9, marker='D',
+                   edgecolors=_VIZ_ASTRO_EDGE, linewidths=0.8, zorder=4,
                    label=f'Astrocytes ({len(topo["A_pos"])})')
 
     ax.scatter(topo['N_pos'][:, 0], topo['N_pos'][:, 1],
-               s=110, c=_C_NEURON, alpha=0.88, marker='o',
-               edgecolors='#0a2a40', linewidths=0.7, zorder=4,
+               s=70, c=_VIZ_NEURON_FACE, alpha=0.9, marker='o',
+               edgecolors=_VIZ_NEURON_EDGE, linewidths=0.7, zorder=4,
                label=f'Neurons ({len(topo["N_pos"])})')
 
-    # ── Frame ────────────────────────────────────────────────────────────────
-    pad = 0.05 * c_max
+    # ── Frame & cosmetics ────────────────────────────────────────────────────
+    pad = 0.04 * c_max
     ax.set_xlim(-pad, c_max + pad)
     ax.set_ylim(-pad, c_max + pad)
     ax.set_aspect('equal', adjustable='box')
@@ -830,22 +1107,15 @@ def plot_spatial_layout(topo: dict, c_max: float, mode: str,
     ax.set_xlabel('x (µm)', fontsize=11)
     ax.set_ylabel('y (µm)', fontsize=11)
     ax.tick_params(axis='both', labelsize=9)
-    ax.grid(True, color='#e8e8e8', linewidth=0.5, linestyle=':', zorder=0)
+    ax.grid(True, color='#ececec', linewidth=0.5, linestyle=':', zorder=0)
     for spine in ('top', 'right'):
         ax.spines[spine].set_visible(False)
     ax.spines['left'].set_color('#444444')
     ax.spines['bottom'].set_color('#444444')
 
-    # Title with topology summary
-    if mode == 'Full':
-        title = (f'Network spatial layout — '
-                 f'{len(topo["N_pos"])} N · {len(topo["A_pos"])} A · '
-                 f'{n_syn} synapses · {n_gj_unique} GJ pairs · '
-                 f'{len(topo["StoA_i"])} StoA links')
-    else:
-        title = (f'Network spatial layout (Neuronal mode) — '
-                 f'{len(topo["N_pos"])} neurons · {n_syn} synapses')
-    ax.set_title(title, fontsize=11, pad=10, color='#222222')
+    ax.set_title('Network anatomy — joint Voronoi tessellation\n'
+                 + _topology_summary_str(topo, mode, topology_mode),
+                 fontsize=11, pad=10, color='#222222')
 
     leg = ax.legend(loc='upper right', fontsize=9, framealpha=0.92,
                     facecolor='white', edgecolor='#cccccc')
@@ -854,7 +1124,334 @@ def plot_spatial_layout(topo: dict, c_max: float, mode: str,
     plt.tight_layout()
     fig.savefig(out_path, dpi=dpi, bbox_inches='tight')
     plt.close(fig)
-    print(f'[plot] Spatial layout → {out_path}')
+    print(f'[plot] Spatial anatomy → {out_path}')
+
+    # Companion connectivity figure
+    if also_connectivity:
+        base, ext = os.path.splitext(out_path)
+        if base.endswith('_layout'):
+            base = base[: -len('_layout')]
+        conn_path = base + '_connectivity' + ext
+        plot_spatial_connectivity(topo, c_max=c_max, mode=mode,
+                                  out_path=conn_path, dpi=dpi,
+                                  topology_mode=topology_mode)
+
+
+def plot_spatial_connectivity(topo: dict, c_max: float, mode: str,
+                              out_path: str, dpi: int = 200,
+                              topology_mode: str = ''):
+    """
+    Connectivity view (2D top-down). Same arena + same Voronoi tessellation
+    as `plot_spatial_layout`, but cells and boutons are desaturated and the
+    GJ links (astrocyte ↔ astrocyte, amber) plus the StoA links (bouton →
+    astrocyte, purple) are drawn on top to make the wiring legible.
+    """
+    from matplotlib.patches import Rectangle
+
+    fig, ax = plt.subplots(figsize=(9.0, 9.0))
+    fig.patch.set_facecolor('white')
+    ax.set_facecolor('#fafafa')
+
+    # Faint Voronoi backdrop (outline only, no fill).
+    if mode == 'Full' and len(topo['A_pos']):
+        _draw_voronoi_overlay(
+            ax, topo['N_pos'], topo['A_pos'], c_max,
+            fill_astro=False, fill_neuron=False,
+            line_alpha=0.28, line_width=0.35,
+        )
+
+    ax.add_patch(Rectangle((0.0, 0.0), c_max, c_max,
+                           fill=False, edgecolor='#666666',
+                           linewidth=1.0, linestyle='--', alpha=0.7, zorder=1))
+
+    # ── StoA links (bouton → astrocyte, drawn first, lightest) ──────────────
+    if mode == 'Full' and len(topo.get('StoA_i', [])):
+        for si, aj in zip(topo['StoA_i'], topo['StoA_j']):
+            ax.plot([topo['S_x_syn'][si], topo['A_pos'][aj, 0]],
+                    [topo['S_y_syn'][si], topo['A_pos'][aj, 1]],
+                    color=_VIZ_STOA, alpha=0.35, linewidth=0.45, zorder=2)
+
+    # ── GJ links (deduplicate bidirectional) ────────────────────────────────
+    n_gj_unique = 0
+    if mode == 'Full' and len(topo.get('GJ_i', [])):
+        seen = set()
+        for i, j in zip(topo['GJ_i'], topo['GJ_j']):
+            key = (int(min(i, j)), int(max(i, j)))
+            if key in seen:
+                continue
+            seen.add(key)
+            ax.plot([topo['A_pos'][i, 0], topo['A_pos'][j, 0]],
+                    [topo['A_pos'][i, 1], topo['A_pos'][j, 1]],
+                    color=_VIZ_GJ, alpha=0.85, linewidth=1.6, zorder=3)
+        n_gj_unique = len(seen)
+
+    # ── Desaturated somata + boutons (background context) ───────────────────
+    n_syn = len(topo['S_i'])
+    if n_syn:
+        ax.scatter(topo['S_x_syn'], topo['S_y_syn'],
+                   s=3, c=_VIZ_BOUTON, alpha=0.25, marker='.',
+                   linewidths=0, zorder=2.5, rasterized=True)
+
+    if mode == 'Full' and len(topo['A_pos']):
+        ax.scatter(topo['A_pos'][:, 0], topo['A_pos'][:, 1],
+                   s=85, c=_VIZ_ASTRO_FACE, alpha=0.85, marker='D',
+                   edgecolors=_VIZ_ASTRO_EDGE, linewidths=0.8, zorder=4)
+
+    ax.scatter(topo['N_pos'][:, 0], topo['N_pos'][:, 1],
+               s=55, c=_VIZ_NEURON_FACE, alpha=0.55, marker='o',
+               edgecolors=_VIZ_NEURON_EDGE, linewidths=0.5, zorder=3.5)
+
+    # ── Legend (proxy artists for the links) ────────────────────────────────
+    from matplotlib.lines import Line2D
+    legend_items = [
+        Line2D([], [], color=_VIZ_GJ, linewidth=2.0,
+               label=f'Astrocyte–astrocyte GJ ({n_gj_unique})'),
+        Line2D([], [], color=_VIZ_STOA, linewidth=1.0, alpha=0.7,
+               label=f'Bouton→astrocyte ({len(topo.get("StoA_i", []))})'),
+        Line2D([], [], color=_VIZ_NEURON_FACE, marker='o', linewidth=0,
+               markeredgecolor=_VIZ_NEURON_EDGE,
+               label=f'Neurons ({len(topo["N_pos"])})'),
+    ]
+    if mode == 'Full' and len(topo['A_pos']):
+        legend_items.insert(
+            2,
+            Line2D([], [], color=_VIZ_ASTRO_FACE, marker='D', linewidth=0,
+                   markeredgecolor=_VIZ_ASTRO_EDGE,
+                   label=f'Astrocytes ({len(topo["A_pos"])})'),
+        )
+
+    pad = 0.04 * c_max
+    ax.set_xlim(-pad, c_max + pad)
+    ax.set_ylim(-pad, c_max + pad)
+    ax.set_aspect('equal', adjustable='box')
+
+    ax.set_xlabel('x (µm)', fontsize=11)
+    ax.set_ylabel('y (µm)', fontsize=11)
+    ax.tick_params(axis='both', labelsize=9)
+    ax.grid(True, color='#ececec', linewidth=0.5, linestyle=':', zorder=0)
+    for spine in ('top', 'right'):
+        ax.spines[spine].set_visible(False)
+    ax.spines['left'].set_color('#444444')
+    ax.spines['bottom'].set_color('#444444')
+
+    ax.set_title('Network connectivity — GJ + synapse→astrocyte links\n'
+                 + _topology_summary_str(topo, mode, topology_mode),
+                 fontsize=11, pad=10, color='#222222')
+
+    leg = ax.legend(handles=legend_items, loc='upper right', fontsize=9,
+                    framealpha=0.92, facecolor='white', edgecolor='#cccccc')
+    leg.set_zorder(5)
+
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=dpi, bbox_inches='tight')
+    plt.close(fig)
+    print(f'[plot] Spatial connectivity → {out_path}')
+
+
+def plot_3d_layered_topology(topo: dict, c_max: float, mode: str,
+                             out_path: str, dpi: int = 200,
+                             topology_mode: str = ''):
+    """
+    3D layered view of the topology. Neurons live in the z = 0 plane,
+    astrocytes in the z = +z_astro plane. All four link classes are drawn:
+
+        • neuron ↔ neuron synapses   — green dashed, very faint
+        • astrocyte ↔ astrocyte GJC  — amber, thick
+        • bouton → astrocyte         — purple, thin, crossing planes
+        • bouton dots                — red, in the neuron plane
+
+    Cells in each plane are also outlined with their joint Voronoi
+    tessellation, projected onto the corresponding z-plane.
+
+    Pure numpy — no Brian2 dependency.
+    """
+    from mpl_toolkits.mplot3d import Axes3D                       # noqa: F401
+    from matplotlib.patches import Rectangle
+    import mpl_toolkits.mplot3d.art3d as art3d
+
+    Z_NEU   = 0.0
+    Z_ASTRO = 0.45 * c_max     # vertical separation set to ~half the arena;
+                               # large enough to read, small enough that
+                               # bouton→astrocyte links aren't near-vertical.
+
+    fig = plt.figure(figsize=(11.5, 9.0))
+    ax = fig.add_subplot(111, projection='3d')
+    fig.patch.set_facecolor('white')
+    try:
+        ax.set_facecolor('white')
+    except Exception:
+        pass
+
+    # Reduce panel/grid prominence so the data dominates.
+    try:
+        ax.xaxis.pane.set_facecolor((1, 1, 1, 0))
+        ax.yaxis.pane.set_facecolor((1, 1, 1, 0))
+        ax.zaxis.pane.set_facecolor((1, 1, 1, 0))
+        ax.xaxis.pane.set_edgecolor('#dddddd')
+        ax.yaxis.pane.set_edgecolor('#dddddd')
+        ax.zaxis.pane.set_edgecolor('#dddddd')
+    except Exception:
+        pass
+    ax.grid(True, linestyle=':', linewidth=0.4, color='#cccccc', alpha=0.6)
+
+    # ── Voronoi tessellation, projected onto each plane ─────────────────────
+    if mode == 'Full' and len(topo['A_pos']):
+        _draw_voronoi_3d_at_z(ax, topo['N_pos'], topo['A_pos'], c_max,
+                              z=Z_NEU,   which='neuron')
+        _draw_voronoi_3d_at_z(ax, topo['N_pos'], topo['A_pos'], c_max,
+                              z=Z_ASTRO, which='astro')
+
+    # Plane outlines (thin gray rectangles flush with each z layer).
+    for z, color in ((Z_NEU, '#999999'), (Z_ASTRO, '#999999')):
+        rect = Rectangle((0.0, 0.0), c_max, c_max,
+                         fill=False, edgecolor=color, linewidth=0.8,
+                         linestyle='--', alpha=0.5)
+        ax.add_patch(rect)
+        art3d.pathpatch_2d_to_3d(rect, z=z, zdir='z')
+
+    # ── Neuron ↔ neuron synapses (very faint, green dashed) ────────────────
+    if len(topo['S_i']):
+        for si, sj in zip(topo['S_i'], topo['S_j']):
+            ax.plot([topo['N_pos'][si, 0], topo['N_pos'][sj, 0]],
+                    [topo['N_pos'][si, 1], topo['N_pos'][sj, 1]],
+                    [Z_NEU, Z_NEU],
+                    color='#2e7d32', alpha=0.06,
+                    linewidth=0.4, linestyle='--', zorder=1)
+
+    # ── Bouton → astrocyte links (purple, crossing planes) ─────────────────
+    if mode == 'Full' and len(topo.get('StoA_i', [])):
+        for si, aj in zip(topo['StoA_i'], topo['StoA_j']):
+            ax.plot([topo['S_x_syn'][si], topo['A_pos'][aj, 0]],
+                    [topo['S_y_syn'][si], topo['A_pos'][aj, 1]],
+                    [Z_NEU, Z_ASTRO],
+                    color=_VIZ_STOA, alpha=0.45, linewidth=0.6, zorder=2)
+
+    # ── Astrocyte ↔ astrocyte GJC (amber, thick, in the astro plane) ───────
+    n_gj_unique = 0
+    if mode == 'Full' and len(topo.get('GJ_i', [])):
+        seen = set()
+        for i, j in zip(topo['GJ_i'], topo['GJ_j']):
+            key = (int(min(i, j)), int(max(i, j)))
+            if key in seen:
+                continue
+            seen.add(key)
+            ax.plot([topo['A_pos'][i, 0], topo['A_pos'][j, 0]],
+                    [topo['A_pos'][i, 1], topo['A_pos'][j, 1]],
+                    [Z_ASTRO, Z_ASTRO],
+                    color=_VIZ_GJ, alpha=0.95, linewidth=2.0, zorder=3)
+        n_gj_unique = len(seen)
+
+    # ── Boutons in the neuron plane (red dots) ─────────────────────────────
+    if len(topo['S_i']):
+        ax.scatter(topo['S_x_syn'], topo['S_y_syn'],
+                   np.full(len(topo['S_x_syn']), Z_NEU),
+                   c=_VIZ_BOUTON, s=4, alpha=0.55,
+                   marker='.', linewidths=0, zorder=4)
+
+    # ── Neurons & astrocytes ───────────────────────────────────────────────
+    ax.scatter(topo['N_pos'][:, 0], topo['N_pos'][:, 1],
+               np.full(len(topo['N_pos']), Z_NEU),
+               c=_VIZ_NEURON_FACE, s=55, alpha=0.95, marker='o',
+               edgecolors=_VIZ_NEURON_EDGE, linewidths=0.7, zorder=5,
+               label=f'Neurons ({len(topo["N_pos"])})')
+
+    if mode == 'Full' and len(topo['A_pos']):
+        ax.scatter(topo['A_pos'][:, 0], topo['A_pos'][:, 1],
+                   np.full(len(topo['A_pos']), Z_ASTRO),
+                   c=_VIZ_ASTRO_FACE, s=85, alpha=0.95, marker='D',
+                   edgecolors=_VIZ_ASTRO_EDGE, linewidths=0.8, zorder=6,
+                   label=f'Astrocytes ({len(topo["A_pos"])})')
+
+    # ── Legend (proxy artists with link colours) ───────────────────────────
+    from matplotlib.lines import Line2D
+    proxies = [
+        Line2D([], [], color=_VIZ_NEURON_FACE, marker='o', linewidth=0,
+               markeredgecolor=_VIZ_NEURON_EDGE,
+               label=f'Neurons ({len(topo["N_pos"])})'),
+    ]
+    if mode == 'Full' and len(topo['A_pos']):
+        proxies += [
+            Line2D([], [], color=_VIZ_ASTRO_FACE, marker='D', linewidth=0,
+                   markeredgecolor=_VIZ_ASTRO_EDGE,
+                   label=f'Astrocytes ({len(topo["A_pos"])})'),
+            Line2D([], [], color=_VIZ_GJ, linewidth=2.0,
+                   label=f'GJ links ({n_gj_unique})'),
+            Line2D([], [], color=_VIZ_STOA, linewidth=1.0, alpha=0.7,
+                   label=f'Bouton→astrocyte ({len(topo.get("StoA_i", []))})'),
+        ]
+    proxies.append(
+        Line2D([], [], color='#2e7d32', linewidth=0.9, linestyle='--', alpha=0.55,
+               label=f'Synapses ({len(topo["S_i"])})')
+    )
+    ax.legend(handles=proxies, loc='upper left', fontsize=9,
+              framealpha=0.92, facecolor='white', edgecolor='#cccccc')
+
+    # ── Axes ───────────────────────────────────────────────────────────────
+    pad = 0.04 * c_max
+    ax.set_xlim(-pad, c_max + pad)
+    ax.set_ylim(-pad, c_max + pad)
+    ax.set_zlim(-0.1 * c_max, Z_ASTRO + 0.1 * c_max)
+
+    ax.set_xlabel('x (µm)', fontsize=10, labelpad=8)
+    ax.set_ylabel('y (µm)', fontsize=10, labelpad=8)
+    ax.set_zlabel('layer (a.u.)', fontsize=10, labelpad=4)
+
+    ax.set_title('Layered network topology — neurons / astrocytes\n'
+                 + _topology_summary_str(topo, mode, topology_mode),
+                 fontsize=11, pad=14, color='#222222')
+
+    # Slightly elevated view angle for readability.
+    ax.view_init(elev=24, azim=-55)
+
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=dpi, bbox_inches='tight')
+    plt.close(fig)
+    print(f'[plot] 3D layered topology → {out_path}')
+
+
+def _draw_voronoi_3d_at_z(ax, N_pos, A_pos, c_max, z, which):
+    """
+    Project the joint (neurons ∪ astrocytes) Voronoi tessellation onto a
+    horizontal plane at height z, drawing only the polygons of one cell
+    class (`which='astro'` or `'neuron'`) as tinted polygons.
+    """
+    from scipy.spatial import Voronoi
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+    Nn = int(len(N_pos))
+    Na = int(len(A_pos))
+    if Nn + Na < 3:
+        return
+
+    points = np.vstack([N_pos, A_pos])
+    try:
+        vor = Voronoi(points)
+    except Exception:
+        return
+
+    regions, vertices = _voronoi_finite_polygons_2d(vor, radius=4.0 * c_max)
+
+    polys_3d = []
+    for pt_idx, region in enumerate(regions):
+        if not region:
+            continue
+        if which == 'astro'  and pt_idx <  Nn:
+            continue
+        if which == 'neuron' and pt_idx >= Nn:
+            continue
+        poly = vertices[region]
+        poly = _clip_polygon_to_rect(poly, 0.0, 0.0, c_max, c_max)
+        if poly is None or len(poly) < 3:
+            continue
+        polys_3d.append([(p[0], p[1], z) for p in poly])
+
+    if not polys_3d:
+        return
+
+    face = _VIZ_ASTRO_FILL if which == 'astro' else _VIZ_NEURON_FILL
+    pc3 = Poly3DCollection(polys_3d, facecolors=face, edgecolors=_VIZ_VORONOI,
+                           linewidths=0.3, alpha=0.32)
+    ax.add_collection3d(pc3)
 
 
 # =============================================================================
@@ -1000,16 +1597,26 @@ def main():
         seed_synapse=args.seed_synapse,
         seed_astro=args.seed_astro,
         mode=args.mode,
+        topology_mode=args.topology_mode,
+        gj_max_dist=args.gj_max_dist,
     )
     t_topo = _wall.time() - t0_topo
     save_topology(topo, args.out_dir)
 
-    # ── Spatial layout plot (independent of pass 2 — done up-front so the
+    # ── Spatial layout plots (independent of pass 2 — done up-front so the
     #    user has a visual sanity check even if the simulation later fails) ──
     plot_spatial_layout(
         topo, c_max=args.c_max, mode=args.mode,
         out_path=os.path.join(args.out_dir, 'spatial_layout.png'),
         dpi=args.dpi,
+        topology_mode=args.topology_mode,
+        also_connectivity=True,
+    )
+    plot_3d_layered_topology(
+        topo, c_max=args.c_max, mode=args.mode,
+        out_path=os.path.join(args.out_dir, 'spatial_layout_3d.png'),
+        dpi=args.dpi,
+        topology_mode=args.topology_mode,
     )
 
     # ── Pass 2: build, compile, run ───────────────────────────────────────────
