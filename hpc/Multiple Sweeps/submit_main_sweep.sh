@@ -58,9 +58,14 @@ NA=43                   # number of astrocytes (ignored when MODE=Neuronal)
 # ─── Arena & topology hyperparameters (fixed across outer iterations) ──
 C_MAX=1100
 DISPL_BIAS=15
-GJ_DIST=200
-STOA_CUTOFF=70
-STOA_SIGMA=200
+
+# Astrocyte topology rule — Wallach et al. 2014 joint-Voronoi (default)
+# or legacy distance-based. See Report5_Topology_Wallach.md.
+TOPOLOGY_MODE="wallach" # wallach | distance
+GJ_DIST=200             # [distance only] KDTree radius for GJC [µm]
+GJ_MAX_DIST=150         # [wallach  only] soft cap on Voronoi-adjacent GJC [µm]
+STOA_CUTOFF=70          # hard distance cutoff for synapse→astrocyte links [µm]
+STOA_SIGMA=200          # [distance only] σ of Gaussian StoA acceptance [µm]
 
 # ─── Seeds (base values; the master RNG re-derives per-topology seeds) ──
 SEED_DEVICE=50
@@ -129,6 +134,7 @@ echo "N_TOPOLOGIES (cap)     : $N_TOPOLOGIES"
 echo "conn_prob              : U[$CONN_PROB_LO, $CONN_PROB_HI]"
 echo "MODE                   : $MODE   (Nn=$NN, Na=$NA, c_max=$C_MAX µm)"
 echo "Simtime                : $SIMTIME s"
+echo "Topology rule          : $TOPOLOGY_MODE   (gj_dist=$GJ_DIST [distance]   gj_max_dist=$GJ_MAX_DIST [wallach]   stoa_cutoff=$STOA_CUTOFF µm)"
 echo "MAKEFLAGS              : $MAKEFLAGS   (per-worker single-threaded compile)"
 echo "============================================================"
 
@@ -148,7 +154,9 @@ ARGS=(
     --Na                   "$NA"
     --c_max                "$C_MAX"
     --displ_bias           "$DISPL_BIAS"
+    --topology_mode        "$TOPOLOGY_MODE"
     --gj_dist              "$GJ_DIST"
+    --gj_max_dist          "$GJ_MAX_DIST"
     --stoa_cutoff          "$STOA_CUTOFF"
     --stoa_sigma           "$STOA_SIGMA"
     --seed_device          "$SEED_DEVICE"
