@@ -449,7 +449,7 @@ def build_and_run(topo: dict, args, params: np.ndarray) -> dict:
     set_device('cpp_standalone', build_on_run=False)
     device = get_device()
     device.reinit()
-    device.activate()
+    device.activate(build_on_run=False)
 
     BrianLogger.suppress_hierarchy('brian2.devices')
     BrianLogger.suppress_hierarchy('brian2.parsing')
