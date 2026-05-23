@@ -3,7 +3,7 @@
 #PBS -S /bin/bash
 #PBS -N "asn_single_run"
 #PBS -q cpu
-#PBS -l select=1:ncpus=8,walltime=02:00:00
+#PBS -l select=1:ncpus=1,walltime=01:00:00
 #PBS -k eo
 
 ##########################################################################
@@ -22,11 +22,11 @@
 SCRIPT_PATH="./HPC_single_run.py"          # path to the python script
 LIB_DIR="."                                # dir with ASD_fun_BD_cpp.py
 OUTPUT_DIR="./single_run_${PBS_JOBID%%.*}" # results dir (per-job by default)
-SYN_PDIST_CSV=""                           # leave empty → auto-discover in LIB_DIR
+SYN_PDIST_CSV="."                           # leave empty → auto-discover in LIB_DIR
 
 # ─── Simulation settings ────────────────────────────────────────────────
-SIMTIME=180             # simulated duration [seconds]
-MODE="Full"             # Full | Neuronal
+SIMTIME=300             # simulated duration [seconds]
+MODE="Neuronal"             # Full | Neuronal
 
 # ─── Population sizes ───────────────────────────────────────────────────
 NN=100                  # number of neurons
@@ -66,7 +66,7 @@ G_NA=80.0               # g_na coefficient (SI = coeff × mS cm⁻² × area)
 G_KD=6.5                # g_kd coefficient (SI = coeff × mS cm⁻² × area)
 
 # ─── Figure options ─────────────────────────────────────────────────────
-DPI=200
+DPI=300
 # ────────────────────────────────────────────────────────────────────────
 
 # Move to the directory from which the job was submitted
@@ -77,7 +77,7 @@ module load python
 
 # Activate the conda env (must source conda.sh in non-interactive shells)
 source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate prova
+conda activate brian_env
 
 # Make output dir if it does not exist yet
 mkdir -p "$OUTPUT_DIR"
