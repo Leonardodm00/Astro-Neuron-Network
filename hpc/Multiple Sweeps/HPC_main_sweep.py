@@ -137,6 +137,32 @@ def _atomic_write_json(path, data) -> None:
     os.replace(tmp, str(path))
 
 
+def _append_failure_jsonl(topo_dir, record: dict) -> None:
+    """
+    Atomic-append a single failure record to <topo_dir>/_failures.jsonl.
+
+    JSONL is used (not a per-iter JSON) so concurrent appends from workers
+    within the same topology can interleave safely: POSIX guarantees that
+    write() calls smaller than PIPE_BUF (≥4096 bytes) on a file opened in
+    O_APPEND mode are atomic with respect to each other.  A failure record
+    stays well under that limit.
+
+    No iter_<NN>.npz / iter_<NN>.json is ever written for a discarded run,
+    so the main dataset only ever contains clean simulations.
+    """
+    path = os.path.join(topo_dir, '_failures.jsonl')
+    line = json.dumps(record, default=str) + '\n'
+    if len(line.encode('utf-8')) >= 4000:
+        # Truncate fields that are likely the culprits (error_msg, traceback)
+        # to keep the line atomically writable.
+        for k in ('traceback', 'error_msg'):
+            if k in record and isinstance(record[k], str):
+                record[k] = record[k][:1500] + '...[truncated]'
+        line = json.dumps(record, default=str) + '\n'
+    with open(path, 'a') as f:
+        f.write(line)
+
+
 # =============================================================================
 # Manifest (re)builder — walks the output tree and aggregates per-iter JSONs
 # =============================================================================
@@ -155,6 +181,7 @@ def rebuild_manifest(out_dir) -> dict:
 
     topologies = []
     n_total_runs = 0
+    n_total_failures = 0
     for td in topo_dirs:
         topo_meta_path = td / 'topology_meta.json'
         topo_meta = {}
@@ -172,24 +199,46 @@ def rebuild_manifest(out_dir) -> dict:
             except Exception as e:
                 iters.append({'_error': str(e), '_path': str(j)})
 
+        # Aggregate discarded-simulation records (one JSON per line) ---------
+        fail_path = td / '_failures.jsonl'
+        failures = []
+        if fail_path.exists():
+            try:
+                with open(fail_path) as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            failures.append(json.loads(line))
+                        except Exception as e:
+                            failures.append({'_parse_error': str(e),
+                                             '_raw': line[:200]})
+            except Exception as e:
+                failures = [{'_failures_jsonl_error': str(e)}]
+
         topologies.append({
             **topo_meta,
-            'topo_dir': str(td.relative_to(root)),
-            'n_iterations_completed': len(iters),
-            'iterations': iters,
+            'topo_dir':                 str(td.relative_to(root)),
+            'n_iterations_completed':   len(iters),
+            'n_iterations_discarded':   len(failures),
+            'iterations':               iters,
+            'discarded_iterations':     failures,
         })
-        n_total_runs += len(iters)
+        n_total_runs     += len(iters)
+        n_total_failures += len(failures)
 
     manifest = {
-        'updated_at': time.strftime('%Y-%m-%dT%H:%M:%S'),
-        'job_id': os.environ.get('PBS_JOBID', ''),
-        'host': os.environ.get('HOSTNAME', ''),
+        'updated_at':                       time.strftime('%Y-%m-%dT%H:%M:%S'),
+        'job_id':                           os.environ.get('PBS_JOBID', ''),
+        'host':                             os.environ.get('HOSTNAME', ''),
         'n_topologies_completed_or_partial': len(topo_dirs),
-        'n_total_runs': n_total_runs,
-        'param_names': PARAM_NAMES,
-        'param_units': PARAM_UNITS,
-        'param_bounds': PARAM_BOUNDS.tolist(),
-        'topologies': topologies,
+        'n_total_runs':                     n_total_runs,
+        'n_total_failures_discarded':       n_total_failures,
+        'param_names':                      PARAM_NAMES,
+        'param_units':                      PARAM_UNITS,
+        'param_bounds':                     PARAM_BOUNDS.tolist(),
+        'topologies':                       topologies,
     }
     _atomic_write_json(root / 'manifest.json', manifest)
     return manifest
@@ -353,9 +402,18 @@ int Binomial_fun(int n, double p, int _vectorisation_idx) {
     t_compile = time.time() - t0_compile
 
     # ── Inner loop: device.run() once per parameter vector ──────────────────
+    # Each iteration is wrapped in try/except.  A run that crashes the
+    # cpp_standalone binary, raises a Brian2 exception, or yields non-finite
+    # spike times is DISCARDED: no iter_<NN>.npz and no iter_<NN>.json are
+    # written.  Only a one-line record goes to <topo_dir>/_failures.jsonl
+    # so the corner of parameter space that triggered the pathology is still
+    # recoverable post-hoc, without polluting the main dataset.
     area = net['Neuron'].namespace['area']
 
     summaries = []
+    n_consecutive_failures = 0
+    MAX_CONSECUTIVE_FAILURES = 5    # bail out if the binary appears broken
+
     for params, iter_idx, seed_run in zip(params_list, iter_indices, seed_runs):
         params = np.asarray(params, dtype=np.float64)
 
@@ -376,21 +434,97 @@ int Binomial_fun(int n, double p, int _vectorisation_idx) {
             net['Neuron'].g_kd:        params[13] * msiemens * cm**-2 * area,
         }
 
-        t0_run = time.time()
-        device.run(run_args=run_args, seed=int(seed_run))
-        t_run = time.time() - t0_run
+        # ──────────────────────────────────────────────────────────────────
+        # Per-parameter try/except: a crash here MUST NOT abort the rest of
+        # the worker's chunk, and MUST NOT write any iter_*.npz/iter_*.json.
+        # ──────────────────────────────────────────────────────────────────
+        try:
+            t0_run = time.time()
+            device.run(run_args=run_args, seed=int(seed_run))
+            t_run = time.time() - t0_run
 
-        # Harvest spikes ----------------------------------------------------
-        spk_N_t = np.asarray(net['Spike_monitor_N'].t / second, dtype=np.float32)
-        spk_N_i = np.asarray(net['Spike_monitor_N'].i,          dtype=np.int32)
-        if SpikesA is not None:
-            spk_A_t = np.asarray(net['Spike_monitor_A'].t / second, dtype=np.float32)
-            spk_A_i = np.asarray(net['Spike_monitor_A'].i,          dtype=np.int32)
-        else:
-            spk_A_t = np.array([], dtype=np.float32)
-            spk_A_i = np.array([], dtype=np.int32)
+            # Harvest --------------------------------------------------------
+            spk_N_t = np.asarray(net['Spike_monitor_N'].t / second, dtype=np.float32)
+            spk_N_i = np.asarray(net['Spike_monitor_N'].i,          dtype=np.int32)
+            if SpikesA is not None:
+                spk_A_t = np.asarray(net['Spike_monitor_A'].t / second, dtype=np.float32)
+                spk_A_i = np.asarray(net['Spike_monitor_A'].i,          dtype=np.int32)
+            else:
+                spk_A_t = np.array([], dtype=np.float32)
+                spk_A_i = np.array([], dtype=np.int32)
 
-        # Save .npz (spike data + params + conn_prob) -----------------------
+            # Numerical-pathology check: NaN or +/-Inf in spike TIMES is the
+            # signature of overflow/underflow in the integrator.  A finite
+            # but huge spike count is NOT discarded — that's a legitimate
+            # (if extreme) physiological regime; only non-finite is.
+            if len(spk_N_t) and not np.isfinite(spk_N_t).all():
+                bad = int((~np.isfinite(spk_N_t)).sum())
+                raise FloatingPointError(
+                    f'spk_N_t has {bad} non-finite entries (overflow/underflow)'
+                )
+            if len(spk_A_t) and not np.isfinite(spk_A_t).all():
+                bad = int((~np.isfinite(spk_A_t)).sum())
+                raise FloatingPointError(
+                    f'spk_A_t has {bad} non-finite entries (overflow/underflow)'
+                )
+
+        except Exception as e:
+            # ───── Discard: do NOT write iter_*.npz or iter_*.json ─────────
+            n_consecutive_failures += 1
+            fail_record = {
+                'topo_idx':    int(topo_idx),
+                'iter_idx':    int(iter_idx),
+                'worker_id':   int(worker_id),
+                'conn_prob':   float(conn_prob),
+                'params':      params.tolist(),
+                'param_names': PARAM_NAMES,
+                'seed_run':    int(seed_run),
+                'error_type':  type(e).__name__,
+                'error_msg':   str(e)[:500],
+                'traceback':   traceback.format_exc(),
+                'timestamp':   time.strftime('%Y-%m-%dT%H:%M:%S'),
+            }
+            try:
+                _append_failure_jsonl(topo_dir, fail_record)
+            except Exception:
+                pass    # never let the failure-log itself become a failure
+
+            summaries.append({
+                'ok':         False,
+                'discarded':  True,
+                'worker_id':  worker_id,
+                'topo_idx':   topo_idx,
+                'iter_idx':   iter_idx,
+                'error_type': type(e).__name__,
+                'error_msg':  str(e)[:200],
+            })
+
+            # If the cpp_standalone binary itself is broken (e.g. SIGSEGV
+            # left the device in a corrupt state), every subsequent
+            # device.run() call in this worker is doomed.  Bail out of the
+            # chunk rather than spinning through every parameter vector.
+            if n_consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                summaries.append({
+                    'ok':       False,
+                    'worker_id': worker_id,
+                    'topo_idx':  topo_idx,
+                    'note':     (f'aborting worker chunk after '
+                                 f'{n_consecutive_failures} consecutive failures '
+                                 f'— binary likely corrupt'),
+                })
+                return [{'t_compile_s': float(t_compile),
+                         'worker_id': worker_id,
+                         'topo_idx':  topo_idx,
+                         'n_runs_completed': sum(
+                             1 for s in summaries if s.get('ok')),
+                         'n_runs_discarded': sum(
+                             1 for s in summaries if s.get('discarded')),
+                         'aborted_early': True}] + summaries
+            continue
+
+        # ───── Success path: save .npz + .json ─────────────────────────────
+        n_consecutive_failures = 0
+
         npz_name = f'iter_{iter_idx:05d}.npz'
         npz_path = os.path.join(topo_dir, npz_name)
         np.savez_compressed(
@@ -438,8 +572,13 @@ int Binomial_fun(int n, double p, int _vectorisation_idx) {
             't_run_s':      float(t_run),
         })
 
-    return [{'t_compile_s': float(t_compile), 'worker_id': worker_id,
-             'topo_idx': topo_idx, 'n_runs_completed': len(summaries)}] + summaries
+    n_ok        = sum(1 for s in summaries if s.get('ok'))
+    n_discarded = sum(1 for s in summaries if s.get('discarded'))
+    return [{'t_compile_s':       float(t_compile),
+             'worker_id':         worker_id,
+             'topo_idx':          topo_idx,
+             'n_runs_completed':  n_ok,
+             'n_runs_discarded':  n_discarded}] + summaries
 
 
 def _worker_entry_wrapped(pack: dict) -> list:
@@ -775,7 +914,8 @@ def main():
 
         # 7) Report this topology's batch ------------------------------------
         n_ok = 0
-        n_fail = 0
+        n_fail = 0          # worker-level (whole chunk) failures
+        n_discarded = 0     # per-parameter discards (overflow / underflow / etc.)
         compile_times = []
         run_times = []
         for worker_results in all_results:
@@ -784,6 +924,9 @@ def main():
                     continue
                 if 't_compile_s' in r:
                     compile_times.append(r['t_compile_s'])
+                    continue
+                if r.get('discarded'):
+                    n_discarded += 1
                     continue
                 if r.get('ok', False):
                     n_ok += 1
@@ -804,7 +947,8 @@ def main():
             print(f'[main]   per-run times (s): '
                   f'min={min(run_times):.1f} mean={np.mean(run_times):.1f} '
                   f'max={max(run_times):.1f}', flush=True)
-        print(f'[main]   topo_{topo_idx:05d} done: {n_ok} ok / {n_fail} failed '
+        print(f'[main]   topo_{topo_idx:05d} done: '
+              f'{n_ok} ok / {n_discarded} discarded / {n_fail} worker-failed '
               f'in {t_pool:.1f} s wall', flush=True)
 
         # 8) Rebuild manifest after each topology ----------------------------
