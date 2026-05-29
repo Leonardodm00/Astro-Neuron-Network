@@ -54,11 +54,13 @@ SEED_SYNAPSE=35
 SEED_ASTRO=60
 SEED_RUN=""             # empty → replay device seed; integer → re-seed stochastic terms
 
-# ─── 14 swept parameters (units shown next to each) ─────────────────────
+# ─── 30 swept parameters (units shown next to each) ─────────────────────
+# Any value left at nominal can be omitted from the ARGS list below; the
+# Python driver falls back to NOMINAL_PARAMS for any flag not supplied.
 SIGMA=4.0               # [mV]
 G_AHP=5.0               # [nS]
-XI_AMPA=0.5             # [1/mmole]
-XI_NMDA=0.3             # [1/mmole]
+EC50_AMPA=8.6           # [mmole]  AMPA Hill half-activation (was Xi_ampa)
+EC50_NMDA=3.0           # [mmole]  NMDA Hill half-activation (was Xi_nmda)
 TAU_CA=8.0              # [s]
 U_0_AR=0.003            # [dimensionless]
 U_MAX=0.5               # [1/ms]
@@ -69,6 +71,25 @@ OMEGA_D=2.0             # [1/s]
 ALPHA_SYN=1.0           # [dimensionless]
 G_NA=80.0               # g_na coefficient (SI = coeff × mS cm⁻² × area)
 G_KD=6.5                # g_kd coefficient (SI = coeff × mS cm⁻² × area)
+# ─ NEW axes (idx 14–29) ─
+G_AMPA=1.6              # [nS]   max AMPA conductance (was (1+delta)*nS, delta removed)
+G_NMDA=0.4             # [nS]   max NMDA conductance (was (1-delta)*nS, delta removed)
+ALPHA_CA=0.00035        # [dimensionless]  spike-frequency-adaptation amplitude
+X0=0.2                  # [dimensionless]  quantal vesicle size
+O_G=1.5                 # [1/(µM·s)]  mGluR binding rate
+OMEGA_G=0.00833         # [1/s]   mGluR inactivation rate
+# Astrocyte params (only used when MODE=Full; ignored in Neuronal mode)
+O_BETA=1.0              # [µM/s]  PLCβ gain
+O_3K=4.5                # [µM/s]  IP3-3K rate
+OMEGA_5P=0.1            # [1/s]   IP3-5P degradation rate
+I_BIAS=0.8              # [µM]    IP3 exogenous set-point
+F_GJ=2.0                # [µM/s]  GJ + exogenous permeability  (CLI flag --F_gj)
+I_THETA=0.3             # [µM]    tanh threshold
+OMEGA_I=0.05            # [µM]    tanh steepness
+# Gliotransmission params (only used when MODE=Full)
+C_THETA=0.5             # [µM]    exocytosis Ca²⁺ threshold
+U_A=0.6                 # [dimensionless]  gliotransmitter release probability
+G_T=200.0               # [mM]    total vesicular gliotransmitter
 
 # ─── Figure options ─────────────────────────────────────────────────────
 DPI=300
@@ -139,8 +160,8 @@ ARGS=(
     --seed_astro    "$SEED_ASTRO"
     --Sigma         "$SIGMA"
     --g_AHP         "$G_AHP"
-    --Xi_ampa       "$XI_AMPA"
-    --Xi_nmda       "$XI_NMDA"
+    --EC50_ampa     "$EC50_AMPA"
+    --EC50_nmda     "$EC50_NMDA"
     --Tau_Ca        "$TAU_CA"
     --U_0_ar        "$U_0_AR"
     --U_max         "$U_MAX"
@@ -151,6 +172,22 @@ ARGS=(
     --alpha_syn     "$ALPHA_SYN"
     --g_na          "$G_NA"
     --g_kd          "$G_KD"
+    --g_ampa        "$G_AMPA"
+    --g_nmda        "$G_NMDA"
+    --alpha_Ca      "$ALPHA_CA"
+    --x0            "$X0"
+    --O_G           "$O_G"
+    --Omega_G       "$OMEGA_G"
+    --O_beta        "$O_BETA"
+    --O_3K          "$O_3K"
+    --Omega_5P      "$OMEGA_5P"
+    --I_bias        "$I_BIAS"
+    --F_gj          "$F_GJ"
+    --I_Theta       "$I_THETA"
+    --omega_I       "$OMEGA_I"
+    --C_Theta       "$C_THETA"
+    --U_A           "$U_A"
+    --G_T           "$G_T"
     --dpi           "$DPI"
 )
 
