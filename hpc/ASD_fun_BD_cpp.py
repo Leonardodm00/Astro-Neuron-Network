@@ -519,7 +519,11 @@ def get_Astroparam(oscillations = 'AM',**kwargs):
         'F': 2.*umole/second,       # GJC IP_3 permeability (nonlinear)
         'I_Theta': 0.3*umole,      # Threshold IP_3 gradient for diffusion
         'omega_I': 0.05*umole,     # Scaling factor of diffusion
-        # I_bias (see below)       # IP_3 bias
+        # Base fallbacks so per-astrocyte IC writes (Astro.Omega_5P / Astro.I_bias)
+        # work in ALL modes, not only AM/FM. The AM/FM branches below still override
+        # these with mode-specific values. Defaults here are the AM nominals.
+        'Omega_5P': 0.1/second,    # IP_3-5P degradation rate (base fallback)
+        'I_bias': 0.8*umole,       # IP_3 exogenous set-point (base fallback)
         # --- Agonist-dependent IP_3 production
         'O_beta': 1.*umole/second,  # Maximal rate of IP_3 production by PLCbeta
         'O_N': 0.3/umole/second,   # Agonist binding rate
@@ -594,7 +598,6 @@ def get_Neuronparam(**kwargs):
     'I_inj': 15*pA, # Injected current # 18
  
      # Synaptic contribution
-     'delta' : 0.6, # changes NMDAR/AMPAR ratio, should be between -1 and 1
      'E_ampa': 0 * mV,
      'E_nmda': 0 * mV,
      
@@ -612,8 +615,11 @@ def get_Neuronparam(**kwargs):
     
     params.update({
 
-     'g_ampa': (1 + params['delta']) * nS, # maximal conductance of AMPA channels
-     'g_nmda': (1 - params['delta']) * nS, # maximal conductance of NMDA channels
+     # Default conductances (standalone-run fallback ICs; shadowed by per-neuron
+     # g_ampa/g_nmda sweep values at runtime via run_args). Formerly (1 +/- delta)*nS
+     # with delta=0.6; delta removed as vestigial now that g_ampa/g_nmda are decoupled.
+     'g_ampa': 1.6 * nS, # maximal conductance of AMPA channels
+     'g_nmda': 0.4 * nS, # maximal conductance of NMDA channels
         
         
         })
@@ -636,9 +642,12 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         # Omega_d (see below)      # Depression rate
         # Omega_f (see below)      # Facilitation rate,
         # U_0_sr (see below)    # Basal synaptic release probability
-        'Omega_c': 40./second,     # Neurotransmitter clearance rate
+        'Omega_c': 500./second,    # Fast intra-cleft clearance (tau_clear = 2 ms) -> drives receptors
+        'Omega_Aclear': 33.3/second, # Slow spillover clearance (tau_A = 30 ms) -> drives astrocyte
+                                     # NOTE: renamed from spec's 'Omega_A' to avoid collision with the
+                                     # gliotransmitter recycling rate 'Omega_A' (0.6/s) in get_Astroparam().
         'rho': 0.005,            # synaptic vesicle-to-extracellular space volume ratio
-        'Y_T': 500.*mmole,         # Total neurotransmitter synaptic resource (in terms of vesicular concentration)
+        'Y_T': 6000.*mmole,        # Total resource = 12 docked vesicles x 500 mM (Kusick 2020)
         # --- Presynaptic receptors
         'O_G': 1.5/umole/second,   # Agonist binding rate (activating)
         'Omega_G': 0.5/(60*second),# Agonist release rate (inactivating)
@@ -648,9 +657,9 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         'tau_sic_r' : 30.*ms,      # SIC/SOC rise time constant
         'tau_sic' : 600.*ms,       # SIC/SOC decay time constant
         
-       # Neurotransmitter release time constants
-       'tau_rise_NT': 1*ms,
-       'tau_decay_NT': 25*ms, # 
+       # (Removed: tau_rise_NT / tau_decay_NT — these were the Y_S double-exponential
+       #  time constants used only by the former Decay_type=='Double_exp' branch, which
+       #  the fast/slow cleft split replaced. No longer referenced anywhere.)
         
        
     
@@ -677,9 +686,12 @@ def get_Synparam(synapse_type='depressing',**kwargs):
         'tau_rise_nmda': 2*ms,
         'tau_decay_nmda': 100*ms,
         
-        # Synaptic efficacy (function of the [GLU] in the cleft)
-        # 'Xi_ampa':  0.5/mmole,
-        # 'Xi_nmda': 0.3/mmole,
+        # Postsynaptic Hill dose-response (Pankratov & Krishtal 2003), kappa/mu-reconciled
+        # to the model's rho*C_ves = 2.5 mM/vesicle convention (raw P&K /3.17).
+        'EC50_ampa': 8.6*mmole,    # AMPA half-activation  (raw P&K 27.2 mM at B_tot=0.5)
+        'EC50_nmda': 3.0*mmole,    # NMDA half-activation  (raw P&K  9.5 mM at B_tot=0.5)
+        'n_ampa':    1.4,          # AMPA Hill exponent (P&K range 1.3-1.6)
+        'n_nmda':    1.9,          # NMDA Hill exponent (P&K range 1.7-2.1)
         
         # Connection probability
         'conn_prob' : 0.107, # Random 
@@ -845,12 +857,15 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
     y : meter
     
     
-    # State Variables
+    # State Variables (Brian2 per-neuron parameters)
     sigma : volt
     tau_Ca : second
     g_AHP : siemens
     g_na : siemens
     g_kd : siemens
+    g_ampa : siemens
+    g_nmda : siemens
+    alpha_Ca : 1
     
     
     
@@ -922,16 +937,18 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
             y_syn : metre
 
 
-            # State Variables
+            # State Variables (Brian2 per-synapse parameters)
             Omega_d : 1/second
             Omega_f_sr : 1/second
             Omega_f_ar : 1/second
             U_0_sr : 1
             U_0_ar : 1
             Umax : 1/second
-            Xi_ampa : 1/mole
-            Xi_nmda : 1/mole
             alpha_syn : 1
+            x0 : 1
+            Y_T : mole
+            O_G : 1/mole/second
+            Omega_G : 1/second
 
             ''')
         
@@ -988,16 +1005,18 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
             x_syn : metre
             y_syn : metre
 
-            # State Variables
+            # State Variables (Brian2 per-synapse parameters)
             Omega_d : 1/second
             Omega_f_sr : 1/second
             Omega_f_ar : 1/second
             U_0_sr : 1
             U_0_ar : 1
             Umax : 1/second
-            Xi_ampa : 1/mole
-            Xi_nmda : 1/mole
             alpha_syn : 1
+            x0 : 1
+            Y_T : mole
+            O_G : 1/mole/second
+            Omega_G : 1/second
 
 
             ''')
@@ -1023,66 +1042,57 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
         
     # ---------- Extrasyn glutamate model ----------
     
-    if Decay_type == 'Single_exp':
-        
-        
-        eqs_Syn += Equations('''
-                             
-                             dY_S/dt = -Omega_c * Y_S + rho * Y_T * r_Ar  : mole (clock-driven)
-                             
-                             ''')
-        
-        pre +=  '''
-        
-                Y_S += rho * Y_T * r_Sr
-        
-                ''' 
+    # ---- Cleft glutamate: fast Y_S (receptors) + slow Y_A (astrocyte spillover) ----
+    # Decay_type is retained as an argument for API compatibility but no longer
+    # selects a kinetic scheme; both variables are single-exponential with
+    # different time constants (Omega_c fast, Omega_Aclear slow).
+    eqs_Syn += Equations('''
+                         dY_S/dt = -Omega_c * Y_S + rho * Y_T * r_Ar       : mole (clock-driven)
+                         dY_A/dt = -Omega_Aclear * Y_A + rho * Y_T * r_Ar  : mole (clock-driven)
+                         ''')
+    pre += '''
+            Y_S += rho * Y_T * r_Sr
+            Y_A += rho * Y_T * r_Sr
+            '''
 
-    if Decay_type == 'Double_exp':
-        
-        
-        eqs_Syn += Equations('''
-                             
-                             
-                             dY_S/dt = ((tau_decay_NT / tau_rise_NT) ** (tau_rise_NT / (tau_decay_NT - tau_rise_NT))*x_Y_S-Y_S)/tau_rise_NT : mole (clock-driven)
-                             dx_Y_S/dt = -x_Y_S/tau_decay_NT +  rho * Y_T * r_Ar                                               : mole (clock-driven)
-                             
-                            
-                             
-                             ''')
-        
-        
-        pre +=  '''
-        
-                x_Y_S += rho * Y_T * r_Sr
-        
-                ''' 
 
     
     # ----------- SYNAPTIC CURRENTS MODEL -------------
     
     
     eqs_Syn += Equations('''
-                         
-                               
-                            dr_ampa/dt = -r_ampa/tau_decay_ampa + (rho * Y_T * r_Ar * Xi_ampa) : 1 (clock-driven)
-                            
-                            dr_nmda/dt = ((tau_decay_nmda / tau_rise_nmda) ** (tau_rise_nmda / (tau_decay_nmda - tau_rise_nmda))*x_r_nmda-r_nmda)/tau_rise_nmda  : 1 (clock-driven)
-                            dx_r_nmda/dt = -x_r_nmda/tau_decay_nmda +  (rho * Y_T * r_Ar * Xi_nmda)  : 1 (clock-driven)
-                            
-                           
+                            # Hill activation targets (dimensionless, in [0,1]) of cleft glutamate Y_S
+                            H_ampa = (Y_S/EC50_ampa)**n_ampa / (1 + (Y_S/EC50_ampa)**n_ampa) : 1
+                            H_nmda = (Y_S/EC50_nmda)**n_nmda / (1 + (Y_S/EC50_nmda)**n_nmda) : 1
+
+                            # AMPA: single-exponential, bounded saturating kick applied in pre
+                            dr_ampa/dt = -r_ampa/tau_decay_ampa : 1 (clock-driven)
+
+                            # NMDA: two-state cascade. x_r_nmda = slow reservoir (decay),
+                            # r_nmda = fast follower (rise). Both bounded in [0,1].
+                            dx_r_nmda/dt = -x_r_nmda/tau_decay_nmda                : 1 (clock-driven)
+                            dr_nmda/dt   = (x_r_nmda - r_nmda)/tau_rise_nmda       : 1 (clock-driven)
+
                             r_ampa_tot_post = r_ampa : 1 (summed)
                             r_nmda_tot_post = r_nmda : 1 (summed)
-                         
-                         
+
+                            # Per-synapse Hill parameters
+                            EC50_ampa : mole
+                            EC50_nmda : mole
+                            n_ampa    : 1
+                            n_nmda    : 1
                         ''')
                         
                         
-    pre += '''           
-           r_ampa +=   (rho * Y_T * r_Sr * Xi_ampa)
-           x_r_nmda += (rho * Y_T * r_Sr * Xi_nmda) 
-           
-                    '''          
+    # NOTE: the H_ampa/H_nmda subexpressions (defined in eqs_Syn) evaluate to 0
+    # when referenced by name inside on_pre in Brian2 2.10.1 (lazy/clock-phase
+    # materialisation, confirmed by the acceptance test). Per spec section 4 fallback,
+    # the Hill kick is inlined explicitly here so it reads the post-release Y_S.
+    # H_ampa/H_nmda remain in eqs_Syn for continuous monitoring/diagnostics only.
+    pre += '''
+           r_ampa   += ((Y_S/EC50_ampa)**n_ampa/(1+(Y_S/EC50_ampa)**n_ampa)) * (1 - r_ampa)
+           x_r_nmda += ((Y_S/EC50_nmda)**n_nmda/(1+(Y_S/EC50_nmda)**n_nmda)) * (1 - x_r_nmda)
+           '''
 
     
     
@@ -1118,6 +1128,16 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
     
     # Initialize neuron parameters
     N.V = -39 * mV                          # approximately resting membrane potential
+
+    # Default ICs for per-neuron Brian2 parameters (so the library is runnable
+    # standalone; shadowed by run_args sweep values at runtime). These MUST be set:
+    # because the names are declared as per-neuron parameters in eqs_NN, Brian2
+    # resolves the state variable (default 0) before the namespace constant — so an
+    # unset alpha_Ca would silently zero the spike-frequency adaptation, and unset
+    # g_ampa/g_nmda would zero the synaptic current.
+    N.g_ampa   = params_NN['g_ampa']
+    N.g_nmda   = params_NN['g_nmda']
+    N.alpha_Ca = params_NN['alpha_Ca']
     
     
     
@@ -1173,12 +1193,26 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
     # ---- S Initialization ----
     S.x_S = 1.0
 
+    # Default ICs for per-synapse Brian2 parameters (so the library is runnable
+    # standalone; shadowed by run_args sweep values at runtime). Must precede any
+    # string IC that references Y_T (e.g. the ics=='rand' Y_S/Y_A inits below),
+    # since Brian2 resolves the per-synapse state variable before the namespace const.
+    S.EC50_ampa = params_Syn['EC50_ampa']
+    S.EC50_nmda = params_Syn['EC50_nmda']
+    S.n_ampa    = params_Syn['n_ampa']
+    S.n_nmda    = params_Syn['n_nmda']
+    S.x0        = params_Syn['x0']
+    S.Y_T       = params_Syn['Y_T']
+    S.O_G       = params_Syn['O_G']
+    S.Omega_G   = params_Syn['Omega_G']
+
     # Random initialization of initial conditions — currently dormant.
     # Kept here so it can be re-enabled by passing ics='rand'.
     if ics == 'rand':
         S.usr = 'rand()'                                              # was: S.u_S
         S.x_S = 'rand()'
         S.Y_S = '1.2 * rho * Y_T * rand()'                            # was: rho_c (typo)
+        S.Y_A = '1.2 * rho * Y_T * rand()'                            # slow spillover cleft var
 
     return N, S
         
@@ -1246,6 +1280,11 @@ def _astrocyte_steady_state(params_astroGT, t_max=300.0):
         tau_h = 1.0 / (p_num['O_2'] * (Q_2 + C))
 
         dGamma_A = 0.0
+        # NOTE: I_exogenous is intentionally OMITTED here (notes §4). This routine
+        # computes the isolated-cell quiescent IC; the live dI/dt includes
+        # + I_exogenous, so for I_bias far from this IC the live model exhibits a
+        # startup transient toward I_bias. This is accepted behavior — do NOT add
+        # I_exogenous to this integrator (it would pull the IC and defeat its purpose).
         dI = (p_num['O_delta'] / (1 + I / p_num['K_delta'])) * \
              (C**2 / (C**2 + p_num['K_delta']**2)) \
              - p_num['O_3K'] * (C**4 / (C**4 + p_num['K_D']**4)) * \
@@ -1416,12 +1455,15 @@ def Astrocyte_Group(N_astro, Simulated_network, seed_astro=None, ics='steady',
         dGamma_A/dt = O_N * (Y_bias+Y_extra*spill_over)**n * (1 - Gamma_A) -
                       Omega_N*(1 + zeta * C/(C + K_KC)) * Gamma_A : 1 
     
-        # IP_3 dynamics:
+        # IP_3 dynamics (de Pittà form + exogenous tonic drive toward I_bias):
         dI/dt = O_beta * Gamma_A + O_delta/(1 + I/K_delta) * C**2/(C**2 + K_delta**2) -
                 O_3K * C**4/(C**4 + K_D**4) * I/(I + K_3K) - Omega_5P*I +
-                I_coupling_tot : mole 
+                I_coupling_tot + I_exogenous : mole 
     
-      
+        # Exogenous tonic drive toward I_bias (de Pittà soft set-point, threshold-gated):
+        delta_I_bias = I - I_bias : mole
+        I_exogenous  = -F/2 * (1 + tanh((abs(delta_I_bias) - I_Theta)/omega_I)) * sign(delta_I_bias) : mole/second
+    
         # diffusion between astrocytes:
         I_coupling_tot : mole/second
        
@@ -1443,6 +1485,17 @@ def Astrocyte_Group(N_astro, Simulated_network, seed_astro=None, ics='steady',
         # Additional (optional) coordinates (for spatial network implementation)
         x_astro : meter
         y_astro : meter
+
+        # Per-astrocyte Brian2 parameters (shadow namespace constants at runtime).
+        # F, I_Theta, omega_I are the single source of truth — the Gap_junctions
+        # group reads them via the _post suffix (see Gap_Eq below).
+        O_beta   : mole/second
+        O_3K     : mole/second
+        Omega_5P : 1/second
+        I_bias   : mole
+        F        : mole/second
+        I_Theta  : mole
+        omega_I  : mole
         ''')
        
        
@@ -1457,6 +1510,20 @@ def Astrocyte_Group(N_astro, Simulated_network, seed_astro=None, ics='steady',
                         method='rk4',
                         namespace=Params_astroGT,
                         name='Astrocyte', dtype=float32)
+
+    # Default ICs for per-astrocyte Brian2 parameters (so the library is runnable
+    # standalone; shadowed by run_args sweep values at runtime). Required because
+    # these names are now state variables in eqs_A: Brian2 resolves the state var
+    # (default 0) before the namespace constant, so an unset O_beta/Omega_5P/etc.
+    # would zero out the corresponding dynamics term. F/I_Theta/omega_I here are the
+    # single source of truth also read by the Gap_junctions group via the _post suffix.
+    Astro.O_beta   = Params_astroGT['O_beta']
+    Astro.O_3K     = Params_astroGT['O_3K']
+    Astro.Omega_5P = Params_astroGT['Omega_5P']
+    Astro.I_bias   = Params_astroGT['I_bias']
+    Astro.F        = Params_astroGT['F']
+    Astro.I_Theta  = Params_astroGT['I_Theta']
+    Astro.omega_I  = Params_astroGT['omega_I']
 
     # ----- Initial conditions (Report 3 §A.1) -----
     if ics == 'rand':
@@ -1495,7 +1562,7 @@ def Astrocyte_Group(N_astro, Simulated_network, seed_astro=None, ics='steady',
 
     Gap_Eq = Equations('''
         delta_I = I_post - I_pre : mole
-        I_coupling = -F/2*(1 + tanh((abs(delta_I) - I_Theta)/omega_I))*sign(delta_I) : mole/second
+        I_coupling = -F_post/2*(1 + tanh((abs(delta_I) - I_Theta_post)/omega_I_post))*sign(delta_I) : mole/second
         I_coupling_tot_post = I_coupling : mole/second (summed)
     ''')
 
@@ -1605,6 +1672,12 @@ def Gliotransmission(N_astro, Astro, ics='jitter', seed_astro=None):
         C : mole (linked)
         dx_A/dt = Omega_A * (1 - x_A) : 1     # Fraction of gliotransmitter resources available for release
         dG_A/dt = -Omega_e*G_A : mole         # Gliotransmitter concentration in the extracellular space
+
+        # Per-unit Brian2 parameters (shadow namespace constants at runtime).
+        # C_Theta is also the spike threshold/refractory condition below.
+        C_Theta : mole
+        U_A     : 1
+        G_T     : mole
     ''')
     gliot_release = '''
         G_A += rho_e * G_T * U_A * x_A
@@ -1623,6 +1696,13 @@ def Gliotransmission(N_astro, Astro, ics='jitter', seed_astro=None):
     # Default ICs
     Glio_release.G_A = 0.0 * mole
     Glio_release.C = linked_var(Astro, 'C')
+
+    # Default ICs for per-unit Brian2 parameters (so the library is runnable
+    # standalone; shadowed by run_args sweep values at runtime). Must precede any
+    # string IC referencing G_T (e.g. the ics=='rand' branch below).
+    Glio_release.C_Theta = Params_astroGT['C_Theta']
+    Glio_release.U_A     = Params_astroGT['U_A']
+    Glio_release.G_T     = Params_astroGT['G_T']
 
     if ics == 'jitter':
         rng_ic = np.random.default_rng(
@@ -1684,7 +1764,7 @@ def Synapse_to_astro(synapse, Astro, connections,
     Syn_Astro = Synapses(synapse, Astro,
                          model='''
                          # neurotransmitter concentration in the extracellular space
-                         Y_extra_post = Y_S_pre : mole (summed)
+                         Y_extra_post = Y_A_pre : mole (summed)
                          ''',
                          namespace=synapse.namespace,
                          method='rk4',
