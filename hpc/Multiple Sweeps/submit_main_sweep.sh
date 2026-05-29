@@ -13,7 +13,7 @@
 #   outer iter -> random conn_prob in [CONN_PROB_LO, CONN_PROB_HI]
 #                 + fresh topology from numpy
 #   inner sweep -> n_workers parallel cpp_standalone sims, each with a
-#                  fresh 14-D parameter vector and a fresh noise seed
+#                  fresh 30-D parameter vector and a fresh noise seed
 #
 # Each completed simulation is saved (npz + json) BEFORE the next starts,
 # so the manifest reflects whatever was on disk when walltime hit.
