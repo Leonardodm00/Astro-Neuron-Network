@@ -92,16 +92,16 @@ from HPC_single_run import (                                         # noqa: E40
 
 
 # =============================================================================
-# Parameter sampling — same 14-D box as the skopt `space` in Main_code_notebook
+# Parameter sampling — 30-D box (expanded from the original 14-D)
 # =============================================================================
 
-# (low, high) for each of the 14 swept parameters, in the same order as
+# (low, high) for each of the 30 swept parameters, in the same order as
 # PARAM_NAMES.
 PARAM_BOUNDS = np.array([
     (2.0,   6.0),       # Sigma         [mV]
     (1.0,   15.0),      # g_AHP         [nS]
-    (0.2,   1.0),       # Xi_ampa       [1/mmole]
-    (0.2,   1.0),       # Xi_nmda       [1/mmole]
+    (5.0,   70.0),      # EC50_ampa     [mmole]   (brackets B_tot 0.2-2.5 mM, reconciled)
+    (1.0,   25.0),      # EC50_nmda     [mmole]   (brackets B_tot 0.2-2.5 mM, reconciled)
     (1.0,   11.0),      # Tau_Ca        [s]
     (0.0,   0.005),     # U_0_ar        [dimensionless]
     (0.1,   1.0),       # U_max         [1/ms]
@@ -112,13 +112,35 @@ PARAM_BOUNDS = np.array([
     (0.1,   1.0),       # alpha_syn     [dimensionless]
     (0.5 * 50.0,  3.0 * 50.0),   # g_na coeff  -> 25 .. 150
     (0.5 * 5.0,   3.0 * 5.0),    # g_kd coeff  -> 2.5 .. 15
+    (0.1,   15.0),      # g_ampa        [nS]
+    (0.1,   15.0),      # g_nmda        [nS]
+    (1e-4,  1e-3),      # alpha_Ca      [dimensionless]  SFA amplitude
+    (0.05,  0.5),       # x0            [dimensionless]  quantal vesicle size
+    (0.1,   10.0),      # O_G           [1/(uM·s)]  mGluR binding rate
+    (1e-3,  1e-1),      # Omega_G       [1/s]   mGluR inactivation
+    (0.1,   5.0),       # O_beta        [uM/s]  PLCbeta gain
+    (1.0,   15.0),      # O_3K          [uM/s]  IP3-3K rate
+    (0.01,  1.0),       # Omega_5P      [1/s]   IP3-5P degradation
+    (0.3,   1.5),       # I_bias        [uM]    IP3 exogenous set-point
+    (0.1,   10.0),      # F             [uM/s]  GJ + exogenous permeability
+    (0.1,   1.0),       # I_Theta       [uM]    tanh threshold
+    (0.01,  0.5),       # omega_I       [uM]    tanh steepness
+    (0.1,   2.0),       # C_Theta       [uM]    exocytosis Ca2+ threshold
+    (0.1,   0.9),       # U_A           [dimensionless]  gliotransmitter release prob
+    (50.0,  500.0),     # G_T           [mM]    total gliotransmitter
 ], dtype=np.float64)
 
-assert PARAM_BOUNDS.shape == (14, 2)
+N_DIMS = PARAM_BOUNDS.shape[0]
+assert PARAM_BOUNDS.shape == (30, 2)
+
+# Stage-4 log-coordinate hook (empty by default; populated when log-coords are
+# enabled). For k in LOG_PARAMS, PARAM_BOUNDS[k] is interpreted as (log10 lo,
+# log10 hi) and the worker exponentiates (10**p) before building run_args.
+LOG_PARAMS: set = set()
 
 
 def sample_param_vector(rng: np.random.Generator) -> np.ndarray:
-    """Draw a single 14-D parameter vector uniformly from PARAM_BOUNDS."""
+    """Draw a single 30-D parameter vector uniformly from PARAM_BOUNDS."""
     return rng.uniform(PARAM_BOUNDS[:, 0], PARAM_BOUNDS[:, 1])
 
 
@@ -229,6 +251,8 @@ def rebuild_manifest(out_dir) -> dict:
         n_total_failures += len(failures)
 
     manifest = {
+        'manifest_version':                 2,        # v1 = legacy 14-D; v2 = 30-D expansion
+        'n_dims':                           int(N_DIMS),
         'updated_at':                       time.strftime('%Y-%m-%dT%H:%M:%S'),
         'job_id':                           os.environ.get('PBS_JOBID', ''),
         'host':                             os.environ.get('HOSTNAME', ''),
@@ -238,6 +262,7 @@ def rebuild_manifest(out_dir) -> dict:
         'param_names':                      PARAM_NAMES,
         'param_units':                      PARAM_UNITS,
         'param_bounds':                     PARAM_BOUNDS.tolist(),
+        'log_params':                       sorted(LOG_PARAMS),  # Stage-4 hook (empty now)
         'topologies':                       topologies,
     }
     _atomic_write_json(root / 'manifest.json', manifest)
@@ -261,7 +286,7 @@ def _worker_entry(pack: dict) -> list:
     topo_idx         : int
     topo_dir         : str   — output directory for this topology
     conn_prob        : float — the outer-loop's conn_prob_k
-    params_list      : (k, 14) ndarray
+    params_list      : (k, 30) ndarray
     iter_indices     : list[int]   — local iter indices for the saved filenames
     seed_runs        : list[int]   — one fresh seed_run per parameter vector
     cli              : dict — flattened CLI args needed by the worker
@@ -288,7 +313,7 @@ def _worker_entry(pack: dict) -> list:
 
     from brian2 import (set_device, get_device, devices, start_scope,
                         defaultclock, Network, SpikeMonitor,
-                        second, ms, mV, nS, mmole, msiemens, cm, um,
+                        second, ms, mV, nS, mmole, umole, msiemens, cm, um,
                         BrianLogger, Function, DEFAULT_FUNCTIONS)
 
     set_device('cpp_standalone', build_on_run=False, directory=worker_scratch)
@@ -443,6 +468,7 @@ int Binomial_fun(int n, double p, int _vectorisation_idx) {
         params = np.asarray(params, dtype=np.float64)
 
         run_args = {
+            # ---- Synapse group (present in both Neuronal and Full) ----
             net['Synapse'].U_0_ar:     params[5],
             net['Synapse'].Umax:       params[6] / ms,
             net['Synapse'].U_0_sr:     params[7],
@@ -450,14 +476,37 @@ int Binomial_fun(int n, double p, int _vectorisation_idx) {
             net['Synapse'].Omega_f_ar: params[9] / second,
             net['Synapse'].Omega_d:    params[10] / second,
             net['Synapse'].alpha_syn:  params[11],
-            net['Synapse'].Xi_ampa:    params[2] / mmole,
-            net['Synapse'].Xi_nmda:    params[3] / mmole,
+            net['Synapse'].EC50_ampa:  params[2] * mmole,   # was Xi_ampa: params/mmole
+            net['Synapse'].EC50_nmda:  params[3] * mmole,   # was Xi_nmda: params/mmole
+            net['Synapse'].x0:         params[17],
+            net['Synapse'].O_G:        params[18] / umole / second,
+            net['Synapse'].Omega_G:    params[19] / second,
+            # ---- Neuron group (present in both modes) ----
             net['Neuron'].sigma:       params[0] * mV,
             net['Neuron'].g_AHP:       params[1] * nS,
             net['Neuron'].tau_Ca:      params[4] * second,
             net['Neuron'].g_na:        params[12] * msiemens * cm**-2 * area,
             net['Neuron'].g_kd:        params[13] * msiemens * cm**-2 * area,
+            net['Neuron'].g_ampa:      params[14] * nS,
+            net['Neuron'].g_nmda:      params[15] * nS,
+            net['Neuron'].alpha_Ca:    params[16],
         }
+
+        # Astrocyte + gliotransmission axes: only in Full mode (groups absent in
+        # Neuronal mode; targeting them would KeyError).
+        if cli['mode'] == 'Full':
+            run_args.update({
+                net['Astrocyte'].O_beta:      params[20] * umole / second,
+                net['Astrocyte'].O_3K:        params[21] * umole / second,
+                net['Astrocyte'].Omega_5P:    params[22] / second,
+                net['Astrocyte'].I_bias:      params[23] * umole,
+                net['Astrocyte'].F:           params[24] * umole / second,
+                net['Astrocyte'].I_Theta:     params[25] * umole,
+                net['Astrocyte'].omega_I:     params[26] * umole,
+                net['Gliot_release'].C_Theta: params[27] * umole,
+                net['Gliot_release'].U_A:     params[28],
+                net['Gliot_release'].G_T:     params[29] * mmole,
+            })
 
         # ──────────────────────────────────────────────────────────────────
         # Per-parameter try/except: a crash here MUST NOT abort the rest of
@@ -644,7 +693,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             'HPC nested random sweep:\n'
             '  outer iter -> draw conn_prob and a fresh topology\n'
-            '  inner sweep -> n_workers parallel sims with random 14-D '
+            '  inner sweep -> n_workers parallel sims with random 30-D '
             'biophysical parameters.\n'
             'Each completed simulation is saved before the next starts, '
             'so walltime kills are safe.'
