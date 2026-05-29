@@ -59,20 +59,34 @@ import numpy as np
 
 PARAM_NAMES = [
     'Sigma', 'g_AHP',
-    'Xi_ampa', 'Xi_nmda', 'Tau_Ca',
+    'EC50_ampa', 'EC50_nmda', 'Tau_Ca',
     'U_0_ar', 'U_max', 'U_0_sr',
     'Omega_f_sr', 'Omega_f_ar', 'Omega_d',
     'alpha_syn',
     'g_na', 'g_kd',
+    'g_ampa', 'g_nmda',                          # 14-15  Neuron
+    'alpha_Ca',                                  # 16     Neuron
+    'x0',                                        # 17     Synapse
+    'O_G', 'Omega_G',                            # 18-19  Synapse
+    'O_beta', 'O_3K', 'Omega_5P', 'I_bias',      # 20-23  Astrocyte
+    'F', 'I_Theta', 'omega_I',                   # 24-26  Astrocyte
+    'C_Theta', 'U_A', 'G_T',                     # 27-29  Gliot_release
 ]
 
 PARAM_UNITS = [
     'mV', 'nS',
-    '1/mmole', '1/mmole', 's',
+    'mmole', 'mmole', 's',
     '(dimensionless)', '1/ms', '(dimensionless)',
     '1/s', '1/s', '1/s',
     '(dimensionless)',
     'mS cm⁻² coeff', 'mS cm⁻² coeff',
+    'nS', 'nS',
+    '(dimensionless)',
+    '(dimensionless)',
+    '1/(uM·s)', '1/s',
+    'uM/s', 'uM/s', '1/s', 'uM',
+    'uM/s', 'uM', 'uM',
+    'uM', '(dimensionless)', 'mM',
 ]
 
 # Nominal parameter vector.  Each entry is used as the default when the
@@ -80,8 +94,8 @@ PARAM_UNITS = [
 NOMINAL_PARAMS = np.array([
     4.0,        # Sigma          mV
     5.0,        # g_AHP          nS
-    0.5,        # Xi_ampa        1/mmole
-    0.3,        # Xi_nmda        1/mmole
+    8.6,        # EC50_ampa      mmole  (kappa/mu-reconciled; raw P&K 27.2)
+    3.0,        # EC50_nmda      mmole  (kappa/mu-reconciled; raw P&K  9.5)
     8.0,        # Tau_Ca         s
     0.003,      # U_0_ar         (dimensionless)
     0.5,        # U_max          1/ms
@@ -92,6 +106,22 @@ NOMINAL_PARAMS = np.array([
     1.0,        # alpha_syn      (dimensionless)
     80.0,       # g_na  coeff    (= 1.6 × 50)
     6.5,        # g_kd  coeff    (= 1.3 × 5)
+    1.6,        # g_ampa         nS    (was (1+delta)*nS at delta=0.6)
+    0.4,        # g_nmda         nS    (was (1-delta)*nS at delta=0.6)
+    3.5e-4,     # alpha_Ca       (dimensionless)  SFA amplitude
+    0.2,        # x0             (dimensionless)  quantal vesicle size
+    1.5,        # O_G            1/(uM·s)  mGluR binding rate
+    0.00833,    # Omega_G        1/s   mGluR inactivation (= 0.5/60, live-code value)
+    1.0,        # O_beta         uM/s  PLCbeta gain
+    4.5,        # O_3K           uM/s  IP3-3K rate
+    0.1,        # Omega_5P       1/s   IP3-5P degradation
+    0.8,        # I_bias         uM    IP3 exogenous set-point
+    2.0,        # F              uM/s  GJ + exogenous permeability
+    0.3,        # I_Theta        uM    tanh threshold
+    0.05,       # omega_I        uM    tanh steepness
+    0.5,        # C_Theta        uM    exocytosis Ca2+ threshold
+    0.6,        # U_A            (dimensionless)  gliotransmitter release prob
+    200.0,      # G_T            mM    total gliotransmitter
 ])
 
 
@@ -195,8 +225,8 @@ def build_parser() -> argparse.ArgumentParser:
                              'defaults = nominal operating point)')
     g.add_argument('--Sigma',      type=float, default=None, metavar='mV')
     g.add_argument('--g_AHP',      type=float, default=None, metavar='nS')
-    g.add_argument('--Xi_ampa',    type=float, default=None, metavar='1/mmole')
-    g.add_argument('--Xi_nmda',    type=float, default=None, metavar='1/mmole')
+    g.add_argument('--EC50_ampa',  type=float, default=None, metavar='mmole')
+    g.add_argument('--EC50_nmda',  type=float, default=None, metavar='mmole')
     g.add_argument('--Tau_Ca',     type=float, default=None, metavar='s')
     g.add_argument('--U_0_ar',     type=float, default=None)
     g.add_argument('--U_max',      type=float, default=None, metavar='1/ms')
@@ -209,6 +239,26 @@ def build_parser() -> argparse.ArgumentParser:
                    help='g_na coefficient  (SI value = coeff × mS cm⁻² × area)')
     g.add_argument('--g_kd',       type=float, default=None, metavar='COEFF',
                    help='g_kd coefficient  (SI value = coeff × mS cm⁻² × area)')
+    # NEW axes (idx 14-29)
+    g.add_argument('--g_ampa',     type=float, default=None, metavar='nS')
+    g.add_argument('--g_nmda',     type=float, default=None, metavar='nS')
+    g.add_argument('--alpha_Ca',   type=float, default=None)
+    g.add_argument('--x0',         type=float, default=None)
+    g.add_argument('--O_G',        type=float, default=None, metavar='1/(uM·s)')
+    g.add_argument('--Omega_G',    type=float, default=None, metavar='1/s')
+    g.add_argument('--O_beta',     type=float, default=None, metavar='uM/s')
+    g.add_argument('--O_3K',       type=float, default=None, metavar='uM/s')
+    g.add_argument('--Omega_5P',   type=float, default=None, metavar='1/s')
+    g.add_argument('--I_bias',     type=float, default=None, metavar='uM')
+    # NB: --F_gj (not --F) to avoid collision with argparse abbreviation / builtins;
+    # maps internally to params[24] and net['Astrocyte'].F.
+    g.add_argument('--F_gj',       type=float, default=None, metavar='uM/s',
+                   dest='F_gj', help='Astrocyte GJ+exogenous permeability F (uM/s).')
+    g.add_argument('--I_Theta',    type=float, default=None, metavar='uM')
+    g.add_argument('--omega_I',    type=float, default=None, metavar='uM')
+    g.add_argument('--C_Theta',    type=float, default=None, metavar='uM')
+    g.add_argument('--U_A',        type=float, default=None)
+    g.add_argument('--G_T',        type=float, default=None, metavar='mM')
 
     # ── Figure options ────────────────────────────────────────────────────────
     p.add_argument('--dpi', type=int, default=200,
@@ -222,10 +272,17 @@ def resolve_params(args) -> np.ndarray:
     p = NOMINAL_PARAMS.copy()
     cli_values = [
         args.Sigma, args.g_AHP,
-        args.Xi_ampa, args.Xi_nmda, args.Tau_Ca,
+        args.EC50_ampa, args.EC50_nmda, args.Tau_Ca,
         args.U_0_ar, args.U_max, args.U_0_sr,
         args.Omega_f_sr, args.Omega_f_ar, args.Omega_d,
         args.alpha_syn, args.g_na, args.g_kd,
+        args.g_ampa, args.g_nmda,
+        args.alpha_Ca,
+        args.x0,
+        args.O_G, args.Omega_G,
+        args.O_beta, args.O_3K, args.Omega_5P, args.I_bias,
+        args.F_gj, args.I_Theta, args.omega_I,
+        args.C_Theta, args.U_A, args.G_T,
     ]
     for k, val in enumerate(cli_values):
         if val is not None:
@@ -496,7 +553,7 @@ def build_and_run(topo: dict, args, params: np.ndarray) -> dict:
     topo : dict
         Output of `build_topology`.
     args : argparse.Namespace
-    params : np.ndarray  shape (14,)
+    params : np.ndarray  shape (30,)
 
     Returns
     -------
@@ -508,7 +565,7 @@ def build_and_run(topo: dict, args, params: np.ndarray) -> dict:
         set_device, get_device, devices, start_scope,
         defaultclock, Network,
         NeuronGroup, Synapses, SpikeMonitor,
-        second, ms, mV, nS, mmole, msiemens, cm, um,
+        second, ms, mV, nS, mmole, umole, msiemens, cm, um,
         BrianLogger, Function, DEFAULT_FUNCTIONS, Equations,
         linked_var, float32,
     )
@@ -643,6 +700,7 @@ int Binomial_fun(int n, double p, int _vectorisation_idx) {
     area = net['Neuron'].namespace['area']
 
     run_args = {
+        # ---- Synapse group (present in both Neuronal and Full) ----
         net['Synapse'].U_0_ar:     params[5],
         net['Synapse'].Umax:       params[6] / ms,
         net['Synapse'].U_0_sr:     params[7],
@@ -650,14 +708,37 @@ int Binomial_fun(int n, double p, int _vectorisation_idx) {
         net['Synapse'].Omega_f_ar: params[9] / second,
         net['Synapse'].Omega_d:    params[10] / second,
         net['Synapse'].alpha_syn:  params[11],
-        net['Synapse'].Xi_ampa:    params[2] / mmole,
-        net['Synapse'].Xi_nmda:    params[3] / mmole,
+        net['Synapse'].EC50_ampa:  params[2] * mmole,   # was Xi_ampa: params/mmole
+        net['Synapse'].EC50_nmda:  params[3] * mmole,   # was Xi_nmda: params/mmole
+        net['Synapse'].x0:         params[17],
+        net['Synapse'].O_G:        params[18] / umole / second,
+        net['Synapse'].Omega_G:    params[19] / second,
+        # ---- Neuron group (present in both modes) ----
         net['Neuron'].sigma:       params[0] * mV,
         net['Neuron'].g_AHP:       params[1] * nS,
         net['Neuron'].tau_Ca:      params[4] * second,
         net['Neuron'].g_na:        params[12] * msiemens * cm**-2 * area,
         net['Neuron'].g_kd:        params[13] * msiemens * cm**-2 * area,
+        net['Neuron'].g_ampa:      params[14] * nS,
+        net['Neuron'].g_nmda:      params[15] * nS,
+        net['Neuron'].alpha_Ca:    params[16],
     }
+
+    # ---- Astrocyte + gliotransmission axes: only in Full mode (groups absent
+    #      in Neuronal mode; targeting them would KeyError). ----
+    if args.mode == 'Full':
+        run_args.update({
+            net['Astrocyte'].O_beta:     params[20] * umole / second,
+            net['Astrocyte'].O_3K:       params[21] * umole / second,
+            net['Astrocyte'].Omega_5P:   params[22] / second,
+            net['Astrocyte'].I_bias:     params[23] * umole,
+            net['Astrocyte'].F:          params[24] * umole / second,
+            net['Astrocyte'].I_Theta:    params[25] * umole,
+            net['Astrocyte'].omega_I:    params[26] * umole,
+            net['Gliot_release'].C_Theta: params[27] * umole,
+            net['Gliot_release'].U_A:     params[28],
+            net['Gliot_release'].G_T:     params[29] * mmole,
+        })
 
     # ── Execute ───────────────────────────────────────────────────────────────
     print(f'[pass 2] Executing binary '
@@ -808,7 +889,7 @@ def plot_astrocyte_raster(spk_A_t, spk_A_i, simtime_s, Na, params,
             bbox=dict(fc='white', ec='none', alpha=0.75, pad=2))
 
     title_p = (f'Tau_Ca={params[4]:.1f} s   '
-               f'Xi_ampa={params[2]:.2f}   Xi_nmda={params[3]:.2f}   '
+               f'EC50_ampa={params[2]:.2f}   EC50_nmda={params[3]:.2f}   '
                f'α_syn={params[11]:.2f}')
     ax.set_title(f'Astrocyte Ca²⁺ events — {Na} cells, {simtime_s:.0f} s\n{title_p}',
                  fontsize=10, pad=8, color=_C_ASTRO)
