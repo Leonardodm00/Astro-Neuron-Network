@@ -98,20 +98,38 @@ from HPC_single_run import (                                         # noqa: E40
 # (low, high) for each of the 30 swept parameters, in the same order as
 # PARAM_NAMES.
 PARAM_BOUNDS = np.array([
-    (2.0,   6.0),       # Sigma         [mV]
-    (1.0,   15.0),      # g_AHP         [nS]
+    (1.0,   10.0),      # Sigma         [mV]   (widened 2-6 -> 1-10: 1 mV = near-quiescent
+                        #                       control spontaneous rate; 10 mV = high-noise
+                        #                       up-state-prone pathology. NB now spans 1 decade
+                        #                       -> flips to LOG under the >=1-decade rule.)
+    (0.5,   20.0),      # g_AHP         [nS]   (floor 0.5 reaches severely-reduced-adaptation /
+                        #                        seizure-prone regime, pair w/ low alpha_Ca,
+                        #                        short Tau_Ca; ceiling raised 15->20 to reach
+                        #                        the strong-adaptation / regular-low-rate end)
     (5.0,   70.0),      # EC50_ampa     [mmole]   (brackets B_tot 0.2-2.5 mM, reconciled)
     (1.0,   25.0),      # EC50_nmda     [mmole]   (brackets B_tot 0.2-2.5 mM, reconciled)
-    (1.0,   11.0),      # Tau_Ca        [s]
-    (0.0,   0.005),     # U_0_ar        [dimensionless]
+    (0.5,   20.0),      # Tau_Ca        [s]    (widened 1-11 -> 0.5-20: short tau + low g_AHP =
+                        #                       seizure-prone corner; long tau + high g_AHP =
+                        #                       strong long-lasting adaptation. nominal 8 s.)
+    (1e-4,  0.05),      # U_0_ar        [dimensionless]  (floor 1e-4 lifted off 0: a draw at
+                        #                                  exactly 0 abolishes async release
+                        #                                  and is a log(0) hazard; ceiling
+                        #                                  raised 5e-3->0.05 to reach the
+                        #                                  pathologically-elevated async-release
+                        #                                  regime, ~16x over nominal 3e-3)
     (0.1,   1.0),       # U_max         [1/ms]
     (0.1,   1.0),       # U_0_sr        [dimensionless]
     (0.1,   4.5),       # Omega_f_sr    [1/s]
     (0.1,   4.5),       # Omega_f_ar    [1/s]
     (0.1,   4.5),       # Omega_d       [1/s]
     (0.1,   1.0),       # alpha_syn     [dimensionless]
-    (0.5 * 50.0,  3.0 * 50.0),   # g_na coeff  -> 25 .. 150
-    (0.5 * 5.0,   3.0 * 5.0),    # g_kd coeff  -> 2.5 .. 15
+    (0.3 * 50.0,  4.0 * 50.0),   # g_na coeff  -> 15 .. 200   (widened x0.5-3 -> x0.3-4 to
+                        #                       cover Na channelopathy: loss-of-function (hypo-
+                        #                       excitable) to gain-of-function (hyperexcitable).
+                        #                       NB now spans >1 decade -> flips to LOG.)
+    (0.3 * 5.0,   4.0 * 5.0),    # g_kd coeff  -> 1.5 .. 20    (widened x0.5-3 -> x0.3-4 to
+                        #                       cover K channelopathy; reduced g_kd -> broadened
+                        #                       spikes / hyperexcitability. Flips to LOG.)
     (0.1,   15.0),      # g_ampa        [nS]
     (0.1,   15.0),      # g_nmda        [nS]
     (1e-4,  1e-3),      # alpha_Ca      [dimensionless]  SFA amplitude
@@ -127,21 +145,117 @@ PARAM_BOUNDS = np.array([
     (0.01,  0.5),       # omega_I       [uM]    tanh steepness
     (0.1,   2.0),       # C_Theta       [uM]    exocytosis Ca2+ threshold
     (0.1,   0.9),       # U_A           [dimensionless]  gliotransmitter release prob
-    (50.0,  500.0),     # G_T           [mM]    total gliotransmitter
+    (50.0,  1000.0),    # G_T           [mM]    total gliotransmitter (ceiling 500->1000 to
+                        #                       cover reactive-astrocyte elevated stores)
 ], dtype=np.float64)
 
 N_DIMS = PARAM_BOUNDS.shape[0]
 assert PARAM_BOUNDS.shape == (30, 2)
 
-# Stage-4 log-coordinate hook (empty by default; populated when log-coords are
-# enabled). For k in LOG_PARAMS, PARAM_BOUNDS[k] is interpreted as (log10 lo,
-# log10 hi) and the worker exponentiates (10**p) before building run_args.
-LOG_PARAMS: set = set()
+# =============================================================================
+# Log parametrisation:  sampling coordinate  +  storage / inference coordinate
+# =============================================================================
+# Two DISTINCT operations, made mutually consistent here:
+#
+#   (1) Log SAMPLING — *where draws land*. Under LINEAR uniform sampling on a
+#       multi-decade range (e.g. [1e-3, 1e-1]) ~90% of draws land in the top
+#       decade, systematically under-covering the LOW end — which for several
+#       axes is the pathological regime (slow mGluR inactivation -> sustained
+#       astrocyte activation; low IP3 degradation -> IP3 accumulation; weak SFA;
+#       near-abolished async release; synaptic hypofunction; weak GJ drive).
+#       Drawing log-uniformly balances coverage per decade.
+#
+#   (2) Log TRANSFORMATION (parametrisation) — *the coordinate downstream SBI
+#       reasons in*. We carry log-axes as their NATURAL LOG, theta = ln(value),
+#       so inference operates on a well-conditioned, ~O(1)-scaled space rather
+#       than one mixing 1e-4 with 5e2. The simulator is ALWAYS fed NATURAL units;
+#       the inversion value = exp(theta) happens in theta_to_natural() in the
+#       parent, right before each worker pack is built. run_args is therefore
+#       byte-for-byte unaffected.
+#
+# These are the SAME act viewed from either side of exp(): a uniform draw in
+# theta IS the log-uniform draw in natural units. PARAM_BOUNDS stays in NATURAL
+# units throughout; PARAM_BOUNDS_THETA (below) is its image in theta-space and
+# is what the SBI prior box (e.g. sbi.utils.BoxUniform) must be defined over.
+#
+# WHICH AXES ARE LOG — every axis spanning >= 1 decade (log10 hi/lo >= 1.0).
+# This applies the stated coverage criterion mechanically rather than by hand.
+_DECADES = np.log10(PARAM_BOUNDS[:, 1] / PARAM_BOUNDS[:, 0])
+LOG_PARAMS = {int(k) for k in range(N_DIMS) if _DECADES[k] >= 1.0}
+
+# ── Optional overrides (uncomment to apply) ──────────────────────────────────
+# • If your pathology is strictly hyperexcitable (E/I imbalance toward
+#   excitation), you may prefer LINEAR g_ampa/g_nmda so the sweep weights toward
+#   strong conductances rather than splitting coverage with the hypofunction
+#   tail (these two span ~2.2 decades and are log under the rule above):
+# LOG_PARAMS -= {PARAM_NAMES.index('g_ampa'), PARAM_NAMES.index('g_nmda')}
+#
+# • Bounded probabilities / fractions: flat-in-VALUE (linear) is at least as
+#   defensible a prior as flat-in-log. Under the >=1.0 rule, U_0_sr / U_max /
+#   alpha_syn (all 0.1–1.0, exactly one decade) are LOG while U_A (0.1–0.9,
+#   0.95 decade) is LINEAR — an asymmetry you may want to remove. Uncomment to
+#   force all bounded fractions linear for consistency:
+# LOG_PARAMS -= {PARAM_NAMES.index(_n) for _n in ('U_0_sr', 'U_max', 'alpha_syn')}
+
+# Safety: the log transform requires a strictly positive lower bound.
+for _k in LOG_PARAMS:
+    assert PARAM_BOUNDS[_k, 0] > 0.0, (
+        f"LOG_PARAMS axis {_k} ({PARAM_NAMES[_k]}) has non-positive lower bound "
+        f"{PARAM_BOUNDS[_k, 0]}; cannot log-transform.")
+
+# The base of the log is a free choice (it only rescales the theta axis); we use
+# NATURAL LOG, matching the sbi-package convention. Recorded in the manifest as
+# 'log_transform': 'natural_log' so inference-time inversion is unambiguous.
+LOG_BASE = 'natural'
+
+
+def _compute_param_bounds_theta() -> np.ndarray:
+    """PARAM_BOUNDS mapped into the theta (inference) coordinate: natural-log
+    bounds on log-axes, natural-unit bounds on linear axes. Computed once at
+    import (cheap, deterministic, re-derived identically in spawned workers)."""
+    b = PARAM_BOUNDS.astype(np.float64).copy()
+    for k in LOG_PARAMS:
+        b[k, 0] = np.log(PARAM_BOUNDS[k, 0])
+        b[k, 1] = np.log(PARAM_BOUNDS[k, 1])
+    return b
+
+
+# theta-space bounds: this is the box the SBI prior is defined over.
+PARAM_BOUNDS_THETA = _compute_param_bounds_theta()
+
+
+def theta_to_natural(theta: np.ndarray) -> np.ndarray:
+    """Invert the theta parametrisation to NATURAL units for the simulator:
+    value = exp(theta) on log-axes, identity on linear axes. run_args is built
+    from the returned vector, so the simulator never sees log coordinates."""
+    nat = np.asarray(theta, dtype=np.float64).copy()
+    for k in LOG_PARAMS:
+        nat[k] = np.exp(nat[k])
+    return nat
+
+
+def sample_theta(rng: np.random.Generator) -> np.ndarray:
+    """Draw a single 30-D vector in theta (inference) coordinates: uniform in
+    NATURAL LOG on log-axes (ln(lo)..ln(hi)), uniform linear on the rest. A
+    uniform draw here is exactly the intended log-uniform prior on the natural
+    parameter. STORE THIS VECTOR as the SBI training label; feed
+    theta_to_natural(theta) to the simulator."""
+    return rng.uniform(PARAM_BOUNDS_THETA[:, 0], PARAM_BOUNDS_THETA[:, 1])
 
 
 def sample_param_vector(rng: np.random.Generator) -> np.ndarray:
-    """Draw a single 30-D parameter vector uniformly from PARAM_BOUNDS."""
-    return rng.uniform(PARAM_BOUNDS[:, 0], PARAM_BOUNDS[:, 1])
+    """DEPRECATED backward-compat shim. Returns a NATURAL-unit draw, equal in
+    distribution to the legacy sampler (log-uniform is base-independent). New
+    code should use sample_theta() + theta_to_natural() so the theta label can
+    be stored alongside the natural-unit vector."""
+    return theta_to_natural(sample_theta(rng))
+
+
+# Import-time correctness guard: the theta<->natural inversion must reproduce
+# PARAM_BOUNDS exactly at both bound edges (catches any base/exp mismatch).
+assert np.allclose(theta_to_natural(PARAM_BOUNDS_THETA[:, 0]), PARAM_BOUNDS[:, 0]) \
+   and np.allclose(theta_to_natural(PARAM_BOUNDS_THETA[:, 1]), PARAM_BOUNDS[:, 1]), \
+    "theta<->natural inversion is inconsistent with PARAM_BOUNDS"
 
 
 # =============================================================================
@@ -262,7 +376,15 @@ def rebuild_manifest(out_dir) -> dict:
         'param_names':                      PARAM_NAMES,
         'param_units':                      PARAM_UNITS,
         'param_bounds':                     PARAM_BOUNDS.tolist(),
-        'log_params':                       sorted(LOG_PARAMS),  # Stage-4 hook (empty now)
+        # ── theta (inference) coordinate: SBI prior box + provenance ──────────
+        # Build the prior over THESE bounds (BoxUniform(low=col0, high=col1)),
+        # train on the per-iter 'theta' arrays, and map posterior samples back
+        # with value = exp(theta) on log_param_indices. 'params' stays natural.
+        'param_bounds_theta':               PARAM_BOUNDS_THETA.tolist(),
+        'log_transform':                    LOG_BASE,   # 'natural' -> ln / exp
+        'log_params':                       sorted(PARAM_NAMES[k] for k in LOG_PARAMS),
+        'log_param_indices':                sorted(int(k) for k in LOG_PARAMS),
+        'theta_storage_keys':               {'npz': 'theta', 'json': 'theta'},
         'topologies':                       topologies,
     }
     _atomic_write_json(root / 'manifest.json', manifest)
@@ -286,7 +408,9 @@ def _worker_entry(pack: dict) -> list:
     topo_idx         : int
     topo_dir         : str   — output directory for this topology
     conn_prob        : float — the outer-loop's conn_prob_k
-    params_list      : (k, 30) ndarray
+    params_list      : (k, 30) ndarray — NATURAL units; built into run_args
+    theta_list       : (k, 30) ndarray — inference coords (ln on log-axes);
+                       stored verbatim as the SBI label, never used in run_args
     iter_indices     : list[int]   — local iter indices for the saved filenames
     seed_runs        : list[int]   — one fresh seed_run per parameter vector
     cli              : dict — flattened CLI args needed by the worker
@@ -302,6 +426,7 @@ def _worker_entry(pack: dict) -> list:
     topo_dir      = pack['topo_dir']
     conn_prob     = pack['conn_prob']
     params_list   = pack['params_list']
+    theta_list    = pack['theta_list']
     iter_indices  = pack['iter_indices']
     seed_runs     = pack['seed_runs']
     cli           = pack['cli']
@@ -464,8 +589,10 @@ int Binomial_fun(int n, double p, int _vectorisation_idx) {
     n_consecutive_failures = 0
     MAX_CONSECUTIVE_FAILURES = 5    # bail out if the binary appears broken
 
-    for params, iter_idx, seed_run in zip(params_list, iter_indices, seed_runs):
-        params = np.asarray(params, dtype=np.float64)
+    for params, theta, iter_idx, seed_run in zip(
+            params_list, theta_list, iter_indices, seed_runs):
+        params = np.asarray(params, dtype=np.float64)   # NATURAL units (run_args)
+        theta  = np.asarray(theta,  dtype=np.float64)   # inference label (stored)
 
         run_args = {
             # ---- Synapse group (present in both Neuronal and Full) ----
@@ -554,6 +681,7 @@ int Binomial_fun(int n, double p, int _vectorisation_idx) {
                 'worker_id':   int(worker_id),
                 'conn_prob':   float(conn_prob),
                 'params':      params.tolist(),
+                'theta':       theta.tolist(),
                 'param_names': PARAM_NAMES,
                 'seed_run':    int(seed_run),
                 'error_type':  type(e).__name__,
@@ -611,7 +739,8 @@ int Binomial_fun(int n, double p, int _vectorisation_idx) {
         npz_path = os.path.join(topo_dir, npz_name)
         np.savez_compressed(
             npz_path,
-            params=params,
+            params=params,                       # NATURAL units (human/biophysical)
+            theta=theta,                         # inference coords (SBI training label)
             conn_prob=np.float64(conn_prob),
             topo_idx=np.int32(topo_idx),
             seed_run=np.int64(seed_run_saved),
@@ -629,6 +758,7 @@ int Binomial_fun(int n, double p, int _vectorisation_idx) {
             'worker_id':          int(worker_id),
             'conn_prob':          float(conn_prob),
             'params':             params.tolist(),
+            'theta':              theta.tolist(),
             'param_names':        PARAM_NAMES,
             'seed_run':           seed_run_saved,
             'noise_mode':         noise_mode,
@@ -960,9 +1090,16 @@ def main():
         }
         _atomic_write_json(os.path.join(topo_dir, 'topology_meta.json'), topo_meta)
 
-        # 4) Sample sims_per_topo parameter vectors + seed_runs --------------
+        # 4) Sample sims_per_topo vectors in theta (inference) space, then
+        #    invert to NATURAL units for the simulator. theta is the SBI label;
+        #    param (natural) is what run_args is built from. Deriving natural
+        #    solely via theta_to_natural() keeps the two coordinates consistent
+        #    by construction (no chance of desync in the worker pack).
+        theta_matrix = np.array(
+            [sample_theta(master_rng) for _ in range(sims_per_topo)]
+        )
         param_matrix = np.array(
-            [sample_param_vector(master_rng) for _ in range(sims_per_topo)]
+            [theta_to_natural(th) for th in theta_matrix]
         )
         seed_runs = master_rng.integers(0, 2**31 - 1, size=sims_per_topo)
 
@@ -991,6 +1128,7 @@ def main():
                 'topo_dir':     topo_dir,
                 'conn_prob':    conn_prob,
                 'params_list':  [param_matrix[i] for i in chunk_idxs],
+                'theta_list':   [theta_matrix[i] for i in chunk_idxs],
                 'iter_indices': chunk_idxs,
                 'seed_runs':    [int(seed_runs[i]) for i in chunk_idxs],
                 'cli':          cli_dict,
