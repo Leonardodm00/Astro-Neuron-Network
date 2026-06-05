@@ -551,28 +551,27 @@ int Binomial_fun(int n, double p, int _vectorisation_idx) {
     device.build(run=False, directory=None)
     t_compile = time.time() - t0_compile
 
-    # ── Detect whether this Brian2 supports device.run(seed=...) ─────────────
-    # The kwarg was added in Brian2 ≥2.5.  Older installs (which is what
-    # davinci-1 ships by default) raise TypeError on first use.  Detect once,
-    # before the inner loop, so we don't spam _failures.jsonl with the same
-    # 48 spurious TypeErrors per topology.
-    import inspect
-    try:
-        _run_sig = inspect.signature(device.run)
-        _supports_seed = 'seed' in _run_sig.parameters
-    except (TypeError, ValueError):
-        _supports_seed = False   # can't introspect → assume old API
+    # ── Per-run reseeding capability ─────────────────────────────────────────
+    # CORRECTION: device.run() has never accepted a `seed=` kwarg, so the old
+    # signature probe ('seed' in inspect.signature(device.run)) ALWAYS returned
+    # False and forced paired mode even on modern Brian2 (confirmed on 2.9).
+    # The documented standalone idiom for reproducible per-run noise is
+    # device.seed(value) called immediately BEFORE each device.run() — see
+    # brian2.devices.device.seed. device.seed() is core API present in every
+    # modern Brian2 (>=2.x); we check for it defensively and only fall back to
+    # paired mode on a (now implausible) install that lacks it.
+    _supports_seed = callable(getattr(device, 'seed', None))
     noise_mode = 'fresh' if _supports_seed else 'paired'
 
     if not _supports_seed:
         print(
             f'[worker {worker_id:03d}] NOTE: This Brian2 install lacks '
-            f"device.run(seed=...).  Falling back to PAIRED-COMPARISON mode "
+            f"device.seed().  Falling back to PAIRED-COMPARISON mode "
             f"(the cpp_standalone binary replays the build-time RNG sequence; "
             f"all parameter vectors within topo_{topo_idx:05d} see the same "
             f"(rand()-0.5)*I_inj initialisation and the same xi noise stream). "
-            f"To enable true fresh-noise-per-run, upgrade Brian2 ≥2.5 in the "
-            f"conda env:  pip install --upgrade brian2",
+            f"device.seed() is core API in all modern Brian2 (>=2.x); if you see "
+            f"this, the env is unexpectedly old:  pip install --upgrade brian2",
             flush=True,
         )
 
@@ -642,9 +641,17 @@ int Binomial_fun(int n, double p, int _vectorisation_idx) {
         try:
             t0_run = time.time()
             if _supports_seed:
-                device.run(run_args=run_args, seed=int(seed_run))
-            else:
+                # Reseed the standalone RNG immediately before this run so each
+                # parameter vector gets an independent, REPRODUCIBLE noise
+                # realisation: a fresh (rand()-0.5)*I_inj initial condition and a
+                # fresh xi stream. seed_run is a distinct master_rng draw per sim
+                # (see parent), so the whole campaign is reproducible from
+                # seed_master while no two sims share a noise stream. device.seed()
+                # does NOT recompile — it only resets the RNG for the next run.
+                device.seed(int(seed_run))
                 device.run(run_args=run_args)
+            else:
+                device.run(run_args=run_args)   # no device.seed(): paired fallback
             t_run = time.time() - t0_run
 
             # Harvest --------------------------------------------------------
