@@ -43,17 +43,19 @@ LOAD_PCT_48=80
 
 TARGET=300000               # total sim target
 N_TOPOLOGIES_WORKER=80      # MUST match N_TOPOLOGIES in submit_sweep_mixed.sh
+K_PARAMS=1                  # MUST match N_PARAMS_PER_WORKER in submit_sweep_mixed.sh
+                            # (sims per topology = cores × K_PARAMS)
 HEADROOM_PCT=150            # 150% = 1.5x oversizing; guarantees target even if
                             # straggler spread reduces per-task yield by ~33%
 
 # ─── Per-queue fixed knobs (queue name, cores, concurrency, seeds) ───────
-Q_192="cfd"     ; NC_192=192 ; CONC_192=3 ; SEEDBASE_192=1000
-Q_48="intel"    ; NC_48=48   ; CONC_48=4  ; SEEDBASE_48=100000
+Q_192="cfd"     ; NC_192=192 ; CONC_192=4  ; SEEDBASE_192=1000
+Q_48="intel"    ; NC_48=48   ; CONC_48=10  ; SEEDBASE_48=100000
 # ────────────────────────────────────────────────────────────────────────
 
 # ─── Derive N_TASKS from the load split (do not edit below this line) ───
-YIELD_192=$(( N_TOPOLOGIES_WORKER * NC_192 ))   # sims per 192-core task
-YIELD_48=$(( N_TOPOLOGIES_WORKER * NC_48 ))     # sims per  48-core task
+YIELD_192=$(( N_TOPOLOGIES_WORKER * NC_192 * K_PARAMS ))  # sims per 192-core task
+YIELD_48=$(( N_TOPOLOGIES_WORKER  * NC_48  * K_PARAMS ))  # sims per  48-core task
 
 SIMS_192=$(( TARGET * (100 - LOAD_PCT_48) / 100 ))
 SIMS_48=$(( TARGET  *        LOAD_PCT_48  / 100 ))
