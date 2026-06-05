@@ -32,21 +32,43 @@
 
 WORKER="./submit_sweep_mixed.sh"
 
-# ─── Per-queue knobs (pre-set for 300k; adjust CONC_* to your allocation) ─
-# 192-core queue
-Q_192="cfd"            # or egeos
-NC_192=192
-N_TASKS_192=24
-CONC_192=3             # max concurrent 192-core nodes you may hold
-SEEDBASE_192=1000      # seeds 1000 .. 1023
+# ─── LOAD SPLIT — the only knob you need to touch ───────────────────────
+# What fraction of the 300k sims should the 48-core (intel/cpu) queue do?
+# The rest goes to the 192-core (cfd/egeos) queue.
+#   LOAD_PCT_48=80  -> 48-core does 80%, 192-core does 20%
+#   LOAD_PCT_48=50  -> equal split
+#   LOAD_PCT_48=0   -> everything on 192-core (48-core array skipped)
+#   LOAD_PCT_48=100 -> everything on 48-core  (192-core array skipped)
+LOAD_PCT_48=80
 
-# 48-core queue
-Q_48="intel"           # or cpu
-NC_48=48
-N_TASKS_48=32
-CONC_48=4              # max concurrent 48-core nodes you may hold
-SEEDBASE_48=100000     # seeds 100000 .. 100031  (disjoint from 192)
+TARGET=300000               # total sim target
+N_TOPOLOGIES_WORKER=80      # MUST match N_TOPOLOGIES in submit_sweep_mixed.sh
+HEADROOM_PCT=150            # 150% = 1.5x oversizing; guarantees target even if
+                            # straggler spread reduces per-task yield by ~33%
+
+# ─── Per-queue fixed knobs (queue name, cores, concurrency, seeds) ───────
+Q_192="cfd"     ; NC_192=192 ; CONC_192=3 ; SEEDBASE_192=1000
+Q_48="intel"    ; NC_48=48   ; CONC_48=4  ; SEEDBASE_48=100000
 # ────────────────────────────────────────────────────────────────────────
+
+# ─── Derive N_TASKS from the load split (do not edit below this line) ───
+YIELD_192=$(( N_TOPOLOGIES_WORKER * NC_192 ))   # sims per 192-core task
+YIELD_48=$(( N_TOPOLOGIES_WORKER * NC_48 ))     # sims per  48-core task
+
+SIMS_192=$(( TARGET * (100 - LOAD_PCT_48) / 100 ))
+SIMS_48=$(( TARGET  *        LOAD_PCT_48  / 100 ))
+
+# Apply headroom, then ceiling-divide by per-task yield
+N_TASKS_192=$(( (SIMS_192 * HEADROOM_PCT / 100 + YIELD_192 - 1) / YIELD_192 ))
+N_TASKS_48=$((  (SIMS_48  * HEADROOM_PCT / 100 + YIELD_48  - 1) / YIELD_48  ))
+
+# Wall-time estimate (mean, ignoring queue gaps and straggler spread):
+#   wall = max( ceil(tasks/concurrency) ) * ~20h per wave
+WAVES_192=$(( N_TASKS_192 > 0 ? (N_TASKS_192 + CONC_192 - 1) / CONC_192 : 0 ))
+WAVES_48=$(( N_TASKS_48 > 0 ? (N_TASKS_48 + CONC_48 - 1) / CONC_48 : 0 ))
+WALL_WAVES=$(( WAVES_192 > WAVES_48 ? WAVES_192 : WAVES_48 ))
+WALL_H=$(( WALL_WAVES * 20 ))
+MAX_YIELD=$(( N_TASKS_192 * YIELD_192 + N_TASKS_48 * YIELD_48 ))
 
 # Safety: refuse to launch if the two seed ranges could overlap.
 HI_192=$(( SEEDBASE_192 + N_TASKS_192 - 1 ))
@@ -57,30 +79,44 @@ if [ "$SEEDBASE_48" -le "$HI_192" ] && [ "$SEEDBASE_192" -le "$HI_48" ]; then
     exit 1
 fi
 
-echo "Launching mixed campaign:"
-echo "  192-core: ${N_TASKS_192} tasks (<=${CONC_192} at once) on '${Q_192}', seeds ${SEEDBASE_192}-${HI_192}"
-echo "   48-core: ${N_TASKS_48} tasks (<=${CONC_48} at once) on '${Q_48}', seeds ${SEEDBASE_48}-${HI_48}"
+echo "Launching mixed campaign (${LOAD_PCT_48}% on 48-core / $((100-LOAD_PCT_48))% on 192-core):"
+echo "  192-core: ${N_TASKS_192} tasks (<=${CONC_192} at once) on '${Q_192}', seeds ${SEEDBASE_192}-${HI_192}  [${SIMS_192} target sims]"
+echo "   48-core: ${N_TASKS_48} tasks (<=${CONC_48} at once) on '${Q_48}', seeds ${SEEDBASE_48}-${HI_48}  [${SIMS_48} target sims]"
+echo "  max yield: ${MAX_YIELD} sims  |  est. wall: ~${WALL_H}h (~$((WALL_H/24))d, mean, +queue gaps)"
 
-# 192-core array
-JID_192=$(qsub \
-    -q "$Q_192" \
-    -l "select=1:ncpus=${NC_192},walltime=24:00:00" \
-    -J "0-$((N_TASKS_192-1))%${CONC_192}" \
-    -v "NODETAG=c192,SEED_BASE=${SEEDBASE_192}" \
-    "$WORKER")
-echo "  submitted 192-core array: $JID_192"
+# 192-core array (skipped if LOAD_PCT_48=100)
+if [ "$N_TASKS_192" -gt 0 ]; then
+    JID_192=$(qsub \
+        -q "$Q_192" \
+        -l "select=1:ncpus=${NC_192},walltime=24:00:00" \
+        -J "0-$((N_TASKS_192-1))%${CONC_192}" \
+        -v "NODETAG=c192,SEED_BASE=${SEEDBASE_192}" \
+        "$WORKER")
+    echo "  submitted 192-core array: $JID_192"
+else
+    echo "  192-core: skipped (LOAD_PCT_48=100)"
+    JID_192=""
+fi
 
-# 48-core array
-JID_48=$(qsub \
-    -q "$Q_48" \
-    -l "select=1:ncpus=${NC_48},walltime=24:00:00" \
-    -J "0-$((N_TASKS_48-1))%${CONC_48}" \
-    -v "NODETAG=c48,SEED_BASE=${SEEDBASE_48}" \
-    "$WORKER")
-echo "  submitted  48-core array: $JID_48"
+# 48-core array (skipped if LOAD_PCT_48=0)
+if [ "$N_TASKS_48" -gt 0 ]; then
+    JID_48=$(qsub \
+        -q "$Q_48" \
+        -l "select=1:ncpus=${NC_48},walltime=24:00:00" \
+        -J "0-$((N_TASKS_48-1))%${CONC_48}" \
+        -v "NODETAG=c48,SEED_BASE=${SEEDBASE_48}" \
+        "$WORKER")
+    echo "  submitted  48-core array: $JID_48"
+else
+    echo "   48-core: skipped (LOAD_PCT_48=0)"
+    JID_48=""
+fi
 
 echo
 echo "Monitor combined progress with:"
 echo "    python aggregate_sweep.py campaign_300k_v1 --target 300000"
 echo "Once it reports >=300000, stop the tail with:"
-echo "    qdel ${JID_192%.*}[] ${JID_48%.*}[]    # cancels remaining array subjobs"
+QDEL_IDS=""
+[ -n "$JID_192" ] && QDEL_IDS="${JID_192%%\[*}[]"
+[ -n "$JID_48"  ] && QDEL_IDS="$QDEL_IDS ${JID_48%%\[*}[]"
+echo "    qdel $QDEL_IDS"
