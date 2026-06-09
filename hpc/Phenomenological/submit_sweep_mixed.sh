@@ -6,7 +6,7 @@
 ##########################################################################
 # Resource-AGNOSTIC worker for the 300k campaign.
 #
-# DO NOT submit this directly — submit it via launch_campaign.sh, which calls
+# DO NOT submit this directly - submit it via launch_campaign.sh, which calls
 # qsub TWICE (once per queue) and passes the queue, ncpus, array range, and
 # the two -v variables this script requires:
 #
@@ -18,12 +18,12 @@
 # The worker auto-adapts to the node it lands on:
 #     N_WORKERS  = $PBS_NCPUS  (48 on intel/cpu, 192 on cfd/egeos)
 #     sims/task  = N_TOPOLOGIES * N_WORKERS * N_PARAMS_PER_WORKER
-# Note N_TOPOLOGIES is the SAME for both node types — per-topology wall is set
+# Note N_TOPOLOGIES is the SAME for both node types - per-topology wall is set
 # by single-sim time, not core count, so a 48- and a 192-core node clear the
 # same number of topologies in TARGET_HOURS; the 192 just yields 4x the sims.
 ##########################################################################
 
-# ─── REQUIRED from -v (guarded) ─────────────────────────────────────────
+# --- REQUIRED from -v (guarded) -----------------------------------------
 if [ -z "$NODETAG" ] || [ -z "$SEED_BASE" ]; then
     echo "ERROR: submit via launch_campaign.sh (NODETAG and SEED_BASE must be"
     echo "       passed with qsub -v). Refusing to run un-tagged." >&2
@@ -31,8 +31,8 @@ if [ -z "$NODETAG" ] || [ -z "$SEED_BASE" ]; then
 fi
 IDX="${PBS_ARRAY_INDEX:-0}"          # 0 if run as a non-array single task
 
-# ─── CAMPAIGN-WIDE CONFIG (edit once; identical for both queues) ─────────
-# Pre-set for a PESSIMISTIC 800 s/sim assumption — NO pilot required.
+# --- CAMPAIGN-WIDE CONFIG (edit once; identical for both queues) ---------
+# Pre-set for a PESSIMISTIC 800 s/sim assumption - NO pilot required.
 #   80 topologies * 800 s = 64,000 s = 17.8 h of compute per task, which leaves
 #   margin under the 24 h walltime cap: even if the real per-topology wall runs
 #   up to ~1080 s (35% over 800 s, e.g. mild straggler spread), 80 topologies
@@ -52,12 +52,12 @@ OUTPUT_DIR="${CAMPAIGN_ROOT}/sweep_${NODETAG}_task$(printf '%04d' ${IDX})"
 CONN_PROB_LO=0.1
 CONN_PROB_HI=0.6
 
-# ─── NETWORK / SIM CONFIG (MUST MATCH YOUR BENCHMARK) ───────────────────
+# --- NETWORK / SIM CONFIG (MUST MATCH YOUR BENCHMARK) -------------------
 SIMTIME=300
 MODE="Full"
 NN=115
 NA=115
-C_MAX=240                            # <-- value that gave [240 µm]² in your run
+C_MAX=240                            # <-- value that gave [240 um]2 in your run
 DISPL_BIAS=20
 
 TOPOLOGY_MODE="wallach"
@@ -74,7 +74,7 @@ DPI=150
 # Parameter group to sweep (optionally injected by launch_campaign.sh via
 # qsub -v SWEEP_GROUP=...; default 'all'). neuron|synapse|astro|neuron_synapse|all
 SWEEP_GROUP="${SWEEP_GROUP:-all}"
-# ────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------
 
 cd "$PBS_O_WORKDIR"
 module load python
