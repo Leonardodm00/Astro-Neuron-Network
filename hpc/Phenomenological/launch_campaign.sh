@@ -1,9 +1,9 @@
 #!/bin/bash
 ##########################################################################
-# launch_campaign.sh — spread a sweep campaign across MULTIPLE CPU queues.
+# launch_campaign.sh - spread a sweep campaign across MULTIPLE CPU queues.
 #
 # Submits submit_sweep_mixed.sh as one independent job array per queue. Work is
-# auto-distributed proportional to each queue's throughput (ncpus × concurrency),
+# auto-distributed proportional to each queue's throughput (ncpus x concurrency),
 # so all queues finish at roughly the same wall time. Every array writes into
 # campaign_<TAG>/ with a queue-name output tag (no dir collisions) and a disjoint
 # seed range (no duplicate parameter draws). status_sweep.py / aggregate_sweep.py
