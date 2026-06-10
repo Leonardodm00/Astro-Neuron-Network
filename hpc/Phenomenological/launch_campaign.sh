@@ -14,8 +14,14 @@
 
 WORKER="./submit_sweep_mixed.sh"
 
-# Parameter group for the whole campaign (passed to every worker via -v).
-#   all | neuron | synapse | astro | neuron_synapse  ('neuron' => CAdEx-only).
+# Campaign-wide simulation mode + parameter group, passed to every worker via -v
+# (overriding the worker's own defaults).
+#   MODE        : Full | Neuronal
+#   SWEEP_GROUP : all | neuron | synapse | astro | neuron_synapse
+#   In MODE=Full     'neuron' sweeps only the 10 CAdEx axes.
+#   In MODE=Neuronal astro axes are inert and synaptic axes are ALWAYS swept, so
+#                    'all'/'neuron'/'neuron_synapse' all sweep neuron+synapse (24).
+MODE="Full"
 SWEEP_GROUP="all"
 
 # --- Campaign-wide config -------------------------------------------------
@@ -57,7 +63,7 @@ done
 
 echo "Spreading ${TARGET} sims across ${#QUEUES[@]} queues"
 echo "(work proportional to ncpus*concurrency; up to ${total_weight} cores at once)"
-echo "sweep_group = ${SWEEP_GROUP}"
+echo "mode = ${MODE}   sweep_group = ${SWEEP_GROUP}"
 echo
 
 QDEL_IDS=""
@@ -79,13 +85,13 @@ for q in "${QUEUES[@]}"; do
         jid=$(qsub -q "$name" \
             -l "select=1:ncpus=${nc},walltime=${WALLTIME}" \
             -J "0-$((ntasks-1))%${conc}" \
-            -v "NODETAG=${name},SEED_BASE=${sb},SWEEP_GROUP=${SWEEP_GROUP}" \
+            -v "NODETAG=${name},SEED_BASE=${sb},SWEEP_GROUP=${SWEEP_GROUP},MODE=${MODE}" \
             "$WORKER")
     else
         # PBS rejects a single-element array; submit a plain job (IDX defaults to 0)
         jid=$(qsub -q "$name" \
             -l "select=1:ncpus=${nc},walltime=${WALLTIME}" \
-            -v "NODETAG=${name},SEED_BASE=${sb},SWEEP_GROUP=${SWEEP_GROUP}" \
+            -v "NODETAG=${name},SEED_BASE=${sb},SWEEP_GROUP=${SWEEP_GROUP},MODE=${MODE}" \
             "$WORKER")
     fi
     echo "           submitted: ${jid:-<FAILED>}"
