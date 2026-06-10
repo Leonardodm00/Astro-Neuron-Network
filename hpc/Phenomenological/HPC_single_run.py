@@ -1668,42 +1668,56 @@ def write_summary(path, args, params, topo, results):
 # Entry point
 # =============================================================================
 
-def _resolve_syn_pdist_csv(args) -> 'pandas.DataFrame':
-    """
-    Locate and load synapse_pdist.csv.
-
-    Resolution order:
+def _syn_pdist_candidates(args) -> list:
+    """Ordered candidate paths for synapse_pdist.csv:
       1. explicit --syn_pdist_csv path
       2. <lib_dir>/synapse_pdist.csv
       3. <script_dir>/synapse_pdist.csv
     """
-    import pandas as pd
-
     candidates = []
-    if args.syn_pdist_csv is not None:
+    if getattr(args, 'syn_pdist_csv', None) is not None:
         candidates.append(args.syn_pdist_csv)
     lib_dir    = args.lib_dir or os.path.dirname(os.path.abspath(__file__))
     script_dir = os.path.dirname(os.path.abspath(__file__))
     candidates.append(os.path.join(lib_dir,    'synapse_pdist.csv'))
     candidates.append(os.path.join(script_dir, 'synapse_pdist.csv'))
+    return candidates
 
-    for path in candidates:
+
+def _find_syn_pdist_csv(args):
+    """Return the first existing synapse_pdist.csv candidate path, else None.
+    Pure path resolution — does NOT load the file (used for run provenance so
+    job_args.json can record the file actually used instead of a bare null)."""
+    for path in _syn_pdist_candidates(args):
         if path and os.path.isfile(path):
-            print(f'[pass 1] Loading synapse_pdist.csv from: {path}')
-            df = pd.read_csv(path)
-            for required in ('Syn_prob', 'Radius_val'):
-                if required not in df.columns:
-                    raise ValueError(
-                        f"{path}: missing required column '{required}'. "
-                        f"Got columns: {list(df.columns)}")
-            return df
+            return path
+    return None
 
-    raise FileNotFoundError(
-        'synapse_pdist.csv not found. Searched: '
-        + '; '.join(c for c in candidates if c)
-        + '. Provide it via --syn_pdist_csv PATH or place it next to '
-          'ASD_fun_BD_cpp.py.'
-    )
+
+def _resolve_syn_pdist_csv(args) -> 'pandas.DataFrame':
+    """
+    Locate and load synapse_pdist.csv (see _syn_pdist_candidates for the order).
+    The resolved path is stashed in df.attrs['source_path'] for provenance.
+    """
+    import pandas as pd
+
+    path = _find_syn_pdist_csv(args)
+    if path is None:
+        raise FileNotFoundError(
+            'synapse_pdist.csv not found. Searched: '
+            + '; '.join(c for c in _syn_pdist_candidates(args) if c)
+            + '. Provide it via --syn_pdist_csv PATH or place it next to '
+              'ASD_fun_BD_cpp.py.'
+        )
+    print(f'[pass 1] Loading synapse_pdist.csv from: {path}')
+    df = pd.read_csv(path)
+    for required in ('Syn_prob', 'Radius_val'):
+        if required not in df.columns:
+            raise ValueError(
+                f"{path}: missing required column '{required}'. "
+                f"Got columns: {list(df.columns)}")
+    df.attrs['source_path'] = path
+    return df
 
 
 def main():
