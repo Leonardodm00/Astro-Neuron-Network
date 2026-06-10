@@ -52,12 +52,18 @@ CONN_PROB_HI=0.6
 SIMTIME=50             # simulated duration [seconds]
 MODE="Full"             # Full | Neuronal
 SWEEP_GROUP="all"       # all | neuron | synapse | astro | neuron_synapse
-                        #   which parameter group is FREE (drawn from the prior);
-                        #   all other axes are frozen at their nominal value.
-                        #   'neuron' => vary only the 10 CAdEx intrinsic axes
-                        #   (Sigma gbarA delta_gA tauA DeltaT VT gL VA DeltaA VR).
-                        #   For an ISOLATED-neuron search also set MODE="Neuronal"
-                        #   and CONN_PROB_LO=0 ; CONN_PROB_HI=0 below.
+                        #   Which axes are FREE (drawn from the prior); the rest
+                        #   are frozen at nominal. INTERACTS WITH MODE:
+                        #     MODE=Full     : astro axes live. 'all'=34 axes,
+                        #                     'neuron'=10 CAdEx axes only, etc.
+                        #     MODE=Neuronal : no astrocytes -> the 10 astro axes are
+                        #                     inert/auto-frozen AND the 14 synaptic
+                        #                     axes are ALWAYS swept, so 'all',
+                        #                     'neuron' and 'neuron_synapse' all sweep
+                        #                     neuron+synapse (24 axes).
+                        #   Isolated-neuron map (synapse-free): MODE="Neuronal" with
+                        #   CONN_PROB_LO=0 and CONN_PROB_HI=0 (the swept synapse axes
+                        #   then apply to zero synapses, i.e. are inert).
 
 # --- Population sizes ---------------------------------------------------
 NN=100                  # number of neurons
