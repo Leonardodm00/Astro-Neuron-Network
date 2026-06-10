@@ -54,7 +54,7 @@ CONN_PROB_HI=0.6
 
 # --- NETWORK / SIM CONFIG (MUST MATCH YOUR BENCHMARK) -------------------
 SIMTIME=300
-MODE="Full"
+MODE="${MODE:-Full}"                 # Full | Neuronal (optionally injected via qsub -v)
 NN=115
 NA=115
 C_MAX=240                            # <-- value that gave [240 um]2 in your run
@@ -71,8 +71,10 @@ SEED_NEURON=39
 SEED_SYNAPSE=35
 SEED_ASTRO=60
 DPI=150
-# Parameter group to sweep (optionally injected by launch_campaign.sh via
-# qsub -v SWEEP_GROUP=...; default 'all'). neuron|synapse|astro|neuron_synapse|all
+# Parameter group to sweep (optionally injected by launch_campaign.sh via qsub
+# -v SWEEP_GROUP=...). all|neuron|synapse|astro|neuron_synapse. NOTE: in
+# MODE=Neuronal the synaptic axes are ALWAYS swept and astro axes are inert, so
+# 'all'/'neuron'/'neuron_synapse' all sweep neuron+synapse there.
 SWEEP_GROUP="${SWEEP_GROUP:-all}"
 # ------------------------------------------------------------------------
 
