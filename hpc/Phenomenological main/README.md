@@ -1,1 +1,1 @@
-Main phenomenological
+Distance dependence
