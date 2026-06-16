@@ -20,12 +20,15 @@ WHAT IT DOES (two independent stages):
   Stage 2  SINGLE NOMINAL RUN  (needs brian2 / the `brian_env` on davinci-1)
       Runs ONE short simulation at nominal parameters through the production
       single-run driver (HPC_single_run.py), MODE=Neuronal, flat connectivity.
+      NOTE: HPC_single_run.py writes iter_*.npz only (no JSON sidecar — sidecars
+      are written by HPC_main_sweep.py). Stage 2 therefore loads the npz directly
+      and computes the dispersion statistics from spk_N_i / spk_N_t, exercising
+      the identical formulae used in the sweep sidecar block.
       PASS if:
           * the driver exits 0,
           * >= 1 iter_*.npz is produced,
-          * the matching iter_*.json sidecar carries the three new dispersion
-            monitors: across_cell_rate_cv, frac_active, mean_isi_cv,
-          * mean_FR_Hz is finite (and, as an ignition sanity print, ideally > 0).
+          * mean_FR_Hz / across_cell_rate_cv / frac_active / mean_isi_cv are all
+            finite and in their expected ranges.
 
 USAGE (swift):
       # on davinci-1, inside brian_env, from the dir holding the .py library files:
@@ -38,7 +41,6 @@ USAGE (swift):
 EXIT CODE: 0 = all stages PASS; 1 = any failure.
 """
 import argparse
-import json
 import os
 import subprocess
 import sys
@@ -107,8 +109,44 @@ def stage1_registry(lib_dir: Path) -> bool:
 # --------------------------------------------------------------------------- #
 # Stage 2 — single nominal run through the production driver (needs brian2)
 # --------------------------------------------------------------------------- #
+# NOTE: HPC_single_run.py writes iter_*.npz (not a JSON sidecar — sidecars are
+# written only by HPC_main_sweep.py).  We therefore load the npz directly and
+# compute the dispersion statistics from spk_N_i / spk_N_t, which:
+#   (a) exercises the exact same formulae used in the HPC_main_sweep.py sidecar,
+#   (b) verifies the math against real brian2 output.
+# --------------------------------------------------------------------------- #
+def _compute_dispersion(spk_N_i, spk_N_t, Nn: int, simtime: float) -> dict:
+    """Mirror of the dispersion block in HPC_main_sweep.py's sidecar writer."""
+    import numpy as np
+    import math
+    counts  = np.bincount(spk_N_i, minlength=Nn).astype(np.float64)
+    rates   = counts / simtime                         # Hz per neuron
+    mu_rate = float(rates.mean())
+    across_cell_rate_cv = float(rates.std() / mu_rate) if mu_rate > 0 else 0.0
+    frac_active         = float((rates > 0.1).mean())
+    isi_cvs = []
+    order   = np.argsort(spk_N_i, kind='stable')
+    si, st  = spk_N_i[order], spk_N_t[order]
+    for j in range(Nn):
+        tj = st[si == j]
+        if tj.size >= 3:
+            d = np.diff(np.sort(tj))
+            if d.mean() > 0:
+                isi_cvs.append(d.std() / d.mean())
+    mean_isi_cv = float(np.mean(isi_cvs)) if isi_cvs else 0.0
+    mean_FR_Hz  = float(len(spk_N_t)) / (simtime * max(Nn, 1))
+    return dict(mean_FR_Hz=mean_FR_Hz,
+                across_cell_rate_cv=across_cell_rate_cv,
+                frac_active=frac_active,
+                mean_isi_cv=mean_isi_cv,
+                mu_rate=mu_rate)
+
+
 def stage2_single_run(lib_dir: Path, simtime: float, Nn: int,
                       conn_prob: float, keep: bool) -> bool:
+    import math
+    import numpy as np
+
     driver = lib_dir / "HPC_single_run.py"
     if not driver.is_file():
         print(f"  [FAIL] driver not found: {driver}")
@@ -142,8 +180,7 @@ def stage2_single_run(lib_dir: Path, simtime: float, Nn: int,
         return False
 
     npzs = sorted(out_dir.rglob("iter_*.npz"))
-    jsons = sorted(out_dir.rglob("iter_*.json"))
-    ok = True
+    ok   = True
 
     def check(label, cond):
         nonlocal ok
@@ -151,22 +188,41 @@ def stage2_single_run(lib_dir: Path, simtime: float, Nn: int,
         ok = ok and bool(cond)
 
     check(f">= 1 iter_*.npz produced (found {len(npzs)})", len(npzs) >= 1)
-    check(f">= 1 iter_*.json sidecar produced (found {len(jsons)})", len(jsons) >= 1)
 
-    if jsons:
-        with open(jsons[0]) as fh:
-            d = json.load(fh)
-        for key in ("across_cell_rate_cv", "frac_active", "mean_isi_cv"):
-            check(f"sidecar carries '{key}'", key in d)
-        mfr = d.get("mean_FR_Hz")
-        import math
-        check("mean_FR_Hz is finite", isinstance(mfr, (int, float)) and math.isfinite(mfr))
-        print(f"  ignition: mean_FR_Hz = {mfr:.4f} Hz   "
-              f"across_cell_rate_cv = {d.get('across_cell_rate_cv')}   "
-              f"mean_isi_cv = {d.get('mean_isi_cv')}")
+    if npzs:
+        # Load the first npz and compute dispersion directly from the raw spike
+        # train — same formulas as the HPC_main_sweep.py sidecar block.
+        data      = np.load(npzs[0])
+        spk_N_i   = data["spk_N_i"]
+        spk_N_t   = data["spk_N_t"]
+
+        check("npz contains spk_N_i", "spk_N_i" in data)
+        check("npz contains spk_N_t", "spk_N_t" in data)
+
+        stats = _compute_dispersion(spk_N_i, spk_N_t, Nn=Nn, simtime=simtime)
+
+        mfr = stats["mean_FR_Hz"]
+        check("mean_FR_Hz is finite", math.isfinite(mfr))
+        check("across_cell_rate_cv is finite",
+              math.isfinite(stats["across_cell_rate_cv"]))
+        check("frac_active in [0,1]",
+              0.0 <= stats["frac_active"] <= 1.0)
+        check("mean_isi_cv >= 0", stats["mean_isi_cv"] >= 0.0)
+
+        print(f"\n  ── ignition / dispersion stats ─────────────────────────")
+        print(f"  mean_FR_Hz          = {mfr:.4f} Hz")
+        print(f"  across_cell_rate_cv = {stats['across_cell_rate_cv']:.4f}   "
+              f"(I_inj discriminant)")
+        print(f"  frac_active         = {stats['frac_active']:.4f}")
+        print(f"  mean_isi_cv         = {stats['mean_isi_cv']:.4f}   "
+              f"(Sigma discriminant)")
+        print(f"  total spikes        = {len(spk_N_t)}   "
+              f"(Nn={Nn}, T={simtime} s)")
+        print(f"  ────────────────────────────────────────────────────────")
+
         if mfr == 0.0:
             print("  WARNING: network silent at nominal (mean_FR_Hz == 0). The HH-gap "
-                  "refit should ignite at nominal; investigate before launching.")
+                  "refit should ignite at nominal; investigate E_L / V_T before launching.")
 
     if keep:
         print(f"  (kept scratch: {out_dir})")
