@@ -1207,6 +1207,13 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
     params_NN = get_Neuronparam()
     
     
+    # Suppress Brian2's resolution_conflict warnings: every per-neuron state variable
+    # declared in eqs_NN (sigma, gl, VT, I_inj, ...) also appears as a key in the
+    # params_NN namespace (fallback for standalone runs). Brian2 correctly chooses
+    # the internal state variable, so the warnings are expected and harmless -- but
+    # they flood the log. This one call silences them globally for the process.
+    BrianLogger.suppress_name('resolution_conflict')
+
     # CAdEx: V is detected/reset at VD (paper's -40 mV cutoff), reset to VR, and
     # the adaptation conductance is incremented by delta_gA. dtype=float64 (not
     # float32): the exp((V-VT)/DeltaT) term overflows float32 for small DeltaT /
