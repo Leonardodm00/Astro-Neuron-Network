@@ -97,7 +97,7 @@ PARAM_UNITS = [
 # corresponding CLI flag is omitted.
 NOMINAL_PARAMS = np.array([
     4.0,        # 0  Sigma          mV
-    10.0,       # 1  gbarA          nS    (ḡ_A, max subthreshold adaptation)
+    0.9,        # 1  gbarA          nS    (ḡ_A; Doorn scale x g_L ratio)
     8.6,        # 2  EC50_ampa      mmole  (kappa/mu-reconciled; raw P&K 27.2)
     3.0,        # 3  EC50_nmda      mmole  (kappa/mu-reconciled; raw P&K  9.5)
     200.0,      # 4  tauA           ms    (τ_A, adaptation time constant)
@@ -108,11 +108,11 @@ NOMINAL_PARAMS = np.array([
     1.42857,    # 9  Omega_f_ar     1/s   (= 1/0.7)
     2.0,        # 10 Omega_d        1/s
     1.0,        # 11 alpha_syn      (dimensionless)
-    2.0,        # 12 DeltaT         mV    (Δ_T, spike-initiation slope)
-    -48.0,      # 13 VT             mV    (spike threshold, FROZEN at HH-gap operating point)
-    1.6,        # 14 g_ampa         nS
-    0.4,        # 15 g_nmda         nS
-    1.0,        # 16 delta_gA       nS    (δg_A, post-spike adaptation increment)
+    2.0,        # 12 DeltaT         mV    (Δ_T, FROZEN Bucket-A quartet)
+    -48.0,      # 13 VT             mV    (spike threshold, FROZEN; gap=5mV)
+    0.3,        # 14 g_ampa         nS    (Doorn Table 1 scale)
+    0.3,        # 15 g_nmda         nS    (Doorn Table 1 scale)
+    0.135,      # 16 delta_gA       nS    (δg_A; Doorn scale, mid-log of wide bounds)
     0.2,        # 17 x0             (dimensionless)  quantal vesicle size
     1.5,        # 18 O_G            1/(uM·s)  mGluR binding rate
     0.00833,    # 19 Omega_G        1/s   mGluR inactivation (= 0.5/60)
@@ -126,11 +126,11 @@ NOMINAL_PARAMS = np.array([
     0.5,        # 27 C_Theta        uM    exocytosis Ca2+ threshold
     0.6,        # 28 U_A            (dimensionless)  gliotransmitter release prob
     200.0,      # 29 G_T            mM    total gliotransmitter
-    10.0,       # 30 gL             nS    (leak conductance g_L)
+    0.9,        # 30 gL             nS    (leak conductance g_L, FROZEN; Doorn 0.3 mS/cm^2 * 300 um^2)
     -45.0,      # 31 VA             mV    (subthreshold adaptation activation)
     5.0,        # 32 DeltaA         mV    (Δ_A, subthreshold adaptation slope, > 0)
     -55.0,      # 33 VR             mV    (reset potential)
-    15.0,       # 34 I_inj          pA    (per-neuron bias SCALE; swept U[0,50], floor 0)
+    4.0,        # 34 I_inj          pA    (per-neuron bias SCALE; mid of [1,7.5])
 ])
 
 # =============================================================================
@@ -141,8 +141,8 @@ NOMINAL_PARAMS = np.array([
 # --sweep_group <g> draws only SWEEP_GROUPS[<g>] from the prior; every other
 # axis is frozen at its NOMINAL_PARAMS value (run_args still injects all of them).
 NEURON_PARAMS  = ['Sigma', 'gbarA', 'delta_gA', 'tauA',
-                  'VA', 'DeltaA', 'VR', 'I_inj']              # 8 free CAdEx intrinsic axes
-FROZEN_PARAMS  = ['DeltaT', 'VT', 'gL']                       # fixed constants, injected at nominal
+                  'VA', 'DeltaA', 'VR', 'I_inj']             # 8 free CAdEx axes
+FROZEN_PARAMS  = ['DeltaT', 'VT', 'gL']                      # Bucket-A quartet, frozen at NOMINAL
 SYNAPSE_PARAMS = ['EC50_ampa', 'EC50_nmda', 'U_0_ar', 'U_max', 'U_0_sr',
                   'Omega_f_sr', 'Omega_f_ar', 'Omega_d', 'alpha_syn',
                   'g_ampa', 'g_nmda', 'x0', 'O_G', 'Omega_G']
@@ -155,17 +155,16 @@ def _grp_idx(names):
 
 
 SWEEP_GROUPS = {
-    'all':            _grp_idx(NEURON_PARAMS + SYNAPSE_PARAMS + ASTRO_PARAMS),  # excludes frozen axes
+    'all':            _grp_idx(NEURON_PARAMS + SYNAPSE_PARAMS + ASTRO_PARAMS),
     'neuron':         _grp_idx(NEURON_PARAMS),
     'synapse':        _grp_idx(SYNAPSE_PARAMS),
     'astro':          _grp_idx(ASTRO_PARAMS),
     'neuron_synapse': _grp_idx(NEURON_PARAMS + SYNAPSE_PARAMS),
 }
 
-# Partition sanity: the free groups (neuron+synapse+astro) PLUS the frozen axes
-# (DeltaT/VT/gL) must tile {0..N-1} exactly once.
+# Partition sanity: neuron + synapse + astro + frozen must tile {0..N-1} exactly once.
 assert sorted(_grp_idx(NEURON_PARAMS + SYNAPSE_PARAMS + ASTRO_PARAMS + FROZEN_PARAMS)) \
-       == list(range(len(PARAM_NAMES))), "groups+frozen must tile PARAM_NAMES"
+       == list(range(len(PARAM_NAMES))), "sweep-group partition does not tile PARAM_NAMES"
 
 
 def resolve_sweep_group(name):
@@ -725,7 +724,7 @@ def build_and_run(topo: dict, args, params: np.ndarray) -> dict:
         set_device, get_device, devices, start_scope,
         defaultclock, Network,
         NeuronGroup, Synapses, SpikeMonitor,
-        second, ms, mV, nS, mmole, umole, msiemens, cm, um,
+        second, ms, mV, nS, pA, mmole, umole, msiemens, cm, um,
         BrianLogger, Function, DEFAULT_FUNCTIONS, Equations,
         linked_var, float32,
     )
@@ -862,7 +861,7 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
         Binomial_fun=Binomial_fun,
         syn_positions=syn_positions,
     )
-    N.bias_unit = '(rand() - 0.5)'   # FROZEN per-neuron unit pattern; I_inj scale set via run_args
+    N.bias_unit = '(rand() - 0.5)'   # FROZEN per-neuron unit pattern; I_inj scale set via params
 
     # Override neuron positions with pass-1 values (µm → metre).
     # This is a set-only operation; we never read them back before run().
@@ -938,6 +937,7 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
         net['Neuron'].VR:          params[33] * mV,
         net['Neuron'].g_ampa:      params[14] * nS,
         net['Neuron'].g_nmda:      params[15] * nS,
+        net['Neuron'].I_inj:       params[34] * pA,   # swept per-neuron bias SCALE
     }
 
     # ---- Astrocyte + gliotransmission axes: only in Full mode (groups absent
