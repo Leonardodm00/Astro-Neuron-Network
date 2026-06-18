@@ -133,7 +133,7 @@ def _grp(names):
 
 _NEURON_FREE   = [n for n in
                   ['Sigma', 'gbarA', 'delta_gA', 'tauA',
-                   'VA', 'DeltaA', 'VR', 'I_inj']
+                   'VA', 'DeltaA', 'VR', 'I_inj', 'Cm']
                   if n in _idx]
 _SYNAPSE_FREE  = [PARAM_NAMES[i]
                   for i in SWEEP_GROUPS.get('synapse', [])
