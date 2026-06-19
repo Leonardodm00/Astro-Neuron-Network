@@ -1,5 +1,19 @@
 
 
+## campaign analysis
+
+
+python campaign_report.py /path/to/campaign_<TAG>
+
+python campaign_report.py campaign_<TAG> --topo-sample 50      # subsample for a quick pass
+
+python campaign_report.py campaign_<TAG> --max-iters-per-topo 200
+
+python campaign_report.py --smoke-test                          # self-check, no campaign needed
+
+
+
+
 ## Plot topology raster
 #### single topology, everything in topo_dir/figures/
 python plot_topology_rasters.py campaign_cadex_hhgap_v1/sweep_egeos_task0000/topo_00042
