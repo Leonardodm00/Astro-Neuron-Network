@@ -662,22 +662,22 @@ def get_Neuronparam(**kwargs):
     'area': Neuron_area,            # kept as metadata; NOT used by the CAdEx eqs
 
     # --- Fixed CAdEx constants (namespace) ---
-    'Cm':      17.25*pF,            # idx 35  membrane capacitance C (SWEPT; nominal tau_m=15 ms at gl=1.15 nS)
-    'El':    -58.2*mV,              # leak reversal E_L (GROUNDED: Gunhanlar 2018 RMP -58.2 mV; gap to VT = 7.2 mV)
+    'Cm':     200*pF,               # membrane capacitance C
+    'El':    -55*mV,                # leak reversal E_L (depolarized → HH-like 5 mV rest-to-threshold gap)
     'EA':    -70*mV,                # adaptation reversal E_A
     'VD':    -40*mV,                # spike detection / reset trigger (paper cutoff)
     't_ref':   3*ms,                # refractory period
-    'gl_ref': 1.15*nS,              # FIXED leak ref for the diffusion noise (= gl so sigma_V=sigma; tracks grounded gl)
+    'gl_ref':  10*nS,               # FIXED leak ref for the diffusion noise
                                     #   (decoupled from the swept per-neuron gl)
 
     # --- Swept CAdEx per-neuron axes (defaults; shadowed by run_args) ---
     'sigma':    4*mV,               # idx 0   noise amplitude
-    'gbarA':  0.9*nS,               # idx 1   max subthreshold adaptation conductance ḡ_A (Doorn scale: x g_L ratio)
+    'gbarA':   10*nS,               # idx 1   max subthreshold adaptation conductance ḡ_A
     'tauA':   200*ms,               # idx 4   adaptation time constant τ_A
     'DeltaT':   2*mV,               # idx 12  spike-initiation slope Δ_T
-    'VT':     -51.0*mV,             # idx 13  spike threshold V_T (GROUNDED: Gunhanlar 2018 AP threshold -50.9 mV)
-    'delta_gA': 0.135*nS,           # idx 16  post-spike adaptation increment δg_A (Doorn scale; mid-log of wide bounds)
-    'gl':     1.15*nS,              # idx 30  leak conductance g_L (GROUNDED: Halliwell 2021 R_in=0.87 GOhm -> 1.15 nS)
+    'VT':     -48*mV,               # idx 13  spike threshold V_T (frozen)
+    'delta_gA': 1*nS,               # idx 16  post-spike adaptation increment δg_A
+    'gl':      10*nS,               # idx 30  leak conductance g_L
     'VA':     -45*mV,               # idx 31  subthreshold adaptation activation V_A
     'DeltaA':   5*mV,               # idx 32  subthreshold adaptation slope Δ_A (> 0)
     'VR':     -55*mV,               # idx 33  reset potential V_R
@@ -686,8 +686,8 @@ def get_Neuronparam(**kwargs):
     'I_inj':  15*pA,                # per-neuron bias scale (N.I = (rand-0.5)*I_inj)
     'E_ampa':  0*mV,
     'E_nmda':  0*mV,
-    'g_ampa': 0.3*nS,               # idx 14  (synaptic conductance, set on the neuron; Doorn Table 1 scale [0.05,1])
-    'g_nmda': 0.3*nS,               # idx 15  (Doorn Table 1 scale [0,1])
+    'g_ampa': 1.6*nS,               # idx 14  (synaptic conductance, set on the neuron)
+    'g_nmda': 0.4*nS,               # idx 15
 
     # --- Position ---
     'c_min' : 0,                    # [µm]
@@ -754,7 +754,7 @@ def get_Synparam(synapse_type='depressing',**kwargs):
 
         # Params of the kinetic model post-syn
         'tau_rise_ampa': 1*ms,
-        'tau_decay_ampa': 5*ms,
+        'tau_decay_ampa': 2*ms,
         'tau_rise_nmda': 2*ms,
         'tau_decay_nmda': 100*ms,
         
@@ -940,7 +940,6 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
 
     # State Variables (Brian2 per-neuron parameters; swept via run_args)
     sigma    : volt
-    Cm       : farad                 # idx 35  membrane capacitance (SWEPT; tau_m=Cm/gl, gl frozen)
     gl       : siemens
     gbarA    : siemens
     delta_gA : siemens
@@ -1206,7 +1205,16 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
     
     # ---- Get parameters ----
     params_NN = get_Neuronparam()
-    
+
+    # Subthreshold span for the randomised V(0), injected as a namespace CONSTANT so
+    # the V-init string 'El + rand() * V0_span' resolves El and V0_span from the
+    # namespace and is NOT shadowed by the per-neuron VT state variable.
+    # CRITICAL: at the point the IC 'N.V = ...' is evaluated, VT (state var) is still
+    # 0 (it is set below). Using the namespace constant V0_span = VT_nominal - El
+    # = 7.2 mV is therefore the only safe approach; any expression referencing
+    # the state 'VT' directly would depolarise ~half the population to near 0 mV.
+    params_NN['V0_span'] = params_NN['VT'] - params_NN['El']   # 7.2 mV at nominal (GROUNDED) op-point
+
     
     # Suppress Brian2's resolution_conflict warnings: every per-neuron state variable
     # declared in eqs_NN (sigma, gl, VT, I_inj, ...) also appears as a key in the
@@ -1226,8 +1234,20 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
                     method='exponential_euler', dtype=float64)
 
     # Initial conditions
-    N.V  = params_NN['El']      # rest at the leak reversal
-    N.gA = 0 * nS               # adaptation deactivated (valid for the swept Δ_A > 0 regime)
+    # Randomise V(0) uniformly across [El, VT) to eliminate the synchronous startup volley.
+    # With every cell previously pinned at El = -58.2 mV (7.2 mV below VT = -51.0 mV), the
+    # entire population crossed threshold together at t ≈ 0 → one synchronous spike per neuron,
+    # then silence on the fast (τ_m = 3.3 ms) membrane.  This was the source of the 19 %
+    # one-spike-artifact fraction observed in campaign rv3.
+    # Spreading V(0) uniformly across the subthreshold band desynchronises the first wave;
+    # the onset transient shrinks to a short (<1 s) settling period that is easily discarded
+    # in the feature extractor (warm-up mask: spk_t >= t_warmup, t_warmup ~ 1–2 s).
+    # IMPLEMENTATION NOTE: 'El' and 'V0_span' are resolved from the params_NN NAMESPACE
+    # (compile-time constants), NOT from the per-neuron state variable 'VT' (which is
+    # assigned below and equals 0 at this point in the IC block).  Using V0_span avoids the
+    # state-variable shadowing trap; see Brian2 namespace resolution order.
+    N.V  = 'El + rand() * V0_span'   # uniform on [El, VT) at nominal VT = -51.0 mV
+    N.gA = 0 * nS                    # adaptation deactivated (valid for swept g_A > 0 regime)
 
     # Default ICs for the per-neuron Brian2 parameters (so the library runs
     # standalone; shadowed per-neuron by run_args at sweep runtime). These MUST be
@@ -1235,7 +1255,6 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
     # state variable (default 0) before any namespace constant, so an unset gl /
     # gbarA / g_ampa would silently zero that term.
     N.sigma    = params_NN['sigma']
-    N.Cm       = params_NN['Cm']
     N.gl       = params_NN['gl']
     N.gbarA    = params_NN['gbarA']
     N.delta_gA = params_NN['delta_gA']
