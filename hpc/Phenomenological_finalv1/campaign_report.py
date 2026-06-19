@@ -255,9 +255,30 @@ def _analyze_iter(npz: Dict[str, np.ndarray], sidecar: Dict,
     spk_i = np.asarray(npz.get('spk_N_i', np.empty(0)), dtype=np.int64)
     n_spk = int(spk_t.size)
 
+    # Recover Nn if the topology meta was missing/zero: use sidecar, else max index.
+    if not (Nn > 0):
+        Nn = int(sidecar.get('Nn', 0) or 0)
+    if not (Nn > 0) and spk_i.size:
+        Nn = int(spk_i.max()) + 1
+    if not (Nn > 0):
+        return None   # genuinely no neuron count and no spikes -> uninformative
+
+    # Recover the simulation duration if the topology meta lacked it (T<=0):
+    # prefer the sidecar 'T'/'simtime_s', else fall back to the last spike time.
+    if not (T > 0):
+        T = float(sidecar.get('T', sidecar.get('simtime_s', 0.0)) or 0.0)
+    if not (T > 0) and spk_t.size:
+        T = float(spk_t.max())
+    if not (T > 0):
+        T = 1.0   # last resort: avoids div-by-zero; rates become per-second-of-1s
+
     mean_fr = n_spk / (Nn * T) if (Nn > 0 and T > 0) else 0.0
-    one_spike = (Nn > 0) and (abs(n_spk - Nn) <= max(2, 0.02 * Nn)) \
-        and (mean_fr < (1.5 / T))
+    # "one spike per neuron then silent" onset artifact: ~Nn spikes, all very early.
+    one_spike = (
+        Nn > 0
+        and abs(n_spk - Nn) <= max(2, 0.02 * Nn)
+        and (spk_t.max() < 0.5 if spk_t.size else False)   # volley confined to <0.5 s
+    )
 
     rates = _per_neuron_rates(spk_i, Nn, T)
     frac_active = float((rates > 0).mean()) if Nn else 0.0
@@ -353,7 +374,8 @@ def _analyze_topology(topo_dir: Path, meta: Dict) -> Optional[Tuple[TopoRecord, 
     rec = TopoRecord(
         topo_idx=int(meta.get('topo_idx', -1)),
         task=topo_dir.parent.name,
-        Nn=Nn, Na=int(meta.get('Na', 0)), T=float(meta.get('T', 0.0)),
+        Nn=Nn, Na=int(meta.get('Na', 0)),
+        T=float(meta.get('simtime_s', meta.get('T', 0.0)) or 0.0),
         conn_rule=str(meta.get('conn_rule', '?')),
         p0_conn=float(meta.get('p0_conn', np.nan)),
         d0_conn=float(meta.get('d0_conn', np.nan)),
@@ -674,8 +696,12 @@ def analyze_campaign(campaign: Path, out_dir: Path,
             if topo_extra_repr is None or tr.n_syn > topo_extra_repr.get('_n_syn', -1):
                 topo_extra_repr = dict(extra); topo_extra_repr['_n_syn'] = tr.n_syn
 
-        Nn = int(meta.get('Nn', tr.Nn if tr else 0))
-        T  = float(meta.get('T', tr.T if tr else 0.0))
+        # Resolve Nn / T robustly: meta value may be ABSENT or present-but-zero.
+        Nn = int(meta.get('Nn') or 0) or (tr.Nn if tr else 0)
+        T  = float(meta.get('simtime_s', meta.get('T', 0.0)) or 0.0) or (tr.T if tr else 0.0)
+        # If Nn still unknown, infer from the topology positions (set in _analyze_topology).
+        if Nn <= 0 and tr is not None and tr.Nn > 0:
+            Nn = tr.Nn
         npzs = sorted(td.glob('iter_*.npz'))
         if max_iters_per_topo:
             npzs = npzs[:max_iters_per_topo]
