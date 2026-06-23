@@ -1639,9 +1639,11 @@ def Astrocyte_Group(N_astro, Simulated_network, seed_astro=None, ics='steady',
         I_Theta  : mole
         omega_I  : mole
         # O_N: astrocyte mGluR glutamate-binding rate (SWEPT sensitivity axis).
-        # Unit 1/(mole*second) is fixed by the Gamma_A balance with n=1 (n frozen);
-        # if n is ever swept this declaration must change accordingly.
-        O_N      : 1/(mole*second)
+        # Unit 1/mole/second is fixed by the Gamma_A balance with n=1 (n frozen);
+        # written as 1/mole/second (NOT 1/(mole*second)) because Brian2's unit
+        # parser rejects a parenthesised denominator. If n is ever swept this
+        # declaration must change accordingly.
+        O_N      : 1/mole/second
         ''')
        
        
