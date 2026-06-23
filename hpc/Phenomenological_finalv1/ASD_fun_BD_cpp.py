@@ -3806,3 +3806,4 @@ def get_synapse_coordinates(Synapse, Neuron, Syn_prob, rarius_val,
         synapse_coords.append(tuple(new_coord))
 
     return synapse_coords
+                                
