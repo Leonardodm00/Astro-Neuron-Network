@@ -154,7 +154,12 @@ _ASTRO_FREE    = [PARAM_NAMES[i]
                   if PARAM_NAMES[i] not in _FROZEN]
 # synapse_astro = (synapse + astro) free axes minus the campaign freezes.
 # _ASTRO_FREE already includes the new O_N axis (idx 36) via the base 'astro' group.
-_SYN_ASTRO_FREE = [n for n in (_SYNAPSE_FREE + _ASTRO_FREE)
+# Excitability/drive axis added to the astro campaign: Sigma (membrane-noise
+# amplitude, idx 0) is a neuron axis but NOT a Gorski RS intrinsic (it is a
+# noise-drive choice), so sweeping its [1,15] mV log range raises excitation
+# without unfreezing any RS membrane property. synapse_astro: 21 -> 22 free axes.
+_CAMPAIGN_EXTRA = ['Sigma']
+_SYN_ASTRO_FREE = [n for n in (_CAMPAIGN_EXTRA + _SYNAPSE_FREE + _ASTRO_FREE)
                    if n not in _CAMPAIGN_FROZEN]
 
 SWEEP_GROUPS = {
@@ -162,7 +167,7 @@ SWEEP_GROUPS = {
     'synapse':        _grp(_SYNAPSE_FREE),
     'astro':          _grp(_ASTRO_FREE),
     'neuron_synapse': _grp(_NEURON_FREE + _SYNAPSE_FREE),
-    'synapse_astro':  _grp(_SYN_ASTRO_FREE),   # neurons + 2 EC50 + (I_Theta,omega_I) frozen; O_N added; 21 free axes
+    'synapse_astro':  _grp(_SYN_ASTRO_FREE),   # neurons + 2 EC50 + (I_Theta,omega_I) frozen; O_N + Sigma added; 22 free axes
     'all':            _grp(_NEURON_FREE + _SYNAPSE_FREE + _ASTRO_FREE),
 }
 
@@ -182,43 +187,46 @@ def resolve_sweep_group(name):                                       # noqa: F81
 # Rows 12/13/30 (DeltaT/VT/gL) are FROZEN (never sampled) but kept for index
 # alignment; row 34 (I_inj) is the new swept per-neuron bias SCALE.
 PARAM_BOUNDS = np.array([
-    (1.0,    15.0),     # 0  Sigma      [mV]   noise amplitude                         (log)
-    (0.01,   10.0),     # 1  gbarA      [nS]   max subthreshold adaptation g_barA      (log)  [widened for swept-Cm regime]
-    (2.0,    150.0),     # 2  EC50_ampa  [mmole]  brackets B_tot 0.2-2.5 mM
-    (0.5,    50.0),     # 3  EC50_nmda  [mmole]  brackets B_tot 0.2-2.5 mM
-    (10.0,   1000.0),   # 4  tauA       [ms]   adaptation time constant tau_A          (log)
-    (1e-4,   0.05),     # 5  U_0_ar     [dimensionless]  async release prob
-    (0.1,    1.0),      # 6  U_max      [1/ms]
-    (0.1,    1.0),      # 7  U_0_sr     [dimensionless]
-    (0.1,    4.5),      # 8  Omega_f_sr [1/s]
-    (0.1,    4.5),      # 9  Omega_f_ar [1/s]
-    (0.1,    4.5),      # 10 Omega_d    [1/s]
-    (0.1,    1.0),      # 11 alpha_syn  [dimensionless]
-    (2.0,    2.0),      # 12 DeltaT     [mV]   FROZEN at 2 mV (spike-initiation slope; Bucket-A quartet)
-    (-50.0, -50.0),     # 13 VT         [mV]   FROZEN at -51.0 mV (GROUNDED Gunhanlar AP thr -50.9; gap=7.2mV)
-    (0.05,    5.0),     # 14 g_ampa     [nS]   widened x5 for swept Cm (EPSP peak ~ g_ampa/Cm); summed drive ~ R_in
-    (0.01,    1.0),     # 15 g_nmda     [nS]   Doorn Table 1 [0, 1]; floor 0.01 to keep log axis valid
-    (0.001,   4.0),     # 16 delta_gA   [nS]   recalibrated for swept Cm (charge-limited ~1/Cm)        (log)
-    (0.05,   0.5),      # 17 x0         [dimensionless]  quantal vesicle size
-    (0.1,    10.0),     # 18 O_G        [1/(uM s)]  mGluR binding rate
-    (1e-3,   1e-1),     # 19 Omega_G    [1/s]   mGluR inactivation
-    (0.1,    5.0),      # 20 O_beta     [uM/s]  PLCbeta gain
-    (1.0,    15.0),     # 21 O_3K       [uM/s]  IP3-3K rate
-    (0.01,   1.0),      # 22 Omega_5P   [1/s]   IP3-5P degradation
-    (0.3,    1.5),      # 23 I_bias     [uM]    IP3 exogenous set-point
-    (0.1,    10.0),     # 24 F          [uM/s]  GJ + exogenous permeability
-    (0.1,    1.0),      # 25 I_Theta    [uM]    tanh threshold
-    (0.01,   0.5),      # 26 omega_I    [uM]    tanh steepness
-    (0.1,    2.0),      # 27 C_Theta    [uM]    exocytosis Ca2+ threshold
-    (0.1,    0.9),      # 28 U_A        [dimensionless]  gliotransmitter release prob
-    (50.0,   1000.0),   # 29 G_T        [mM]    total gliotransmitter
-    (10.0,    10.0),    # 30 gL         [nS]   FROZEN at 1.15 nS (GROUNDED Halliwell R_in=0.87 GOhm; Bucket-A)
-    (-73.0,  -38.0),    # 31 VA         [mV]   subthreshold adaptation activation V_A  (linear; shifted -3.0 to track VT)
-    (0.1,    15.0),     # 32 DeltaA     [mV]   subthreshold adaptation slope Delta_A>0 (log)
-    (-68.2,  -48.2),    # 33 VR         [mV]   reset potential V_R                     (linear; shifted -3.2 to track El)
-    (2,     7.5),     # 34 I_inj      [pA]   per-neuron bias SCALE (Doorn scale: dV=I_inj*u/g_L; linear)
-    (9.2,    34.5),     # 35 Cm         [pF]   SWEPT: tau_m=Cm/gl in [8,30] ms at gl=1.15 nS (linear -> uniform tau_m)
-    (0.03,   3.0),      # 36 O_N        [1/(uM*s)]  astrocyte mGluR binding rate; log, geometric-centered on nominal 0.3 (2 decades)
+    # SWEPT axes are marked SWEPT; FROZEN axes keep bounds for OTHER groups but
+    # under synapse_astro the frozen NOMINAL is used (these bounds are inert here).
+    # log vs linear is AUTO-derived (LOG_PARAMS below): log iff span >= 1 decade.
+    (2.0,    10.0),     # 0  Sigma      [mV]   SWEPT noise drive. span 0.70 dec <1 => LINEAR. gap/sigma = 5/sigma
+    (0.01,   10.0),     # 1  gbarA      [nS]   FROZEN 10 (RS max subthreshold adapt g_barA)
+    (1.0,    75.0),     # 2  EC50_ampa  [mmole] FROZEN 8.6 (rho/kappa-reconciled AMPA EC50)
+    (0.5,    20.0),     # 3  EC50_nmda  [mmole] FROZEN 3.0 (rho/kappa-reconciled NMDA EC50)
+    (10.0,   1000.0),   # 4  tauA       [ms]   FROZEN 200 (RS adaptation time constant)
+    (1e-4,   0.05),     # 5  U_0_ar     [1]    SWEPT async release prob
+    (0.1,    1.0),      # 6  U_max      [1/ms] SWEPT
+    (0.1,    1.0),      # 7  U_0_sr     [1]    SWEPT sync release prob
+    (0.1,    4.5),      # 8  Omega_f_sr [1/s]  SWEPT
+    (0.1,    4.5),      # 9  Omega_f_ar [1/s]  SWEPT
+    (0.1,    4.5),      # 10 Omega_d    [1/s]  SWEPT depression recovery
+    (0.1,    1.0),      # 11 alpha_syn  [1]    SWEPT
+    (2.0,    2.0),      # 12 DeltaT     [mV]   FROZEN 2 (RS spike-initiation slope)
+    (-50.0, -50.0),     # 13 VT         [mV]   FROZEN -50 (RS); spike gap V_T-E_L = 5 mV at El=-55
+    (0.05,    5.0),     # 14 g_ampa     [nS]   SWEPT. HIGH x K x P_rel >> gL=10 => seizing/blow-up corner; needs NaN guard
+    (0.05,    5.0),     # 15 g_nmda     [nS]   SWEPT. Slow Mg-gated => burst driver; same blow-up caveat
+    (0.001,   4.0),     # 16 delta_gA   [nS]   FROZEN 1 (RS post-spike adaptation increment)
+    (0.05,   0.5),      # 17 x0         [1]    SWEPT quantal vesicle size
+    (0.1,    10.0),     # 18 O_G        [1/(uM s)]  SWEPT mGluR binding rate
+    (1e-3,   1e-1),     # 19 Omega_G    [1/s]   SWEPT mGluR inactivation
+    (0.1,    5.0),      # 20 O_beta     [uM/s]  SWEPT PLCbeta gain (neuron->astro IP3 production)
+    (1.0,    15.0),     # 21 O_3K       [uM/s]  SWEPT IP3 3-kinase rate
+    (0.01,   1.0),      # 22 Omega_5P   [1/s]   SWEPT IP3 5-phosphatase degradation
+    (0.3,    1.0),      # 23 I_bias     [uM]    SWEPT exogenous IP3 set-point; CAPPED 1.5->1.0 to keep astro neuron-driven
+    (0.1,    10.0),     # 24 F          [uM/s]  SWEPT GJ + exogenous IP3 permeability
+    (0.1,    1.0),      # 25 I_Theta    [uM]    FROZEN 0.3 (gliorelease tanh threshold)
+    (0.01,   0.5),      # 26 omega_I    [uM]    FROZEN 0.05 (gliorelease tanh steepness)
+    (0.1,    2.0),      # 27 C_Theta    [uM]    SWEPT exocytosis Ca2+ threshold
+    (0.1,    0.9),      # 28 U_A        [1]     SWEPT gliotransmitter release prob
+    (50.0,   1000.0),   # 29 G_T        [mM]    SWEPT total gliotransmitter resource
+    (10.0,    10.0),    # 30 gL         [nS]   FROZEN 10 (RS leak); tau_m = Cm/gL = 20 ms
+    (-73.0,  -38.0),    # 31 VA         [mV]   FROZEN -50 (RS adaptation activation = V_T)
+    (0.1,    15.0),     # 32 DeltaA     [mV]   FROZEN 5 (RS subthreshold adaptation slope)
+    (-68.2,  -48.2),    # 33 VR         [mV]   FROZEN -55 (= El now: reset-to-rest)
+    (40.0,   40.0),     # 34 I_inj      [pA]   FROZEN 40 (point); dV = +-I_inj/(2 gL) = +-2 mV across-cell spread
+    (200.0,  200.0),    # 35 Cm         [pF]   FROZEN 200 (RS; tau_m=20 ms). Point interval (fixed: was stale (9.2,34.5))
+    (0.03,   3.0),      # 36 O_N        [1/(uM*s)]  SWEPT astrocyte mGluR binding -- KEY neuron->astro axis; 2-decade log
 ], dtype=np.float64)
 
 N_DIMS = PARAM_BOUNDS.shape[0]
