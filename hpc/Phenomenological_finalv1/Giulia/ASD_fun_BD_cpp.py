@@ -663,7 +663,7 @@ def get_Neuronparam(**kwargs):
 
     # --- Fixed CAdEx constants (namespace) ---
     'Cm':      200.0*pF,           # idx 35  membrane capacitance C (FROZEN; Gorski 2021 RS; tau_m=20 ms at gL=10 nS)
-    'El':    -60.0*mV,             # leak reversal E_L (Gorski 2021 RS "Adaptive spiking")
+    'El':    -55.0*mV,             # leak reversal E_L (raised from RS -60 -> -55: spike gap V_T-E_L = 5 mV; = +50 pA tonic g_L*5mV vs RS; note El now == VR = -55, reset-to-rest)
     'EA':    -70*mV,                # adaptation reversal E_A (Gorski 2021 RS)
     'VD':    -40*mV,                # spike detection / reset trigger (Gorski 2021 cutoff)
     't_ref':   5*ms,                # refractory period (Gorski 2021)
@@ -683,7 +683,7 @@ def get_Neuronparam(**kwargs):
     'VR':     -55.0*mV,            # idx 33  reset potential V_R (Gorski 2021 RS)
 
     # --- Drive & synaptic (unchanged) ---
-    'I_inj':  7.5*pA,               # per-neuron bias SCALE, FROZEN at 7.5 (N.I = (rand-0.5)*I_inj)
+    'I_inj':  40.0*pA,              # per-neuron bias SCALE, FROZEN at 40 (N.I=(rand-0.5)*I_inj => +-2 mV spread; per-neuron gap 5-+2 mV)
     'E_ampa':  0*mV,
     'E_nmda':  0*mV,
     'g_ampa': 0.3*nS,               # idx 14  (synaptic conductance, set on the neuron; Doorn Table 1 scale [0.05,1])
@@ -1215,7 +1215,7 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
     # = 7.2 mV is therefore the only safe approach; any expression referencing the
     # state 'VT' directly would depolarise ~half the population to near 0 mV.
     # El / V0_span are compile-time constants, so run_args ordering cannot affect them.
-    params_NN['V0_span'] = params_NN['VT'] - params_NN['El']   # 7.2 mV at the GROUNDED op-point
+    params_NN['V0_span'] = params_NN['VT'] - params_NN['El']   # 5 mV (VT=-50, El=-55)
 
     
     # Suppress Brian2's resolution_conflict warnings: every per-neuron state variable
@@ -1247,7 +1247,7 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
     # (compile-time constants), NOT from the per-neuron state variable 'VT' (which is assigned
     # below and equals 0 at this point in the IC block). Using V0_span avoids the
     # state-variable shadowing trap; see Brian2 namespace resolution order.
-    N.V  = 'El + rand() * V0_span'   # uniform on [El, VT) = [-58.2, -51.0) mV at nominal
+    N.V  = 'El + rand() * V0_span'   # uniform on [El, VT) = [-55, -50) mV (5 mV gap)
     N.gA = 0 * nS                    # adaptation deactivated (valid for the swept Delta_A > 0 regime)
 
     # Default ICs for the per-neuron Brian2 parameters (so the library runs
