@@ -1,5 +1,15 @@
 
 
+## Aggregate sweeps
+
+
+python aggregate_sweep.py campaign_300k_v1 --burst-metrics \
+    --score-detector logisi --n-gallery 10 --zoom-window 6.0
+
+
+
+
+
 ## campaign analysis
 
 
