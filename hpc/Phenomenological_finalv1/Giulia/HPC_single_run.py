@@ -134,7 +134,7 @@ NOMINAL_PARAMS = np.array([
     -50.0,      # 31 VA             mV    (subthreshold adaptation activation; shifted -3.0 to track VT -48->-51)
     5.0,        # 32 DeltaA         mV    (Delta_A, subthreshold adaptation slope, > 0)
     -55.0,      # 33 VR             mV    (reset potential; shifted -3.2 to track El -55->-58.2)
-    7.5,        # 34 I_inj          pA    (per-neuron bias SCALE; mid of [1,7.5])
+    40.0,       # 34 I_inj          pA    (per-neuron bias SCALE, FROZEN at 40; +-2 mV heterogeneity)
     200.0,      # 35 Cm             pF    (FROZEN at RS; tau_m=Cm/gL=20 ms)
     0.3,        # 36 O_N            1/(uM*s)  astrocyte mGluR glutamate-binding rate (SWEPT sensitivity; De Pitta default 0.3)
 ])
