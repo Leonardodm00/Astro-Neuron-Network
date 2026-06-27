@@ -1,4 +1,8 @@
+## Multi camp report
 
+python multi_campaign_report.py /scratch/<user>/sweeps_parent          # auto-globs campaign_*
+python multi_campaign_report.py PARENT --jobs 4 --topo-sample 50       # parallel per-campaign
+python multi_campaign_report.py --smoke-test                          # synthetic self-check
 
 ## Aggregate sweeps
 
