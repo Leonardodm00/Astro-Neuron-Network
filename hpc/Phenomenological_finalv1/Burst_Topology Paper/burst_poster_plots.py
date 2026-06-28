@@ -72,6 +72,15 @@ class RunData:
     title: str = ""
     channel_label: str = "Neuron index"  # left-axis label (set "Channels" to taste)
     targets: Optional[Dict[str, Tuple[float, float]]] = None  # Mossink anchor
+    # --- astrocytes (the second population; optional, drawn as a band) ---
+    spk_A_t: Optional[np.ndarray] = None   # astrocyte Ca2+ event times [s]
+    spk_A_i: Optional[np.ndarray] = None   # astrocyte index 0..n_astro-1
+    n_astro: int = 0                       # N_astrocytes (0 -> no astro band)
+
+    @property
+    def has_astro(self) -> bool:
+        return (self.n_astro > 0 and self.spk_A_t is not None
+                and len(self.spk_A_t) > 0)
 
     @property
     def scoring_intervals(self) -> List[Tuple[float, float]]:
@@ -209,6 +218,261 @@ def _shade(ax, intervals, color, alpha, ymin=0.0, ymax=1.0, zorder=1):
                    lw=0, zorder=zorder)
 
 
+def _draw_astro_band(ax, D: RunData, style: bp.PosterStyle,
+                     astro_frac: float = 0.16,
+                     x0: Optional[float] = None, x1: Optional[float] = None,
+                     label: bool = False, marker_scale: float = 1.3) -> float:
+    """Draw astrocyte Ca2+ events as a colored band ABOVE the neuron raster.
+
+    The neuron raster occupies y in [0, N] and the IFR envelope is mapped to the
+    same [0, N]; astrocytes get a SEPARATE band [N*1.02, N*(1.02+astro_frac)] in
+    the palette's astro color, so the two populations never overlap. Returns the
+    new y-axis top (== N if there are no astrocytes, so callers can use it
+    unconditionally). x0/x1 optionally clip events to a time window (zoom panels).
+    """
+    pal = style.palette
+    N = float(max(D.n_neurons, 1))
+    if not D.has_astro:
+        return N
+    t = np.asarray(D.spk_A_t, dtype=np.float64)
+    i = np.asarray(D.spk_A_i, dtype=np.float64)
+    if x0 is not None and x1 is not None:
+        m = (t >= x0) & (t <= x1)
+        t, i = t[m], i[m]
+    Na = max(int(D.n_astro),
+             (int(np.max(D.spk_A_i)) + 1) if len(D.spk_A_i) else 1)
+    band = N * astro_frac
+    y_base = N * 1.02                       # small gap above the neuron region
+    y_top = y_base + band
+    if t.size:
+        ay = y_base + (i / max(Na - 1, 1)) * band
+        ax.scatter(t, ay, s=style.marker_raster * marker_scale, c=pal.astro,
+                   marker=".", linewidths=0, zorder=4, rasterized=True)
+    # faint separator between the two populations
+    ax.axhline(N * 1.01, color=pal.muted, lw=style.lw_spine * 0.35,
+               alpha=0.6, zorder=3)
+    if label:
+        ax.text((x0 if x0 is not None else 0.0), y_base + 0.5 * band,
+                " astro", color=pal.astro, va="center", ha="left",
+                fontsize=style.pt_tick * 0.7, zorder=5)
+    return y_top
+
+
+def _ifr_twin(ax, ax_ymax: float, n_neurons: int, color: str, label: str):
+    """Configure a twin y-axis so its 0..1 range aligns with the neuron region
+    [0, N] of the host axis even when an astro band has raised ax's ymax."""
+    N = float(max(n_neurons, 1))
+    ax2 = ax.twinx()
+    ax2.set_ylim(0.0, ax_ymax / N)          # ax y=N maps to ax2 y=1.0
+    ax2.set_yticks([0.0, 0.25, 0.5, 0.75, 1.0])
+    ax2.set_ylabel(label)
+    ax2.spines["top"].set_visible(False)
+    _style_right_axis(ax2, color)
+    return ax2
+
+
+# ===========================================================================
+# Astrocyte Ca2+ burst detection helpers
+# ===========================================================================
+
+def _detect_astro_bursts(
+        D: RunData,
+        astro_participation_frac: float = 0.50,
+        astro_smooth_sigma_s: float = 0.20,
+        astro_merge_gap_s: float = 0.50,
+) -> Tuple[List[Tuple[float, float]], List[Tuple[float, float]],
+           np.ndarray, np.ndarray, float, float, float]:
+    """Two-detector astrocyte Ca2+ network burst detection.
+
+    Detector 1 -- population rate:
+        Smooth the Ca2+ event train with astro_smooth_sigma_s (default 0.20 s;
+        Ca2+ waves unfold over ~0.5-1 s so this is ~13x wider than the
+        neuronal 15 ms sigma). Threshold at theta_A = mu_A + k*sigma_A and
+        merge supra-threshold epochs closer than astro_merge_gap_s (default
+        0.50 s; consecutive astrocyte activations within one wave can be
+        0.3-0.8 s apart -- the neuronal 0.1 s merge gap would fragment them).
+
+    Detector 2 -- participation fraction (ADAPTED for astrocytes):
+        Within each merged poprate epoch, count unique astrocytes that fired
+        at least one Ca2+ event. Keep epochs where fraction >=
+        astro_participation_frac (default 0.50; no intra-cellular burst
+        requirement -- astrocytes produce one event per wave).
+
+    Parameters
+    ----------
+    astro_smooth_sigma_s : float
+        Gaussian smoothing sigma for the threshold detector [s].
+    astro_merge_gap_s : float
+        Max gap between supra-threshold epochs that will be merged [s].
+        Should be at least as long as the typical within-wave silence.
+    astro_participation_frac : float
+        Active-fraction threshold for the participation detector.
+    """
+    if not D.has_astro:
+        return [], [], np.zeros(2), np.zeros(2), 0.0, 0.0, 0.0
+
+    from scipy.ndimage import label as _ndlabel
+
+    cfg = D.cfg
+    spk_A_t = np.asarray(D.spk_A_t, dtype=np.float64)
+    spk_A_i = np.asarray(D.spk_A_i, dtype=np.int64)
+    Na = max(D.n_astro, 1)
+
+    t, r_A = bm.population_rate(spk_A_t, Na, D.t_rec,
+                                cfg.grid_dt_s, astro_smooth_sigma_s)
+    mu_A = float(r_A.mean())
+    sd_A = float(r_A.std())
+    theta_A = mu_A + cfg.pr_thresh_k * sd_A
+
+    above = (r_A > theta_A).astype(np.int8)
+    labeled, n_lbl = _ndlabel(above)
+    raw: List[List[float]] = []
+    for lbl in range(1, n_lbl + 1):
+        idxs = np.where(labeled == lbl)[0]
+        raw.append([float(t[idxs[0]]), float(t[idxs[-1]])])
+
+    # merge with the ASTRO-appropriate gap (wider than the neuronal 0.1 s)
+    merged: List[List[float]] = []
+    for s, e in sorted(raw):
+        if merged and (s - merged[-1][1]) <= astro_merge_gap_s:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e])
+
+    pr_intervals: List[Tuple[float, float]] = []
+    for s, e in merged:
+        if (e - s) < cfg.pr_min_dur_s:
+            continue
+        if int(np.sum((spk_A_t >= s) & (spk_A_t <= e))) < cfg.pr_min_spikes:
+            continue
+        pr_intervals.append((float(s), float(e)))
+
+    part_intervals: List[Tuple[float, float]] = []
+    for s, e in pr_intervals:
+        mk = (spk_A_t >= s) & (spk_A_t <= e)
+        n_active = int(np.unique(spk_A_i[mk]).size) if mk.any() else 0
+        if (n_active / Na) >= astro_participation_frac:
+            part_intervals.append((s, e))
+
+    return pr_intervals, part_intervals, t, r_A, mu_A, sd_A, theta_A
+
+
+def _astro_burst_metrics(D: RunData,
+                         pr_intervals: List[Tuple[float, float]],
+                         part_intervals: List[Tuple[float, float]]) -> Dict[str, float]:
+    """Descriptive statistics for the astrocyte Ca2+ burst population.
+
+    Uses part_intervals as the primary criterion (richer detection); falls back
+    to pr_intervals if the participation filter removed everything. Computes:
+      burst_rate_per_min, burst_dur_mean_s, ibi_mean_s, ibi_cv,
+      mean_participation (fraction of astrocytes per burst),
+      neuron_astro_lag_mean_s / _sd_s (lag from neuronal burst onset to
+      astrocyte burst onset, capped at 30 s for biologically plausible lags).
+    """
+    intervals = part_intervals if part_intervals else pr_intervals
+    nan = float("nan")
+    m: Dict[str, float] = {
+        "n_bursts_pr": float(len(pr_intervals)),
+        "n_bursts_part": float(len(part_intervals)),
+    }
+    if not intervals:
+        for k in ("burst_rate_per_min", "burst_dur_mean_s", "ibi_mean_s",
+                  "ibi_cv", "mean_participation",
+                  "neuron_astro_lag_mean_s", "neuron_astro_lag_sd_s"):
+            m[k] = nan
+        return m
+
+    starts = np.array([s for s, _ in intervals])
+    stops  = np.array([e for _, e in intervals])
+    durs   = stops - starts
+
+    m["burst_rate_per_min"] = len(intervals) / (D.t_rec / 60.0)
+    m["burst_dur_mean_s"]   = float(np.mean(durs))
+
+    if len(intervals) > 1:
+        ibi = starts[1:] - stops[:-1]
+        m["ibi_mean_s"] = float(np.mean(ibi))
+        m["ibi_cv"] = float(np.std(ibi) / np.mean(ibi)) if np.mean(ibi) > 0 else nan
+    else:
+        m["ibi_mean_s"] = m["ibi_cv"] = nan
+
+    spk_A_t = np.asarray(D.spk_A_t, dtype=np.float64)
+    spk_A_i = np.asarray(D.spk_A_i, dtype=np.int64)
+    Na = max(D.n_astro, 1)
+    parts = []
+    for s, e in intervals:
+        mk = (spk_A_t >= s) & (spk_A_t <= e)
+        n_active = int(np.unique(spk_A_i[mk]).size) if mk.any() else 0
+        parts.append(n_active / Na)
+    m["mean_participation"] = float(np.mean(parts))
+
+    # neuron -> astrocyte lag: for each astro burst, find the most recent
+    # PRECEDING neuronal burst onset (lag must be positive and < 30 s).
+    n_ivls = D.scoring_intervals
+    if n_ivls:
+        n_starts = np.array([s for s, _ in n_ivls])
+        lags = []
+        for as_ in starts:
+            before = n_starts[n_starts < as_]
+            if before.size:
+                lag = float(as_ - before[-1])
+                if 0.0 < lag < 30.0:
+                    lags.append(lag)
+        if lags:
+            m["neuron_astro_lag_mean_s"] = float(np.mean(lags))
+            m["neuron_astro_lag_sd_s"]   = float(np.std(lags))
+        else:
+            m["neuron_astro_lag_mean_s"] = m["neuron_astro_lag_sd_s"] = nan
+    else:
+        m["neuron_astro_lag_mean_s"] = m["neuron_astro_lag_sd_s"] = nan
+
+    return m
+
+
+def _astro_metrics_box_text(astro_m: Dict[str, float], D: RunData) -> str:
+    """Monospace astrocyte descriptive stats + neuron vs astrocyte comparison."""
+    nan = float("nan")
+    keymap = bm.scoring_keys(D.cfg)
+    nm = D.metrics
+
+    def _f(v, fmt="{:.2f}"):
+        try:
+            return fmt.format(float(v))
+        except (TypeError, ValueError):
+            return " nan"
+
+    lines = [
+        "--- Astrocyte Ca2+ bursts ---",
+        "n detected (poprate)   %s" % int(astro_m.get("n_bursts_pr", 0)),
+        "n detected (>=50%% part) %s" % int(astro_m.get("n_bursts_part", 0)),
+        "rate (bursts/min)      %s" % _f(astro_m.get("burst_rate_per_min")),
+        "mean duration (s)      %s" % _f(astro_m.get("burst_dur_mean_s"), "{:.3f}"),
+        "mean IBI (s)           %s" % _f(astro_m.get("ibi_mean_s")),
+        "CV IBI                 %s" % _f(astro_m.get("ibi_cv")),
+        "mean participation     %s" % _f(astro_m.get("mean_participation")),
+        "",
+        "--- Neuron vs Astrocyte ---",
+        "%-14s  neuron   astro" % "metric",
+        "%-14s  %-7s  %s" % (
+            "rate/min",
+            _f(nm.get(keymap.get("burst_rate_per_min", ""), nan), "{:.2f}"),
+            _f(astro_m.get("burst_rate_per_min"))),
+        "%-14s  %-7s  %s" % (
+            "dur (s)",
+            _f(nm.get(keymap.get("burst_dur_mean_s", ""), nan), "{:.3f}"),
+            _f(astro_m.get("burst_dur_mean_s"), "{:.3f}")),
+        "%-14s  %-7s  %s" % (
+            "IBI (s)",
+            _f(nm.get(keymap.get("nibi_mean_s", ""), nan)),
+            _f(astro_m.get("ibi_mean_s"))),
+        "N->A lag (s)   %s +/- %s" % (
+            _f(astro_m.get("neuron_astro_lag_mean_s")),
+            _f(astro_m.get("neuron_astro_lag_sd_s"))),
+    ]
+    nan = float("nan")
+    return "\n".join(lines)
+
+
 # ===========================================================================
 # Figure 1 -- HERO (the attached-example composition)
 # ===========================================================================
@@ -228,19 +492,18 @@ def fig_hero(D: RunData, style: bp.PosterStyle):
     ax.scatter(D.spk_t, D.spk_i, s=style.marker_raster, c=pal.raster,
                marker=".", linewidths=0, zorder=3, rasterized=True)
 
+    # astrocytes as a colored band above the neuron raster (auto if present)
+    y_top = _draw_astro_band(ax, D, style, label=D.has_astro)
+
     ax.set_xlim(0, D.t_rec)
-    ax.set_ylim(0, N)
+    ax.set_ylim(0, y_top)
     ax.set_xlabel("Time (s)")
     ax.set_ylabel(D.channel_label)
     ax.set_title(D.title or "Raster + population IFR")
     for sp in ("top",):
         ax.spines[sp].set_visible(False)
 
-    ax2 = ax.twinx()
-    ax2.set_ylim(0, 1.0)                       # 0..N on ax maps to 0..1 here
-    ax2.set_ylabel("Normalized IFR")
-    ax2.spines["top"].set_visible(False)
-    _style_right_axis(ax2, pal.ifr_line)
+    ax2 = _ifr_twin(ax, y_top, D.n_neurons, pal.ifr_line, "Normalized IFR")
     return fig
 
 
@@ -689,21 +952,529 @@ def fig_contact_sheet(runs: Sequence[RunData], style: bp.PosterStyle,
 
 
 # ===========================================================================
+# Figure 10 -- ASTRO  (dedicated astrocyte Ca2+ burst analysis composite)
+# ===========================================================================
+def fig_astro(D: RunData, style: bp.PosterStyle,
+              astro_participation_frac: float = 0.50,
+              stereotypy_window_s: float = 6.0) -> "plt.Figure":
+    """Dedicated astrocyte Ca2+ network burst analysis figure.
+
+    Returns 'no data' placeholder when D.has_astro is False, so callers
+    never need to gate on it.
+
+    Layout (2 rows x 3 cols, height_ratios=[3, 2.5]):
+
+      Row 0 (full width)  -- HERO+COUPLING
+        Astrocyte raster (pal.astro) + normalised Ca2+ rate fill/line
+        (pal.astro / pal.astro_line) + neuronal IFR overlaid as a thin
+        dashed line (pal.ifr_line, for coupling/lag visualisation) +
+        detected burst spans (participation = full-height wash,
+        poprate = floor ribbon).
+
+      Row 1, col 0        -- ANALYTICAL
+        Absolute Ca2+ rate [Hz/astrocyte] + detection threshold
+        theta_A = mu_A + k*sigma_A (dashed, pal.threshold) + both
+        detectors' spans (mirrors the neuronal fig_stacked lower panel).
+
+      Row 1, col 1        -- STEREOTYPY
+        Each detected Ca2+ burst aligned to its own rate peak, normalised
+        to its own peak amplitude, overlaid + mean +/- std.  Mirrors
+        fig_stereotypy but applied to the astrocyte population.
+
+      Row 1, col 2        -- METRICS BOX
+        Astrocyte descriptive stats (rate, duration, IBI, CV, participation)
+        + side-by-side neuron vs astrocyte comparison + mean N->A lag.
+
+    Parameters
+    ----------
+    astro_participation_frac : float
+        Fraction of astrocytes that must be active within a poprate-detected
+        epoch for it to be kept by the participation detector.  Default 0.50
+        (more lenient than the neuronal 0.80 because astrocyte coupling is
+        typically less all-or-nothing than neuronal participation).
+    stereotypy_window_s : float
+        Total window around each Ca2+ burst peak [s] for the stereotypy panel.
+    """
+    pal = style.palette
+
+    # ---- degenerate: no astrocyte data -----------------------------------
+    if not D.has_astro:
+        fig, ax = plt.subplots(figsize=style.figsize(2.0))
+        ax.text(0.5, 0.5,
+                "No astrocyte data in RunData\n"
+                "(populate spk_A_t, spk_A_i, n_astro)",
+                ha="center", va="center", transform=ax.transAxes,
+                fontsize=style.pt_annot, color=pal.muted)
+        ax.axis("off")
+        fig.suptitle(D.title or "Astrocyte Ca2+ burst analysis",
+                     fontsize=style.pt_title, fontweight="bold", color=pal.ink)
+        return fig
+
+    Na = max(D.n_astro, 1)
+    spk_A_t = np.asarray(D.spk_A_t, dtype=np.float64)
+    spk_A_i = np.asarray(D.spk_A_i, dtype=np.int64)
+
+    # ---- detection -------------------------------------------------------
+    pr_ivls, part_ivls, t_A, r_A, mu_A, sd_A, theta_A = _detect_astro_bursts(
+        D, astro_participation_frac=astro_participation_frac,
+        astro_smooth_sigma_s=0.20, astro_merge_gap_s=0.50)
+    primary_ivls = part_ivls if part_ivls else pr_ivls
+
+    # ---- display rates (smoother sigma for visual appeal) ----------------
+    t_Ad, r_Ad = bm.population_rate(
+        spk_A_t, Na, D.t_rec, D.cfg.grid_dt_s, D.ifr_display_sigma_s)
+    r_Ad_norm = _norm_to_max(r_Ad)
+
+    # ---- neuronal IFR for coupling overlay (display sigma) ---------------
+    t_N, r_N = _display_ifr(D)
+    r_N_norm = _norm_to_max(r_N)
+
+    # ---- metrics ---------------------------------------------------------
+    astro_m = _astro_burst_metrics(D, pr_ivls, part_ivls)
+
+    # ---- layout ----------------------------------------------------------
+    fig = plt.figure(figsize=style.figsize(1.55))
+    gs = fig.add_gridspec(2, 3, height_ratios=[3.0, 2.5],
+                          hspace=0.70, wspace=0.40)
+    ax_hero = fig.add_subplot(gs[0, :])      # top full-width
+    ax_anal = fig.add_subplot(gs[1, 0])     # bottom left
+    ax_ster = fig.add_subplot(gs[1, 1])     # bottom centre
+    ax_box  = fig.add_subplot(gs[1, 2])     # bottom right
+    sub_title_size = style.pt_label * 0.80  # smaller than hero suptitle
+
+    # ===== PANEL A: hero + coupling =======================================
+    # burst spans: participation = full-height wash; poprate = floor ribbon
+    for s, e in part_ivls:
+        ax_hero.axvspan(s, e, color=pal.astro, alpha=0.13, lw=0, zorder=0)
+    for s, e in pr_ivls:
+        ax_hero.axvspan(s, e, ymin=0.0, ymax=0.04,
+                        color=pal.astro, alpha=0.70, lw=0)
+
+    # Ca2+ normalised rate fill + outline
+    ax_hero.fill_between(t_Ad, 0.0, r_Ad_norm * Na,
+                         color=pal.astro, alpha=0.45, lw=0, zorder=1)
+    ax_hero.plot(t_Ad, r_Ad_norm * Na, color=pal.astro_line,
+                 lw=style.lw_ifr, zorder=2, label="Ca$^{2+}$ rate")
+
+    # neuronal IFR overlay (thin dashed line in the neuronal palette colour)
+    ax_hero.plot(t_N, r_N_norm * Na, color=pal.ifr_line,
+                 lw=style.lw_ifr * 0.65, ls="--", zorder=3,
+                 label="Neuronal IFR")
+
+    # astrocyte raster
+    ax_hero.scatter(spk_A_t, spk_A_i, s=style.marker_raster,
+                    c=pal.astro, marker=".", linewidths=0,
+                    alpha=0.75, zorder=4, rasterized=True)
+
+    ax_hero.set_xlim(0, D.t_rec)
+    ax_hero.set_ylim(0, Na)
+    ax_hero.set_xlabel("Time (s)")
+    ax_hero.set_ylabel("Astrocyte index")
+    # title carried by suptitle (includes burst count); hero just labels the axes
+    ax_hero.spines["top"].set_visible(False)
+    ax_hero.legend(loc="upper right", fontsize=style.pt_legend * 0.85,
+                   ncol=2, handlelength=1.6)
+
+    # twin 0..1 for the normalised Ca2+ rate (both traces share this scale)
+    ax2_h = ax_hero.twinx()
+    ax2_h.set_ylim(0, 1.0)
+    ax2_h.set_ylabel("Norm. rate")
+    ax2_h.spines["top"].set_visible(False)
+    _style_right_axis(ax2_h, pal.astro_line)
+
+    # ===== PANEL B: analytical (absolute rate + threshold + spans) ========
+    for s, e in part_ivls:
+        ax_anal.axvspan(s, e, color=pal.astro, alpha=0.18, lw=0)
+    for s, e in pr_ivls:
+        ax_anal.axvspan(s, e, ymin=0.0, ymax=0.05,
+                        color=pal.astro, alpha=0.80, lw=0)
+
+    ax_anal.plot(t_A, r_A, color=pal.astro_line,
+                 lw=style.lw_ifr * 0.75, zorder=3)
+    ax_anal.axhline(theta_A, ls="--", lw=style.lw_thresh,
+                    color=pal.threshold, zorder=4)
+    ax_anal.text(0.004, 0.94,
+                 r"$\theta_A=\mu_A+%.1f\,\sigma_A$" % D.cfg.pr_thresh_k,
+                 transform=ax_anal.transAxes, color=pal.threshold,
+                 fontsize=style.pt_annot, va="top")
+    ax_anal.set_xlim(0, D.t_rec)
+    ax_anal.set_xlabel("Time (s)")
+    ax_anal.set_ylabel("Rate (Hz/cell)")
+    ax_anal.set_title("Ca$^{2+}$ rate + threshold", fontsize=sub_title_size)
+    ax_anal.spines["top"].set_visible(False)
+    ax_anal.spines["right"].set_visible(False)
+
+    from matplotlib.patches import Patch
+    from matplotlib.lines import Line2D
+    handles_b = [
+        Line2D([0],[0], color=pal.astro_line, lw=style.lw_ifr*0.75,
+               label="Ca$^{2+}$ rate"),
+        Line2D([0],[0], color=pal.threshold, lw=style.lw_thresh, ls="--",
+               label=r"$\theta_A$"),
+        Patch(facecolor=pal.astro, alpha=0.5, label="participation"),
+        Patch(facecolor=pal.astro, alpha=0.8, label="pop-rate"),
+    ]
+    ax_anal.legend(handles=handles_b, loc="upper right", ncol=2,
+                   fontsize=style.pt_legend * 0.68, handlelength=1.1,
+                   columnspacing=0.8)
+
+    # ===== PANEL C: Ca2+ burst stereotypy ================================
+    dt = D.cfg.grid_dt_s
+    half = max(int(round(0.5 * stereotypy_window_s / dt)), 1)
+    tau = np.arange(-half, half + 1) * dt
+    snippets = []
+    for s, e in primary_ivls:
+        i0 = max(int(np.floor(s / dt)), 0)
+        i1 = min(int(np.ceil(e / dt)), r_A.size - 1)
+        if i1 <= i0:
+            continue
+        pk = i0 + int(np.argmax(r_A[i0:i1 + 1]))
+        lo, hi = pk - half, pk + half + 1
+        seg = np.full(tau.size, np.nan)
+        a, b = max(lo, 0), min(hi, r_A.size)
+        seg[(a - lo):(b - lo)] = r_A[a:b]
+        pv = float(np.nanmax(seg))
+        if pv > 0:
+            snippets.append(seg / pv)
+
+    if snippets:
+        M = np.vstack(snippets)
+        for row in M:
+            ax_ster.plot(tau, row, color=pal.astro,
+                         lw=style.lw_ifr * 0.35, alpha=0.40, zorder=2)
+        mn = np.nanmean(M, axis=0)
+        sd_s = np.nanstd(M, axis=0)
+        ax_ster.fill_between(tau, mn - sd_s, mn + sd_s,
+                             color=pal.astro, alpha=0.20, lw=0, zorder=1)
+        ax_ster.plot(tau, mn, color=pal.astro_line,
+                     lw=style.lw_ifr, zorder=3,
+                     label="mean (n=%d)" % M.shape[0])
+        ax_ster.axvline(0.0, ls=":", lw=style.lw_thresh * 0.8,
+                        color=pal.threshold, zorder=4)
+        ax_ster.legend(loc="upper right", fontsize=style.pt_legend * 0.82)
+    else:
+        ax_ster.text(0.5, 0.5, "< 1 detected\nastrocyte burst",
+                     ha="center", va="center", transform=ax_ster.transAxes,
+                     fontsize=style.pt_annot, color=pal.muted)
+
+    ax_ster.set_xlim(-0.5 * stereotypy_window_s, 0.5 * stereotypy_window_s)
+    ax_ster.set_ylim(0, 1.05)
+    ax_ster.set_xlabel("Time from Ca$^{2+}$ peak (s)")
+    ax_ster.set_ylabel("Rate (norm.)")
+    ax_ster.set_title("Ca$^{2+}$ burst stereotypy", fontsize=sub_title_size)
+    ax_ster.spines["top"].set_visible(False)
+    ax_ster.spines["right"].set_visible(False)
+
+    # ===== PANEL D: metrics box ==========================================
+    ax_box.axis("off")
+    ax_box.text(0.02, 0.98, _astro_metrics_box_text(astro_m, D),
+                transform=ax_box.transAxes,
+                family="monospace", fontsize=style.pt_annot * 0.82,
+                va="top", ha="left", color=pal.ink,
+                bbox=dict(boxstyle="round,pad=0.55", fc=pal.paper,
+                          ec=pal.astro, lw=style.lw_spine))
+    ax_box.set_title("Burst metrics", color=pal.astro_line, fontsize=sub_title_size)
+
+    fig.subplots_adjust(left=0.09, right=0.93, top=0.90, bottom=0.08)
+    fig.suptitle(
+        (D.title or "Astrocyte Ca$^{2+}$ analysis")
+        + "  [%d pr / %d part bursts]" % (len(pr_ivls), len(part_ivls)),
+        fontsize=style.pt_label, fontweight="bold", color=pal.ink)
+    return fig
+
+
+# ===========================================================================
 # Registry + save / orchestration
 # ===========================================================================
 FIGURES = {
-    "hero":       fig_hero,
-    "stacked":    fig_stacked,
-    "overlay":    fig_overlay,
-    "heatmap":    fig_heatmap,
-    "stereotypy": fig_stereotypy,
-    "returnmap":  fig_returnmap,
-    "zoom":       fig_zoom,
-    "composite":  fig_composite,
+    "hero":          fig_hero,
+    "stacked":       fig_stacked,
+    "overlay":       fig_overlay,
+    "heatmap":       fig_heatmap,
+    "stereotypy":    fig_stereotypy,
+    "returnmap":     fig_returnmap,
+    "zoom":          fig_zoom,
+    "composite":     fig_composite,
+    "burst_gallery": None,         # filled below after the function is defined
+    "astro":         fig_astro,    # dedicated astrocyte figure (auto-added when has_astro)
 }
 ALL_FIGURES = ("hero", "stacked", "overlay", "heatmap",
                "stereotypy", "returnmap", "zoom", "composite")
-HERO_ONLY = ("hero",)
+HERO_ONLY    = ("hero",)
+ASTRO_FIGURES = ("astro",)         # rendered automatically when D.has_astro
+
+
+# ===========================================================================
+# Figure 9 -- BURST GALLERY  (multiple bursts, selectable + styleable)
+# ===========================================================================
+# Not in ALL_FIGURES because it needs an explicit burst-selection choice.
+# Call it directly: fig_burst_gallery(D, style, ...)
+# or via render_run with which=("burst_gallery",) after setting the kwargs you
+# want as attributes on D (see _gallery_kwarg helper below).
+# ===========================================================================
+def fig_burst_gallery(
+        D: RunData,
+        style: bp.PosterStyle,
+        # ---- BURST SELECTION (choose one strategy) -----------------------
+        burst_indices: Optional[List[int]] = None,
+        # ^^ explicit list of integer indices into D.scoring_intervals.
+        #    e.g. [0, 2, 5] picks the 1st, 3rd, and 6th detected burst.
+        #    When provided, n_bursts and select_by are ignored.
+        n_bursts: int = 6,
+        # ^^ how many bursts to show when burst_indices is None
+        select_by: str = "peak",
+        # ^^ criterion when burst_indices is None:
+        #      "peak"           - highest IFR peak (most synchronous)
+        #      "duration"       - longest burst first
+        #      "order"          - first N in temporal order (onset time)
+        #      "representative" - N closest to the median burst duration
+        # ---- APPEARANCE --------------------------------------------------
+        zoom_window_s: float = 4.0,
+        # ^^ time window centred on each burst's IFR peak [s]
+        normalize_ifr: bool = True,
+        # ^^ True  -> each panel's IFR is divided by its own max (shape)
+        #    False -> absolute Hz/neuron (amplitude comparison across panels)
+        show_raster: bool = True,
+        # ^^ overlay the spike raster behind the IFR envelope
+        show_astro: Optional[bool] = None,
+        # ^^ draw the astrocyte event band above each panel's raster.
+        #    None -> auto (on when D carries astrocyte data); True/False force it.
+        color_bursts: bool = False,
+        # ^^ False -> every panel uses the palette's standard ifr_fill/ifr_line
+        #    True  -> cycle through a small set of perceptually distinct hues
+        #             so each burst panel reads as a separate "trace"
+        ncols: int = 3,
+        # ^^ columns in the panel grid (rows computed automatically)
+) -> "plt.Figure":
+    """Gallery of individually zoomed burst panels for a single run.
+
+    BURST SELECTION
+    ---------------
+    ``burst_indices`` is the most direct control: pass an explicit list of
+    integer indices into ``D.scoring_intervals`` and exactly those bursts are
+    shown, in the order you provide.  For example::
+
+        # show the 1st, 4th, and 7th detected burst
+        fig = fig_burst_gallery(D, style, burst_indices=[0, 3, 6])
+
+    When ``burst_indices`` is None the function selects ``n_bursts`` bursts by
+    the criterion ``select_by``:
+
+      * ``"peak"``           -- highest IFR peak inside the burst; shows the
+                                most synchronised events, useful for posters.
+      * ``"duration"``       -- longest bursts first.
+      * ``"order"``          -- temporal order; first N by onset time.
+      * ``"representative"`` -- the N bursts whose durations are closest to the
+                                median duration; a shape-stability gallery.
+
+    APPEARANCE
+    ----------
+    ``zoom_window_s``   physical width of each panel in seconds.
+    ``normalize_ifr``   True = each panel's IFR normalised to its own max
+                        (shape comparison); False = absolute Hz/neuron
+                        (amplitude comparison -- rarer on a poster but useful
+                        for showing burst-to-burst amplitude variability).
+    ``show_raster``     add the spike raster behind the IFR fill.
+    ``color_bursts``    False (default) keeps every panel in the palette's
+                        standard IFR colour so the gallery reads as one
+                        coherent block; True cycles a small set of hues so
+                        each burst is visually distinct (useful when you
+                        paste panels at different poster positions and need
+                        a legend-free colour code).
+    """
+    pal = style.palette
+    intervals = D.scoring_intervals
+    if not intervals:
+        fig, ax = plt.subplots(figsize=style.figsize(2.0))
+        ax.text(0.5, 0.5, "no bursts detected", ha="center", va="center",
+                transform=ax.transAxes, fontsize=style.pt_annot, color=pal.muted)
+        ax.axis("off")
+        fig.suptitle(D.title or "Burst gallery",
+                     fontsize=style.pt_title, fontweight="bold", color=pal.ink)
+        return fig
+
+    t_full, r_full = _display_ifr(D)
+
+    # ---- resolve which burst indices to show ----------------------------
+    if burst_indices is not None:
+        idx = [int(i) for i in burst_indices
+               if 0 <= int(i) < len(intervals)]
+    else:
+        n_bursts = max(1, n_bursts)
+        if select_by == "peak":
+            # score each burst by the max IFR inside its span
+            scores = []
+            for k, (s, e) in enumerate(intervals):
+                mask = (t_full >= s) & (t_full <= e)
+                peak = float(r_full[mask].max()) if mask.any() else 0.0
+                scores.append((peak, k))
+            scores.sort(key=lambda x: -x[0])
+            idx = [k for _, k in scores[:n_bursts]]
+        elif select_by == "duration":
+            durs = [(e - s, k) for k, (s, e) in enumerate(intervals)]
+            durs.sort(key=lambda x: -x[0])
+            idx = [k for _, k in durs[:n_bursts]]
+        elif select_by == "representative":
+            durs = np.array([e - s for s, e in intervals])
+            med = float(np.median(durs))
+            order = np.argsort(np.abs(durs - med), kind="stable")
+            idx = list(order[:n_bursts].astype(int))
+        else:                              # "order" (temporal)
+            idx = list(range(min(n_bursts, len(intervals))))
+
+    if not idx:
+        idx = [0]
+
+    # per-panel font scale: each cell is 1/ncols of the full panel width,
+    # so scale point sizes gently (same exponent as PosterStyle itself).
+    cell_scale = (1.0 / max(ncols, 1)) ** 0.35
+
+    # ---- per-burst colour cycle (used when color_bursts=True) -----------
+    # Four hues derived from the palette that are perceptually separable
+    # (the palette's own ifr_fill, accent2, threshold, and a fourth
+    # constructed as their midpoint in RGB).  Abuse of colour roles flagged.
+    _c_fill = [pal.ifr_fill, pal.accent2, pal.threshold,
+               "#%02x%02x%02x" % tuple(
+                   int((a + b) // 2) for a, b in zip(
+                       (int(pal.ifr_fill.lstrip("#")[i:i+2], 16)
+                        for i in (0, 2, 4)),
+                       (int(pal.threshold.lstrip("#")[i:i+2], 16)
+                        for i in (0, 2, 4))))]
+    # NOTE: this re-uses role colours for cycle positions 2+ (flagged here).
+    _c_line = [pal.ifr_line, pal.ink, pal.ink, pal.ink]
+
+    # ---- grid layout -----------------------------------------------------
+    n = len(idx)
+    ncols = max(1, min(ncols, n))
+    nrows = int(np.ceil(n / ncols))
+    w_in = style.width_in()
+    # Minimum cell height ensures suptitle + panel title + data + x-axis label
+    # all fit. Single-row layouts need more headroom relative to their total
+    # height because the 40pt suptitle costs ~0.55" and the axes are very wide.
+    cell_h_min = 3.0 if nrows == 1 else 2.0
+    cell_h_in = max(w_in * 0.38 / ncols, cell_h_min)
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=(w_in, cell_h_in * nrows),
+        squeeze=False)
+
+    half = zoom_window_s * 0.5
+    N = max(D.n_neurons, 1)
+    # derived point sizes for each small panel (not the figure-level rc sizes)
+    pt_title_cell = style.pt_tick * cell_scale * 1.1
+    pt_tick_cell  = style.pt_tick * cell_scale * 0.85
+    pt_label_cell = style.pt_tick * cell_scale * 0.80
+
+    # resolve astro display (auto when the run carries astrocyte data)
+    draw_astro = D.has_astro if show_astro is None else bool(show_astro)
+
+    # absolute mode compares amplitude ACROSS panels, so all panels must share
+    # one scale: the global IFR max over every selected burst window.
+    global_ifr_max = 1.0
+    if not normalize_ifr:
+        for bk in idx:
+            sb, eb = intervals[bk]
+            wmask = (t_full >= sb) & (t_full <= eb)
+            if wmask.any():
+                global_ifr_max = max(global_ifr_max, float(r_full[wmask].max()))
+
+    for panel, burst_k in enumerate(idx):
+        ax = axes[panel // ncols][panel % ncols]
+        s_burst, e_burst = intervals[burst_k]
+
+        # centre on IFR peak inside the burst
+        win_mask = (t_full >= s_burst) & (t_full <= e_burst)
+        if win_mask.any():
+            peak_t = float(t_full[win_mask][np.argmax(r_full[win_mask])])
+        else:
+            peak_t = 0.5 * (s_burst + e_burst)
+        z0 = max(0.0, peak_t - half)
+        z1 = min(D.t_rec, peak_t + half)
+
+        # IFR in window. Map onto the neuron region [0, N] in BOTH modes; the
+        # twin axis carries the units. normalize_ifr -> per-panel max (shape);
+        # else -> shared global max (cross-panel amplitude comparison).
+        wm = (t_full >= z0) & (t_full <= z1)
+        tt, rr = t_full[wm], r_full[wm]
+        if normalize_ifr:
+            ref = float(rr.max()) if rr.size and rr.max() > 0 else 1.0
+            twin_top, twin_lbl = 1.0, "Norm. IFR"
+        else:
+            ref = global_ifr_max
+            twin_top, twin_lbl = global_ifr_max, "Hz/neuron"
+        disp = rr / ref if ref > 0 else rr           # in [0, 1] (or <=1 for abs)
+
+        # colours for this panel
+        ci = panel % len(_c_fill)
+        fill_c = _c_fill[ci] if color_bursts else pal.ifr_fill
+        line_c = _c_line[ci] if color_bursts else pal.ifr_line
+
+        # IFR envelope on the neuron-region scale (0..N)
+        ax.fill_between(tt, 0.0, disp * N, color=fill_c,
+                        alpha=0.55, lw=0, zorder=1)
+        ax.plot(tt, disp * N, color=line_c,
+                lw=style.lw_ifr * cell_scale, zorder=2)
+        ax.axvspan(s_burst, e_burst, color=pal.span_li
+                   if D.cfg.scoring_detector == "logisi" else pal.span_pr,
+                   alpha=0.13, lw=0, zorder=0)
+
+        if show_raster:
+            m = (D.spk_t >= z0) & (D.spk_t <= z1)
+            ax.scatter(D.spk_t[m], D.spk_i[m],
+                       s=style.marker_raster * cell_scale,
+                       c=pal.raster, marker=".", linewidths=0,
+                       zorder=3, rasterized=True)
+
+        # astrocyte band above the raster (clipped to this panel's window)
+        if draw_astro:
+            y_axis_top = _draw_astro_band(
+                ax, D, style, x0=z0, x1=z1,
+                label=(panel % ncols == 0), marker_scale=cell_scale * 1.2)
+        else:
+            y_axis_top = N
+
+        ax.set_xlim(z0, z1)
+        ax.set_ylim(0, y_axis_top)
+        ax.set_title("#%d  t=%.1fs  dur=%.3fs" % (
+                     burst_k + 1, s_burst, e_burst - s_burst),
+                     fontsize=pt_title_cell, color=pal.ink, pad=2)
+        ax.tick_params(labelsize=pt_tick_cell)
+        for sp in ("top", "right"):
+            ax.spines[sp].set_visible(False)
+
+        # IFR right-axis aligned so host y=N maps to twin y=twin_top
+        ax2 = ax.twinx()
+        ax2.set_ylim(0, (y_axis_top / N) * twin_top)
+        ax2.set_yticks(np.linspace(0, twin_top, 5))
+        ax2.spines["top"].set_visible(False)
+        _style_right_axis(ax2, line_c)
+        ax2.tick_params(labelsize=pt_tick_cell * 0.9)
+        if panel % ncols == ncols - 1 or panel == len(idx) - 1:
+            ax2.set_ylabel(twin_lbl, fontsize=pt_label_cell, color=line_c)
+
+        # x/y axis labels only on border panels
+        if panel // ncols == nrows - 1:
+            ax.set_xlabel("Time (s)", fontsize=pt_label_cell)
+        if panel % ncols == 0:
+            ax.set_ylabel(D.channel_label, fontsize=pt_label_cell)
+
+    # blank unused cells
+    for k in range(n, nrows * ncols):
+        axes[k // ncols][k % ncols].axis("off")
+
+    sel_label = (("indices %s" % burst_indices) if burst_indices is not None
+                 else ("top-%d by %s" % (n, select_by)))
+    fig.suptitle((D.title or "Burst gallery") + "  [%s]" % sel_label,
+                 fontsize=style.pt_label, fontweight="bold", color=pal.ink,
+                 y=1.0, va="top")
+    # Reserve space for suptitle (pt_label, not pt_title, since internal panel
+    # titles already carry per-burst annotations; a full pt_title would compete).
+    top_margin = {1: 0.80, 2: 0.84}.get(nrows, 0.90)
+    fig.subplots_adjust(top=top_margin, hspace=0.55, wspace=0.38)
+    return fig
+
+
+FIGURES["burst_gallery"] = fig_burst_gallery
 
 
 def save_figure(fig, out_base: str, style: bp.PosterStyle,
@@ -787,10 +1558,28 @@ def _synth_bursting_run(seed: int = 3) -> RunData:
     # mean_FR_Hz is detector-independent and normally injected from the sweep
     # sidecar / CSV; compute it here so the metrics box is complete in the test.
     metrics["mean_FR_Hz"] = float(spk_t.size) / float(N * T)
+
+    # synthetic astrocytes: sparse Ca2+ events, a fraction of them LAGGING the
+    # network bursts by ~0.3-1.2 s (astrocytes respond after neuronal volleys).
+    Na = 40
+    at, ai = [], []
+    burst_times = np.array([6.0, 12.5, 19.0, 26.0, 33.0, 40.5, 47.0, 54.0])
+    for bt in burst_times:
+        # 80% recruitment, tighter window (0.30-0.70 s lag) so the merge gap
+        # can capture the full population response as one epoch
+        responders = rng.choice(Na, size=int(0.80 * Na), replace=False)
+        for aid in responders:
+            at.append(bt + rng.uniform(0.30, 0.70)); ai.append(int(aid))
+    n_bg_a = int(0.3 * Na)                       # sparse spontaneous events
+    at.extend(rng.uniform(0, T, n_bg_a)); ai.extend(rng.integers(0, Na, n_bg_a))
+    spk_A_t = np.clip(np.asarray(at, float), 0, T)
+    spk_A_i = np.asarray(ai, int)
+
     return RunData(
         spk_t=spk_t, spk_i=spk_i, n_neurons=N, t_rec=T,
         pr_intervals=row["_pr_intervals"], li_intervals=row["_li_intervals"],
-        metrics=metrics, cfg=cfg, title="smoke bursting run")
+        metrics=metrics, cfg=cfg, title="smoke bursting run",
+        spk_A_t=spk_A_t, spk_A_i=spk_A_i, n_astro=Na)
 
 
 def _smoke_test() -> int:
@@ -857,6 +1646,58 @@ def _smoke_test() -> int:
         crash = True
         print("      degenerate render raised:", repr(e))
     check("degenerate no-burst run renders without crashing", not crash)
+
+    # burst gallery: every selection mode + astro band on/off
+    D2 = _synth_bursting_run()
+    check("fixture carries astrocyte data", D2.has_astro,
+          f"n_astro={D2.n_astro} events={0 if D2.spk_A_t is None else len(D2.spk_A_t)}")
+    gal_ok = True
+    style = bp.make_style("teal_analogous", panel_mm=380, dpi=110)
+    with plt.rc_context(_valid_rc(style.rc())):
+        for kw in (dict(n_bursts=6, select_by="peak", ncols=3),
+                   dict(burst_indices=[0, 2, 4], color_bursts=True),
+                   dict(n_bursts=3, select_by="duration", normalize_ifr=False),
+                   dict(n_bursts=4, select_by="representative", show_astro=False),
+                   dict(n_bursts=4, show_astro=True)):
+            try:
+                fig = fig_burst_gallery(D2, style, **kw)
+                p = os.path.join(out, "gal_%d.png" % abs(hash(str(kw))))
+                fig.savefig(p, dpi=80); plt.close(fig)
+                gal_ok = gal_ok and os.path.getsize(p) > 1200
+            except Exception as e:
+                gal_ok = False
+                print("      gallery raised for", kw, "->", repr(e))
+    check("burst gallery: all selection modes + astro on/off render", gal_ok)
+
+    # astro band must lift the hero's y-axis above N (band drawn above neurons)
+    with plt.rc_context(_valid_rc(style.rc())):
+        fig = fig_hero(D2, style)
+        top = fig.axes[0].get_ylim()[1]
+        plt.close(fig)
+    check("hero y-axis extends above N when astro present (band drawn)",
+          top > D2.n_neurons, f"ymax={top:.1f} N={D2.n_neurons}")
+
+    # dedicated astrocyte figure: detection + all four panels
+    with plt.rc_context(_valid_rc(style.rc())):
+        pr_ivls, part_ivls, _t, _r, _mu, _sd, _th = _detect_astro_bursts(D2)
+        check("astro poprate detector fires on fixture",
+              len(pr_ivls) >= 4, f"pr_ivls={len(pr_ivls)}")
+        check("astro participation detector fires on fixture (>=50%% threshold)",
+              len(part_ivls) >= 4, f"part_ivls={len(part_ivls)}")
+        fig = fig_astro(D2, style)
+        p = os.path.join(out, "astro_full.png")
+        fig.savefig(p, dpi=80); plt.close(fig)
+        check("fig_astro renders non-empty PNG", os.path.getsize(p) > 1200)
+        # no-astro guard
+        Dn2 = RunData(spk_t=np.array([1.0]), spk_i=np.array([0]),
+                      n_neurons=5, t_rec=10.0, pr_intervals=[], li_intervals=[],
+                      metrics={}, cfg=bm.BurstConfig())
+        try:
+            fig = fig_astro(Dn2, style); plt.close(fig); crash_a = False
+        except Exception as e:
+            crash_a = True; print("      fig_astro no-data crash:", e)
+        check("fig_astro no-astro-data placeholder renders without crash",
+              not crash_a)
 
     print(f"  [info] wrote {total_files + 2} files to {out}")
     print("\nSmoke test:", "PASS" if ok else "FAIL")
