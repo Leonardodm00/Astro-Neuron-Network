@@ -203,6 +203,30 @@ def _load_spikes(npz_path: str) -> Tuple[np.ndarray, np.ndarray]:
     return spk_t, spk_i
 
 
+def _load_astro(npz_path: str) -> Tuple[np.ndarray, np.ndarray]:
+    """Astrocyte Ca2+ events from one npz (empty arrays if absent)."""
+    with np.load(npz_path) as d:
+        if "spk_A_t" in d and "spk_A_i" in d:
+            at = np.asarray(d["spk_A_t"], dtype=np.float64)
+            ai = np.asarray(d["spk_A_i"], dtype=np.int64)
+        else:
+            at, ai = np.zeros(0), np.zeros(0, dtype=np.int64)
+    return at, ai
+
+
+def _resolve_n_astro(npz_path: str, spk_A_i: np.ndarray) -> int:
+    """Na from the topo's topology_meta.json (authoritative), else max index+1."""
+    meta = Path(npz_path).parent / "topology_meta.json"
+    if meta.is_file():
+        try:
+            na = json.loads(meta.read_text()).get("Na")
+            if na is not None:
+                return int(na)
+        except Exception:
+            pass
+    return (int(spk_A_i.max()) + 1) if spk_A_i.size else 0
+
+
 def _fine_worker(item: Tuple[str, int, float, float]) -> Dict[str, float]:
     """Compute the full scalar metric row for one candidate sim.
 
@@ -276,6 +300,8 @@ def build_rundata(fine_row: Dict[str, float], opt: Options, cfg: bm.BurstConfig,
     Nn = int(fine_row["Nn"])
     T = float(fine_row["simtime_s"])
     spk_t, spk_i = _load_spikes(npz_path)
+    spk_A_t, spk_A_i = _load_astro(npz_path)
+    n_astro = _resolve_n_astro(npz_path, spk_A_i)
     row = bm.compute_all(spk_t, spk_i, Nn, T, cfg)
     metrics = bm.scalar_row(row)
     metrics["mean_FR_Hz"] = fine_row.get("mean_FR_Hz", float("nan"))
@@ -283,7 +309,7 @@ def build_rundata(fine_row: Dict[str, float], opt: Options, cfg: bm.BurstConfig,
         spk_t=spk_t, spk_i=spk_i, n_neurons=Nn, t_rec=T,
         pr_intervals=row["_pr_intervals"], li_intervals=row["_li_intervals"],
         metrics=metrics, cfg=cfg, ifr_display_sigma_s=opt.ifr_sigma_s,
-        title=title)
+        title=title, spk_A_t=spk_A_t, spk_A_i=spk_A_i, n_astro=n_astro)
 
 
 def render_exemplars(ranked: List[Dict[str, float]], opt: Options,
@@ -299,6 +325,9 @@ def render_exemplars(ranked: List[Dict[str, float]], opt: Options,
         D = build_rundata(fr, opt, cfg, title)
         rundata.append(D)
         which = (bpp.ALL_FIGURES if rank <= opt.full_top else bpp.HERO_ONLY)
+        # add the dedicated astrocyte figure whenever the exemplar has astro data
+        if D.has_astro:
+            which = tuple(which) + bpp.ASTRO_FIGURES
         for pname in opt.palettes:
             style = bp.make_style(pname, panel_mm=opt.panel_mm, dpi=opt.dpi)
             paths = bpp.render_run(D, style, str(opt.out_dir),
@@ -487,8 +516,20 @@ def _make_synthetic_campaign(root: Path) -> Path:
     topo = campaign / "sweep_node0_task0000" / "topo_00000"
     topo.mkdir(parents=True)
     Nn, T = 80, 60.0
+    Na = 40
     (topo / "topology_meta.json").write_text(json.dumps(
-        {"Nn": Nn, "simtime_s": T, "mode": "Neuronal", "topo_idx": 0}))
+        {"Nn": Nn, "Na": Na, "simtime_s": T, "mode": "Full", "topo_idx": 0}))
+
+    def astro_events(seed, burst_times):
+        r = np.random.default_rng(seed + 500)
+        at, ai = [], []
+        for bt in burst_times:                       # astro lag the volleys
+            resp = r.choice(Na, size=int(0.80 * Na), replace=False)
+            for aid in resp:
+                at.append(bt + r.uniform(0.30, 0.70)); ai.append(int(aid))
+        nb = int(0.3 * Na)
+        at.extend(r.uniform(0, T, nb)); ai.extend(r.integers(0, Na, nb))
+        return np.asarray(at, np.float32), np.asarray(ai, np.int32)
 
     def mini_burst_sim(seed, burst_times, recruit=0.90, spc=11, isi=0.006):
         r = np.random.default_rng(seed)
@@ -503,24 +544,30 @@ def _make_synthetic_campaign(root: Path) -> Path:
         t.extend(r.uniform(0, T, bg)); ix.extend(r.integers(0, Nn, bg))
         return np.clip(np.asarray(t, float), 0, T), np.asarray(ix, int)
 
-    def save(i, spk_t, spk_i):
+    def save(i, spk_t, spk_i, a_seed=0, burst_times=None):
         o = np.argsort(spk_t)
+        if burst_times is not None:
+            at, ai = astro_events(a_seed, burst_times)
+        else:
+            at, ai = np.array([], np.float32), np.array([], np.int32)
         np.savez_compressed(
             topo / f"iter_{i:05d}.npz",
             spk_N_t=np.asarray(spk_t[o], np.float32),
             spk_N_i=np.asarray(spk_i[o], np.int32),
-            spk_A_t=np.array([], np.float32), spk_A_i=np.array([], np.int32),
+            spk_A_t=at, spk_A_i=ai,
             params=np.zeros(37), theta=np.zeros(37))
 
     # sim 0: clean bursting near the Mossink rate (~8 bursts / 60 s ~ 8/min)
-    save(0, *mini_burst_sim(1, np.array([6, 12.5, 19, 26, 33, 40.5, 47, 54.0])))
+    bt0 = np.array([6, 12.5, 19, 26, 33, 40.5, 47, 54.0])
+    save(0, *mini_burst_sim(1, bt0), a_seed=1, burst_times=bt0)
     # sim 1: asynchronous Poisson (should screen as NOT bursting)
     n = rng.poisson(3.0 * Nn * T)
     save(1, np.sort(rng.uniform(0, T, n)), rng.integers(0, Nn, n))
     # sim 2: near-silent (should screen as NOT bursting)
     save(2, np.sort(rng.uniform(0, T, 10)), rng.integers(0, 2, 10))
     # sim 3: faster bursting (further from the Mossink rate -> should rank below 0)
-    save(3, *mini_burst_sim(2, np.linspace(3.0, 58.0, 16)))
+    bt3 = np.linspace(3.0, 58.0, 16)
+    save(3, *mini_burst_sim(2, bt3), a_seed=2, burst_times=bt3)
     return campaign
 
 
@@ -581,6 +628,14 @@ def _smoke_test() -> int:
     nonempty = all(p.stat().st_size > 1200
                    for p in list(out_dir.glob('*.png')) + list(out_dir.glob('*.pdf')))
     check("all rendered figures are non-empty", nonempty)
+
+    # astrocytes loaded from the npz and carried into RunData for rendering
+    if ranked:
+        D_top = build_rundata(ranked[0], opt, bm.BurstConfig(), "top")
+        check("astrocytes loaded into top exemplar RunData",
+              D_top.has_astro and D_top.n_astro == 40,
+              f"n_astro={D_top.n_astro} "
+              f"events={0 if D_top.spk_A_t is None else len(D_top.spk_A_t)}")
 
     print("\nSmoke test:", "PASS" if ok else "FAIL")
     if not ok:
