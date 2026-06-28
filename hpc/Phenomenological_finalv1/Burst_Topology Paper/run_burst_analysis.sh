@@ -51,7 +51,17 @@ EXTRA_ARGS="${EXTRA_ARGS:-}"
 if [ -n "${PBS_O_WORKDIR:-}" ]; then
     cd "$PBS_O_WORKDIR"
 fi
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Under PBS, $0 is the scheduler's spool copy
+# (/var/spool/pbs/mom_priv/jobs/...) not the original script, so
+# dirname($0) resolves to the spool dir and python cannot find
+# run_burst_analysis.py there.  The submission directory (where the
+# scripts actually live) is always $PBS_O_WORKDIR -- we just cd'd there.
+# For a direct run there is no PBS_O_WORKDIR, so fall back to dirname($0).
+if [ -n "${PBS_O_WORKDIR:-}" ]; then
+    SCRIPT_DIR="$PBS_O_WORKDIR"
+else
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+fi
 
 # --- campaign: -v CAMPAIGN, else $1, else let the driver auto-discover ----
 CAMPAIGN="${CAMPAIGN:-${1:-}}"
