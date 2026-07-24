@@ -19,7 +19,9 @@ Files affected / added:
 - `process_campaign.py` — campaign walker / HPC entry point (new)
 - `submit_mea.sh` — PBS submission wrapper, single campaign (new)
 - `build_mea_manifest.py`, `submit_mea_array.sh`, `launch_mea_array.sh` —
-  PBS array submission across many campaigns, non-interactive (new)
+  PBS array submission across many campaigns as ONE combined job (new)
+- `launch_mea_per_campaign.sh` — submit ONE SEPARATE PBS job per campaign
+  (thin wrapper around `launch_mea_array.sh`; new)
 - `smoke_test_eap_library.py`, `smoke_test_mea_pipeline.py`,
   `smoke_test_mea_plots.py` — correctness tests (new)
 
@@ -589,6 +591,41 @@ qstat -u $USER           # everything you have queued/running
 Each array member's stdout/stderr (via `#PBS -k eo`) will show which
 `campaign`/`out` pair it was assigned and its worker count — useful for
 tracing a specific failed array index back to a specific sweep directory.
+
+### 9.3 One separate job per campaign: `launch_mea_per_campaign.sh`
+
+`launch_mea_array.sh` (9.2) flattens every campaign's work units into a
+**single combined** array job. If instead you want **one independent PBS job
+per campaign** — separate job IDs, so you can monitor, cancel, or re-run one
+campaign without touching the others — use `launch_mea_per_campaign.sh`. It
+is a thin loop around `launch_mea_array.sh`: for each campaign it calls that
+script once, with `--campaign-root` pointing at just that one campaign, so
+every array-vs-plain-job decision, BLAS pinning, and manifest-building step
+is the same already-tested logic from 9.2, just applied per campaign instead
+of once overall.
+
+```bash
+# auto-discover every campaign_* directory directly under --parent,
+# and submit one job for each:
+./launch_mea_per_campaign.sh \
+    --parent /davinci-1/home/USER/ANN/Phenomenological/Main \
+    --out-root /path/to/mea_out
+
+# or name specific campaigns explicitly (repeatable), e.g. a subset:
+./launch_mea_per_campaign.sh \
+    --campaign-root /path/campaign_cadex_rho1300v1 \
+    --campaign-root /path/campaign_cadex_rho1300v2 \
+    --out-root /path/to/mea_out
+```
+
+Every other option (`--lib`, `--queue`, `--ncpus`, `--walltime`,
+`--concurrency`, `--skip-done`, `--extra-args`, `--dry-run`) matches
+`launch_mea_array.sh` exactly and is forwarded unchanged to every
+per-campaign call — `--concurrency`, for instance, becomes a **per-campaign**
+throttle rather than one shared across everything. `--dry-run` prints the
+planned `qsub` command for every campaign without submitting anything, and a
+summary table of campaign -> job ID (or "not submitted", under `--dry-run`)
+is printed at the end.
 
 ---
 
