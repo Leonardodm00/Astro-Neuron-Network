@@ -17,7 +17,9 @@ Files affected / added:
 - `mea_detection.py` — spike detection + ground-truth matching (new)
 - `mea_plots.py` — diagnostic plots (new, optional: needs matplotlib)
 - `process_campaign.py` — campaign walker / HPC entry point (new)
-- `submit_mea.sh` — PBS submission wrapper (new)
+- `submit_mea.sh` — PBS submission wrapper, single campaign (new)
+- `build_mea_manifest.py`, `submit_mea_array.sh`, `launch_mea_array.sh` —
+  PBS array submission across many campaigns, non-interactive (new)
 - `smoke_test_eap_library.py`, `smoke_test_mea_pipeline.py`,
   `smoke_test_mea_plots.py` — correctness tests (new)
 
@@ -490,9 +492,15 @@ plotting bug can never cost a completed computation.
 
 ## 9. HPC submission
 
-`submit_mea.sh` is a PBS wrapper matching this repo's existing `qsub`
-conventions. It is post-processing only (numpy + scipy, no Brian2, no
-compilation), so it needs far less walltime than the simulation sweep itself.
+Two ways to run, depending on scope:
+
+- **One campaign/sweep directory** -> `submit_mea.sh`, a single PBS job (9.1).
+- **Many campaigns/sweeps, non-interactively, in one command** -> `build_mea_manifest.py` + `submit_mea_array.sh` + `launch_mea_array.sh`, a PBS **array** job (9.2).
+
+### 9.1 Single campaign: `submit_mea.sh`
+
+Post-processing only (numpy + scipy, no Brian2, no compilation), so it needs
+far less walltime than the simulation sweep itself.
 
 ```bash
 qsub -l select=1:ncpus=48 \
@@ -502,11 +510,85 @@ LIB=/scratch/USER/eap_library.npz \
      submit_mea.sh
 ```
 
-Submit one job per `sweep_*` directory (or loop the submission over them).
 Edit the environment-activation lines at the top of `submit_mea.sh` to match
 your cluster's module/conda setup (same environment used for the simulation
 sweep is sufficient — no extra packages are required unless you also want
 `--plots`, in which case add matplotlib to that environment).
+
+### 9.2 Many campaigns, non-interactively: the array launcher
+
+For running the pipeline across many `sweep_*_task*` directories — one or
+more campaigns — **without submitting each one by hand and without an
+interactive session**. This follows the same worker/launcher split as this
+repo's own `submit_sweep_mixed.sh` / `launch_campaign.sh`, and uses the same
+PBS Pro job-array mechanism (`qsub -J`, `$PBS_ARRAY_INDEX`) that
+`launch_campaign.sh` already uses for the simulation sweep itself.
+
+**Three files, three roles:**
+
+| file | role |
+|---|---|
+| `build_mea_manifest.py` | discovers every `sweep_*_task*` directory (across one or more campaigns) that actually contains `topo_*`, and writes a numbered manifest |
+| `submit_mea_array.sh` | the array **worker** — reads exactly one manifest line, selected by `$PBS_ARRAY_INDEX`, and runs `process_campaign.py` on just that directory |
+| `launch_mea_array.sh` | the **launcher** — builds the manifest, then submits one `qsub -J` array job (or a plain job if only one work unit is found, since PBS Pro rejects a single-element array — same convention as `launch_campaign.sh`) |
+
+You normally only ever run `launch_mea_array.sh`; the other two are called by
+it. One command, non-interactive, covers everything under one or more
+campaign roots:
+
+```bash
+./launch_mea_array.sh \
+    --out-root /path/to/mea_out \
+    --glob '/davinci-1/home/USER/ANN/Phenomenological/Main/campaign_*'
+```
+
+(Quote the `--glob` pattern so your shell doesn't expand it before the script
+sees it — this lets the script pick up campaigns created after you type the
+command, and matches every `campaign_*` directory, not just the ones that
+exist right now.) Or name specific campaigns explicitly (repeatable):
+
+```bash
+./launch_mea_array.sh \
+    --out-root /path/to/mea_out \
+    --campaign-root /path/campaign_cadex_rho1300v3 \
+    --campaign-root /path/campaign_cadex_rho2000v1
+```
+
+**Options** (`./launch_mea_array.sh --help` for the full list):
+
+| flag | default | meaning |
+|---|---|---|
+| `--out-root` | required | output root; layout is `<out-root>/<campaign_dir_name>/<sweep_task_dir_name>` |
+| `--campaign-root` | — | a campaign directory to search (repeatable) |
+| `--glob` | — | a shell glob matching multiple campaign directories (repeatable; quote it) |
+| `--lib` | `./eap_library.npz` | built **once, synchronously, before submitting** — so array members never race to generate it |
+| `--queue` | `cpu` | PBS queue |
+| `--ncpus` | `48` | cores per array member -> forwarded as `--workers` to `process_campaign.py` |
+| `--walltime` | `06:00:00` | per array member |
+| `--concurrency` | `20` | the `%N` throttle in `-J "0-M%N"`; keep within your fairshare/queue limits |
+| `--skip-done` | off | omit work units whose output already has a complete `mea_manifest.json` — use this to top up a campaign after new sweeps finish, without reprocessing what's already done |
+| `--extra-args "..."` | — | forwarded verbatim to every array member's `process_campaign.py` call, e.g. `--extra-args "--plots"` |
+| `--dry-run` | off | build the manifest and print the `qsub` command without submitting — use this to sanity-check the plan first |
+
+**Always `--dry-run` first** on a new campaign layout — it costs nothing and
+shows you exactly how many work units were found and the array range that
+will be submitted:
+
+```bash
+./launch_mea_array.sh --out-root /path/to/mea_out \
+    --glob '/path/to/Main/campaign_*' --dry-run
+```
+
+Monitor with the job ID `launch_mea_array.sh` prints:
+
+```bash
+qstat -t <JID>          # per-array-member status
+qstat -u $USER           # everything you have queued/running
+```
+
+Each array member's stdout/stderr (via `#PBS -k eo`) will show which
+`campaign`/`out` pair it was assigned and its worker count — useful for
+tracing a specific failed array index back to a specific sweep directory.
 
 ---
 
