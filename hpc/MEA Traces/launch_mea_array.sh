@@ -34,6 +34,13 @@
 #   --queue NAME            PBS queue (default: cpu)
 #   --ncpus N               cores per array member (default: 48)
 #   --walltime HH:MM:SS     per array member (default: 06:00:00)
+#   --conda-prefix PATH     full path to the python env the JOBS should use.
+#                          OPTIONAL: submit_mea_array.sh already activates a
+#                          built-in default environment internally (see
+#                          DEFAULT_ENV_NAME there). Use this only to override
+#                          that for one submission. Auto-filled from
+#                          $CONDA_PREFIX if you launch with an env active.
+#   --conda-env NAME        env NAME instead of a full path (same purpose)
 #   --concurrency N         max array members running at once (default: 20;
 #                          this is the %N throttle in -J "0-M%N", keep it
 #                          within your fairshare/queue limits)
@@ -54,6 +61,11 @@ QUEUE="cpu"
 NCPUS=48
 WALLTIME="06:00:00"
 CONCURRENCY=20
+# If an env is active in THIS shell, forward it to the jobs as an override.
+# If not, that is fine: submit_mea_array.sh activates its own built-in default
+# (DEFAULT_ENV_NAME) internally, so jobs never rely on inheriting anything.
+CONDA_PREFIX_ARG="${CONDA_PREFIX:-}"
+CONDA_ENV_ARG="${CONDA_DEFAULT_ENV:-}"
 MANIFEST="./mea_manifest_$(date +%Y%m%d_%H%M%S).tsv"
 EXTRA_ARGS=""
 SKIP_DONE=""
@@ -72,6 +84,8 @@ while [ $# -gt 0 ]; do
         --walltime) WALLTIME="$2"; shift 2 ;;
         --concurrency) CONCURRENCY="$2"; shift 2 ;;
         --manifest) MANIFEST="$2"; shift 2 ;;
+        --conda-prefix) CONDA_PREFIX_ARG="$2"; shift 2 ;;
+        --conda-env) CONDA_ENV_ARG="$2"; shift 2 ;;
         --skip-done) SKIP_DONE="--skip-done"; shift ;;
         --extra-args) EXTRA_ARGS="$2"; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
@@ -117,6 +131,16 @@ fi
 
 # --- 3. submit ------------------------------------------------------------
 QSUB_V="MANIFEST=$(realpath "$MANIFEST"),LIB=$(realpath "$LIB")"
+if [ -n "$CONDA_PREFIX_ARG" ]; then
+    QSUB_V="${QSUB_V},ENV_PREFIX=${CONDA_PREFIX_ARG}"
+    echo "[launch] jobs will use env prefix: ${CONDA_PREFIX_ARG}"
+elif [ -n "$CONDA_ENV_ARG" ]; then
+    QSUB_V="${QSUB_V},CONDA_ENV=${CONDA_ENV_ARG}"
+    echo "[launch] jobs will use env name: ${CONDA_ENV_ARG}"
+else
+    echo "[launch] no env override given; jobs will activate their built-in"
+    echo "[launch] default internally (DEFAULT_ENV_NAME in submit_mea_array.sh)"
+fi
 if [ -n "$EXTRA_ARGS" ]; then
     QSUB_V="${QSUB_V},EXTRA_ARGS=${EXTRA_ARGS}"
 fi
