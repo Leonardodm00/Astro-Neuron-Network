@@ -350,11 +350,38 @@ def _worker(pack):
 def walk_campaign(campaign_dir, out_dir, lib_path, cfg, workers=1,
                   save_traces_first=False, limit_iters=None, limit_topos=None):
     os.makedirs(out_dir, exist_ok=True)
+
+    # Diagnose the input path BEFORE globbing. glob() returns [] both for a
+    # path that does not exist and for one that exists but holds no topo_*,
+    # so globbing first would collapse a simple typo (by far the most common
+    # cause) into a misleading "no topo_* directories" message.
+    if not os.path.exists(campaign_dir):
+        parent = os.path.dirname(campaign_dir.rstrip(os.sep))
+        msg = ['campaign path does not exist: ' + campaign_dir]
+        if parent and os.path.isdir(parent):
+            siblings = sorted(os.listdir(parent))[:20]
+            msg.append('parent %s contains: %s'
+                       % (parent, ', '.join(siblings) if siblings else '(empty)'))
+        else:
+            msg.append('parent directory %s does not exist either -- check the '
+                       'path from the top (username, campaign name, task number)'
+                       % parent)
+        raise SystemExit('\n'.join(msg))
+    if not os.path.isdir(campaign_dir):
+        raise SystemExit('campaign path is not a directory: ' + campaign_dir)
+
     topo_dirs = sorted(glob.glob(os.path.join(campaign_dir, 'topo_*')))
+    if not topo_dirs:
+        entries = sorted(os.listdir(campaign_dir))[:20]
+        raise SystemExit(
+            'no topo_* directories under ' + campaign_dir + '\n'
+            'this directory contains: '
+            + (', '.join(entries) if entries else '(empty)') + '\n'
+            'NB: --campaign must point at the directory that DIRECTLY contains '
+            'topo_*/ (a sweep_<TAG>_task<IDX> dir), not the campaign_<TAG> root '
+            'above it.')
     if limit_topos is not None:
         topo_dirs = topo_dirs[:limit_topos]
-    if not topo_dirs:
-        raise SystemExit('no topo_* directories under ' + campaign_dir)
 
     # persist the library once so workers load an identical copy
     lib_path_abs = os.path.abspath(lib_path)
