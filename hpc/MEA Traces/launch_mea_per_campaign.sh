@@ -35,7 +35,12 @@
 #
 # All other options match launch_mea_array.sh exactly (they are forwarded to
 # every per-campaign call): --lib --queue --ncpus --walltime --concurrency
-# --skip-done --extra-args --dry-run. Run with --help for the full list, or
+# --conda-prefix --conda-env --skip-done --extra-args --dry-run.
+# NOTE on --conda-prefix/--conda-env: compute nodes do NOT inherit your login
+# shell's conda environment. Both launchers auto-detect $CONDA_PREFIX from the
+# submitting shell, so ACTIVATE YOUR ENV BEFORE LAUNCHING, or pass the path
+# explicitly -- otherwise jobs fall back to the system python3 (often 3.6,
+# too old: this pipeline needs >= 3.7). Run with --help for the full list, or
 # see launch_mea_array.sh --help -- the semantics are identical, just applied
 # once per campaign instead of once overall.
 ##########################################################################
@@ -54,6 +59,11 @@ CONCURRENCY=20
 SKIP_DONE=""
 EXTRA_ARGS=""
 DRY_RUN=0
+# Auto-detected from the submitting shell; forwarded to every per-campaign
+# launch so the compute nodes use the same interpreter (they inherit none of
+# it otherwise -- see launch_mea_array.sh --conda-prefix).
+CONDA_PREFIX_ARG="${CONDA_PREFIX:-}"
+CONDA_ENV_ARG="${CONDA_DEFAULT_ENV:-}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -65,6 +75,8 @@ while [ $# -gt 0 ]; do
         --ncpus) NCPUS="$2"; shift 2 ;;
         --walltime) WALLTIME="$2"; shift 2 ;;
         --concurrency) CONCURRENCY="$2"; shift 2 ;;
+        --conda-prefix) CONDA_PREFIX_ARG="$2"; shift 2 ;;
+        --conda-env) CONDA_ENV_ARG="$2"; shift 2 ;;
         --skip-done) SKIP_DONE="--skip-done"; shift ;;
         --extra-args) EXTRA_ARGS="$2"; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
@@ -118,6 +130,8 @@ for CROOT in "${CAMPAIGN_ROOTS[@]}"; do
     ARGS=(--out-root "$OUT_ROOT" --campaign-root "$CROOT" --lib "$LIB"
           --queue "$QUEUE" --ncpus "$NCPUS" --walltime "$WALLTIME"
           --concurrency "$CONCURRENCY" --manifest "$MANIFEST")
+    [ -n "$CONDA_PREFIX_ARG" ] && ARGS+=(--conda-prefix "$CONDA_PREFIX_ARG")
+    [ -n "$CONDA_ENV_ARG" ] && ARGS+=(--conda-env "$CONDA_ENV_ARG")
     [ -n "$SKIP_DONE" ] && ARGS+=(--skip-done)
     [ -n "$EXTRA_ARGS" ] && ARGS+=(--extra-args "$EXTRA_ARGS")
     [ "$DRY_RUN" -eq 1 ] && ARGS+=(--dry-run)
