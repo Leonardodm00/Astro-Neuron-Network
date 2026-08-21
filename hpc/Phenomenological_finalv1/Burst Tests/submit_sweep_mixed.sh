@@ -24,9 +24,22 @@
 ##########################################################################
 
 # --- REQUIRED from -v (guarded) -----------------------------------------
-if [ -z "$NODETAG" ] || [ -z "$SEED_BASE" ]; then
-    echo "ERROR: submit via launch_campaign.sh (NODETAG and SEED_BASE must be"
-    echo "       passed with qsub -v). Refusing to run un-tagged." >&2
+if [ -z "$NODETAG" ]; then
+    echo "ERROR: submit via launch_campaign.sh (NODETAG must be passed with"
+    echo "       qsub -v). Refusing to run un-tagged." >&2
+    exit 2
+fi
+# SEED_BASE is now OPTIONAL, and that is deliberate. When it is absent this
+# script does NOT pass --seed_master, and HPC_main_sweep._resolve_seed_master
+# derives a seed from PBS_JOBID (or OS entropy for an array sub-job, whose
+# PBS_JOBID is not a bare integer). The resolved value is written to
+# job_args.json as _resolved_seed_master, so the run stays replayable after the
+# fact even though it was not predetermined.
+#
+# The point: a missing seed base now produces INDEPENDENT draws rather than a
+# silent replay of whatever constant was last hardcoded. Fail safe, not silent.
+if [ -n "$SEED_BASE" ] && ! [ "$SEED_BASE" -ge 0 ] 2>/dev/null; then
+    echo "ERROR: SEED_BASE=${SEED_BASE} is not a non-negative integer." >&2
     exit 2
 fi
 IDX="${PBS_ARRAY_INDEX:-0}"          # 0 if run as a non-array single task
@@ -112,7 +125,13 @@ else
 fi
 mkdir -p "$SCRATCH_ROOT"
 
-SEED_MASTER=$(( SEED_BASE + IDX ))
+if [ -n "$SEED_BASE" ]; then
+    SEED_MASTER=$(( SEED_BASE + IDX ))
+    SEED_SOURCE="launcher base ${SEED_BASE} + idx ${IDX}"
+else
+    SEED_MASTER=""
+    SEED_SOURCE="NOT SET -- worker derives from PBS_JOBID/OS entropy"
+fi
 
 echo "============================================================"
 echo "Campaign / node / task : ${CAMPAIGN_TAG} / ${NODETAG} / ${IDX}"
@@ -120,7 +139,8 @@ echo "Node / JobID / Queue   : $(hostname) / $PBS_JOBID / ${PBS_O_QUEUE:-?}"
 echo "N_WORKERS (= ncpus)    : $N_WORKERS"
 echo "N_TOPOLOGIES           : $N_TOPOLOGIES   k=$N_PARAMS_PER_WORKER"
 echo "sims this task         : $((N_TOPOLOGIES * N_WORKERS * N_PARAMS_PER_WORKER))"
-echo "SEED_MASTER            : $SEED_MASTER   (base $SEED_BASE + idx $IDX)"
+echo "LAUNCH_ID              : ${LAUNCH_ID:-<not set>}"
+echo "SEED_MASTER            : ${SEED_MASTER:-<deferred>}   ($SEED_SOURCE)"
 echo "Output dir             : $OUTPUT_DIR"
 echo "SWEEP_GROUP            : $SWEEP_GROUP"
 echo "CONN_RULE              : $CONN_RULE   (weibull: kernel drawn per-topology; periodic=$CONN_PERIODIC)"
@@ -148,13 +168,13 @@ ARGS=(
     --gj_max_dist          "$GJ_MAX_DIST"
     --stoa_cutoff          "$STOA_CUTOFF"
     --stoa_sigma           "$STOA_SIGMA"
-    --seed_master          "$SEED_MASTER"
     --seed_device          "$SEED_DEVICE"
     --seed_neuron          "$SEED_NEURON"
     --seed_synapse         "$SEED_SYNAPSE"
     --seed_astro           "$SEED_ASTRO"
     --dpi                  "$DPI"
 )
+[ -n "$SEED_MASTER" ] && ARGS+=(--seed_master "$SEED_MASTER")   # else worker derives it
 [ -n "$SYN_PDIST_CSV" ] && ARGS+=(--syn_pdist_csv "$SYN_PDIST_CSV")
 [ "$CONN_PERIODIC" -eq 1 ] && ARGS+=(--conn_periodic)   # weibull-only; no-op under flat
 [ -n "$DENSITY" ] && ARGS+=(--density "$DENSITY")        # derive Nn from C_MAX if set

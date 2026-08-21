@@ -180,6 +180,175 @@ def resolve_sweep_group(name):                                       # noqa: F81
 
 
 # =============================================================================
+# CONNECTIVITY-PARAMETER RECORDING: swept / consumed / fixed / inert
+# =============================================================================
+# Governing principle: RECORD WHAT WAS CONSUMED, NOT MERELY WHAT WAS SAMPLED,
+# and where the two differ, say so in the record itself. Deleting a value is
+# not sufficient on its own: a silently absent key is indistinguishable from a
+# key that a future reader forgot to write, so every omission is DECLARED.
+#
+# Why this exists. Under --conn_rule weibull the connectivity comes from the
+# stretched-exponential kernel and the resulting edge list is handed to the
+# network builder explicitly. Two branches therefore never execute:
+#   * build_topology()   takes its 'weibull' branch, not the Bernoulli branch
+#                        that reads conn_prob (HPC_single_run.py);
+#   * Neuronal_Network() takes its isinstance(connections, list) branch, so
+#                        S.connect(p=params_Syn['conn_prob'], ...) is dead
+#                        code (ASD_fun_BD_cpp.py).
+# A conn_prob value drawn under that rule is CAUSALLY INERT: it varies, it is
+# recorded, and it changes nothing, so p(x | theta) does not depend on it.
+# That is more dangerous than a constant, not less. A constant axis gives a
+# degenerate (delta) prior that breaks a density estimator loudly; an inert
+# axis is learned CORRECTLY as p(theta_j | x) = p(theta_j) for each fixed x,
+# so nothing crashes while flow capacity is spent on a coordinate carrying no
+# information, SBC passes trivially on it, and posterior contraction along it
+# is zero by construction. A variance scan cannot tell the two apart: the
+# column varies perfectly well, it is simply uninformative about x.
+
+# The value carried in ASD_fun_BD_cpp.get_Synparam()'s parameter dictionary.
+# Under the weibull rule this constant is passed through INSTEAD of a draw, so
+# that no None ever reaches a Brian2 namespace: get_Synparam() ends with an
+# unconditional params.update(kwargs) and its result is splatted into the
+# Synapses namespace, so a None would be injected verbatim into a code path
+# that has never carried one. Never read under weibull; declared as fixed AND
+# inert by build_axis_declaration() below. Keep in sync with get_Synparam.
+CONN_PROB_LIBRARY_DEFAULT = 0.107
+
+# Which topology-level connectivity axes are causally live, per rule.
+CONN_AXES_BY_RULE = {
+    'flat':    ('conn_prob',),
+    'weibull': ('p0_conn', 'd0_conn', 'beta_conn'),
+}
+
+
+def conn_record_keys(conn_rule, conn_prob, p0_conn, d0_conn, beta_conn):
+    """
+    Return exactly the connectivity keys that are causally live under
+    `conn_rule`, as a dict of name -> float.
+
+    Keys that are not live are ABSENT rather than NaN or JSON null. A NaN in a
+    numeric column propagates silently through anything that does not
+    explicitly check for it, and 'k in job_args' is true for a null; an absent
+    key raises instead. 'conn_rule' is always written alongside these, so a
+    consumer branches on it rather than guessing from the key set.
+    """
+    if conn_rule == 'flat':
+        return {'conn_prob': float(conn_prob)}
+    if conn_rule == 'weibull':
+        return {'p0_conn':   float(p0_conn),
+                'd0_conn':   float(d0_conn),
+                'beta_conn': float(beta_conn)}
+    raise ValueError(f"unknown conn_rule {conn_rule!r}; expected 'flat' or 'weibull'")
+
+
+def build_axis_declaration(args, active_idx):
+    """
+    Declare, at launch time, which axes were SWEPT, which the simulator
+    actually CONSUMES, which are held FIXED, and which are INERT (drawn but
+    not read, or deliberately not drawn).
+
+    This information is known here and is unrecoverable from the output
+    afterwards without re-reading the simulator source, which is precisely why
+    it is written rather than re-derived downstream. Mirrored into
+    job_args.json ('_axis_declaration') and manifest.json ('axis_declaration').
+
+    Returns a JSON-serialisable dict.
+    """
+    active_names = [PARAM_NAMES[i] for i in sorted(active_idx)]
+    inactive_idx = sorted(set(range(N_DIMS)) - set(active_idx))
+
+    swept, consumed, fixed, inert = {}, [], {}, {}
+
+    # ---- run_args axes (the 36-D registry) ---------------------------------
+    for name in active_names:
+        k = PARAM_NAMES.index(name)
+        swept[name] = {
+            'level': 'run_args',
+            'low':   float(PARAM_BOUNDS[k][0]),
+            'high':  float(PARAM_BOUNDS[k][1]),
+            'log':   bool(k in LOG_PARAMS),
+        }
+    for k in inactive_idx:
+        fixed[PARAM_NAMES[k]] = float(NOMINAL_PARAMS[k])
+
+    # Astrocyte axes are inert whenever mode != 'Full': no Astrocyte_Group,
+    # Gliotransmission or Synapse_to_astro object is instantiated, so nothing
+    # reads them. Listed only when they were actually swept -- with
+    # --sweep_group neuron_synapse they are frozen instead, and appear in
+    # fixed_axes above.
+    astro_inert = ([n for n in active_names if n in _ASTRO_FREE]
+                   if args.mode != 'Full' else [])
+    for name in astro_inert:
+        inert[name] = ('swept but never read: mode=%s instantiates no '
+                       'astrocyte, gliotransmission or synapse-to-astrocyte '
+                       'group, so no astrocyte parameter reaches the network '
+                       'state' % args.mode)
+    consumed.extend(n for n in active_names if n not in astro_inert)
+
+    # ---- topology-level connectivity axes ----------------------------------
+    if args.conn_rule not in CONN_AXES_BY_RULE:
+        raise ValueError(f"unknown conn_rule {args.conn_rule!r}")
+    live = CONN_AXES_BY_RULE[args.conn_rule]
+    dead = tuple(n for rule, names in CONN_AXES_BY_RULE.items()
+                 for n in names if rule != args.conn_rule)
+
+    if args.conn_rule == 'flat':
+        swept['conn_prob'] = {'level': 'topology',
+                              'low':   float(args.conn_prob_lo),
+                              'high':  float(args.conn_prob_hi),
+                              'log':   False}
+    else:
+        for j, name in enumerate(('p0_conn', 'd0_conn', 'beta_conn')):
+            swept[name] = {'level': 'topology',
+                           'low':   float(KERNEL_BOUNDS[j][0]),
+                           'high':  float(KERNEL_BOUNDS[j][1]),
+                           'log':   False}
+    consumed.extend(live)
+
+    for name in dead:
+        if name == 'conn_prob':
+            inert[name] = (
+                'NOT DRAWN under conn_rule=weibull. The kernel supplies the '
+                'edge list, so build_topology takes its weibull branch and '
+                'Neuronal_Network takes its explicit-edge-list branch, '
+                'leaving S.connect(p=conn_prob) dead. Held at the '
+                'get_Synparam library default and never read.')
+            fixed[name] = float(CONN_PROB_LIBRARY_DEFAULT)
+        else:
+            inert[name] = ('NOT DRAWN under conn_rule=flat: the '
+                           'stretched-exponential kernel is not used.')
+
+    # conn_periodic is a campaign-level switch, read only by the weibull
+    # kernel's minimum-image distance computation.
+    fixed['conn_periodic'] = bool(args.conn_periodic)
+    if args.conn_rule == 'weibull':
+        consumed.append('conn_periodic')
+    else:
+        inert['conn_periodic'] = ('not read under conn_rule=flat: the flat '
+                                  'Bernoulli rule is distance-independent')
+
+    # Independent sample size along topology-level axes is the number of
+    # topologies, NOT the number of rows: theta_topo is drawn once per
+    # topology and every row within that topology shares it exactly.
+    return {
+        'schema_version':          1,
+        'generated_by':            'HPC_main_sweep.build_axis_declaration',
+        'mode':                    args.mode,
+        'sweep_group':             args.sweep_group,
+        'conn_rule':               args.conn_rule,
+        'n_swept':                 len(swept),
+        'n_consumed':              len(consumed),
+        'n_topology_level_swept':  sum(1 for v in swept.values()
+                                       if v['level'] == 'topology'),
+        'n_topologies_requested':  int(args.n_topologies),
+        'swept_axes':              swept,
+        'consumed_axes':           sorted(consumed),
+        'fixed_axes':              fixed,
+        'inert_axes':              inert,
+    }
+
+
+# =============================================================================
 # Parameter sampling -- 30-D box (expanded from the original 14-D)
 # =============================================================================
 
@@ -537,19 +706,22 @@ def rebuild_manifest(out_dir) -> dict:
         n_total_failures += len(failures)
 
     # Surface sweep-group provenance (which axes varied) from job_args.json.
-    sweep_group    = 'all'
-    active_indices = list(range(N_DIMS))
+    sweep_group      = 'all'
+    active_indices   = list(range(N_DIMS))
+    axis_declaration = None
     _ja = root / 'job_args.json'
     if _ja.exists():
         try:
             _jd = json.loads(_ja.read_text())
             sweep_group    = _jd.get('_sweep_group', sweep_group)
-            active_indices = _jd.get('_active_indices', active_indices)
+            active_indices   = _jd.get('_active_indices', active_indices)
+            axis_declaration = _jd.get('_axis_declaration', axis_declaration)
         except Exception:
             pass
 
     manifest = {
-        'manifest_version':                 3,        # v1=14-D HH; v2=30-D HH; v3=34-D CAdEx
+        'manifest_version':                 4,        # v1=14-D HH; v2=30-D HH; v3=34-D CAdEx;
+                                                      # v4=+axis_declaration, rule-dependent conn keys
         'n_dims':                           int(N_DIMS),
         'updated_at':                       time.strftime('%Y-%m-%dT%H:%M:%S'),
         'job_id':                           os.environ.get('PBS_JOBID', ''),
@@ -563,6 +735,11 @@ def rebuild_manifest(out_dir) -> dict:
         'sweep_group':                      sweep_group,
         'active_indices':                   sorted(int(i) for i in active_indices),
         'active_param_names':               [PARAM_NAMES[i] for i in sorted(active_indices)],
+        # Authoritative swept/consumed/fixed/inert statement for this run. Read
+        # THIS rather than inferring the label axis set from column variance:
+        # a causally inert axis varies perfectly well and a variance scan
+        # cannot distinguish it from an informative one.
+        'axis_declaration':                 axis_declaration,
         # __ theta (inference) coordinate: SBI prior box + provenance __________
         # Build the prior over THESE bounds (BoxUniform(low=col0, high=col1)),
         # train on the per-iter 'theta' arrays, and map posterior samples back
@@ -752,7 +929,9 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
         Simulated_network=cli['mode'],
         Decay_type='Double_exp',
         synapse_type='facilitating',
-        conn_prob_=conn_prob,                       # this topology's conn_prob
+        conn_prob_=conn_prob,                       # flat: this topology's draw;
+                                                    # weibull: library default,
+                                                    # never read (dead branch)
         seed_neu=cli['seed_neuron'],
         seed_syn=cli['seed_synapse'],
         connections=[topo['S_i'], topo['S_j']],
@@ -938,12 +1117,10 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
                 'topo_idx':    int(topo_idx),
                 'iter_idx':    int(iter_idx),
                 'worker_id':   int(worker_id),
-                'conn_prob':   float(conn_prob),
                 'conn_rule':   conn_rule,
                 'conn_periodic': bool(conn_periodic),
-                'p0_conn':     (None if conn_rule != 'weibull' else float(p0_conn)),
-                'd0_conn':     (None if conn_rule != 'weibull' else float(d0_conn)),
-                'beta_conn':   (None if conn_rule != 'weibull' else float(beta_conn)),
+                **conn_record_keys(conn_rule, conn_prob,
+                                   p0_conn, d0_conn, beta_conn),
                 'params':      params.tolist(),
                 'theta':       theta.tolist(),
                 'param_names': PARAM_NAMES,
@@ -1005,12 +1182,13 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
             npz_path,
             params=params,                       # NATURAL units (human/biophysical)
             theta=theta,                         # inference coords (SBI training label)
-            conn_prob=np.float64(conn_prob),
             conn_rule=np.array(conn_rule),       # topology provenance (NOT in theta)
             conn_periodic=np.bool_(conn_periodic),
-            p0_conn=np.float64(p0_conn),         # NaN under the flat rule
-            d0_conn=np.float64(d0_conn),
-            beta_conn=np.float64(beta_conn),
+            # Only the causally live connectivity keys under this rule. Absent
+            # is deliberate and declared; NaN would propagate silently.
+            **{_k: np.float64(_v) for _k, _v in
+               conn_record_keys(conn_rule, conn_prob,
+                                p0_conn, d0_conn, beta_conn).items()},
             topo_idx=np.int32(topo_idx),
             seed_run=np.int64(seed_run_saved),
             noise_mode=np.array(noise_mode),     # 'fresh' or 'paired'
@@ -1051,12 +1229,10 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
             'topo_idx':           int(topo_idx),
             'iter_idx':           int(iter_idx),
             'worker_id':          int(worker_id),
-            'conn_prob':          float(conn_prob),
             'conn_rule':          conn_rule,
             'conn_periodic':      bool(conn_periodic),
-            'p0_conn':            (None if conn_rule != 'weibull' else float(p0_conn)),
-            'd0_conn':            (None if conn_rule != 'weibull' else float(d0_conn)),
-            'beta_conn':          (None if conn_rule != 'weibull' else float(beta_conn)),
+            **conn_record_keys(conn_rule, conn_prob,
+                               p0_conn, d0_conn, beta_conn),
             'params':             params.tolist(),
             'theta':              theta.tolist(),
             'param_names':        PARAM_NAMES,
@@ -1337,6 +1513,16 @@ def main():
 
     _print_banner(args, n_workers, seed_master)
 
+    # Surface the swept/consumed/inert split at launch, so an inert axis is
+    # visible in the .o file rather than discovered months later downstream.
+    _axis_decl = build_axis_declaration(args, active_idx)
+    print(f"[main] axes: {_axis_decl['n_swept']} swept, "
+          f"{_axis_decl['n_consumed']} consumed by the simulator, "
+          f"{len(_axis_decl['fixed_axes'])} fixed, "
+          f"{len(_axis_decl['inert_axes'])} inert.")
+    for _name, _why in sorted(_axis_decl['inert_axes'].items()):
+        print(f"[main]   INERT {_name}: {_why}")
+
     # __ Save the resolved CLI args at the job root (for replay) ______________
     args_dict = vars(args).copy()
     args_dict['_resolved_n_workers']   = n_workers
@@ -1347,6 +1533,9 @@ def main():
     args_dict['_sweep_group']          = args.sweep_group
     args_dict['_active_indices']       = active_idx
     args_dict['_active_param_names']   = [PARAM_NAMES[i] for i in active_idx]
+    # Record what the simulator CONSUMES, not merely what the sweep SAMPLES.
+    # Known only here; unrecoverable from the output afterwards.
+    args_dict['_axis_declaration']     = build_axis_declaration(args, active_idx)
     _atomic_write_json(os.path.join(args.out_dir, 'job_args.json'), args_dict)
 
     # __ Scratch root for cpp_standalone build dirs ___________________________
@@ -1392,7 +1581,22 @@ def main():
         os.makedirs(topo_dir, exist_ok=True)
 
         # 1) Outer-loop random draws -----------------------------------------
-        conn_prob       = float(master_rng.uniform(args.conn_prob_lo, args.conn_prob_hi))
+        # conn_prob is drawn ONLY under the flat rule, where build_topology's
+        # Bernoulli branch actually reads it. Under weibull it would be a
+        # causally inert draw -- recorded, varying, and connected to nothing
+        # (see build_axis_declaration above) -- so it is not drawn at all, and
+        # the library default is passed through instead of a None (which
+        # get_Synparam would inject verbatim into the Brian2 namespace).
+        #
+        # DELIBERATE CONSEQUENCE: this changes master_rng consumption under
+        # weibull, so weibull campaigns launched after this change are NOT
+        # seed-reproducible against campaigns launched before it. Flat runs are
+        # bit-identical to before: same draw, same position in the stream.
+        if args.conn_rule == 'flat':
+            conn_prob   = float(master_rng.uniform(args.conn_prob_lo,
+                                                   args.conn_prob_hi))
+        else:
+            conn_prob   = CONN_PROB_LIBRARY_DEFAULT     # never read; see above
         # Weibull kernel draw. GUARDED by the rule: under 'flat' we do NOT touch
         # master_rng here, so the seed stream (hence topo_seed_base and every
         # per-topology seed) is byte-identical to a pre-feature flat run. Under
@@ -1438,7 +1642,7 @@ def main():
             )
         except Exception as e:
             print(f'[main] topo_{topo_idx:05d}: FAILED to build topology '
-                  f'(conn_prob={conn_prob:.4f}): {e}', flush=True)
+                  f'(conn_rule={args.conn_rule}): {e}', flush=True)
             traceback.print_exc()
             continue
         t_topo = time.time() - t0
@@ -1456,12 +1660,13 @@ def main():
         Na_eff = int(args.Na) if args.mode == 'Full' else 0
         topo_meta = {
             'topo_idx':          int(topo_idx),
-            'conn_prob':         float(conn_prob),
             'conn_rule':         args.conn_rule,
             'conn_periodic':     bool(args.conn_periodic),
-            'p0_conn':           (None if args.conn_rule != 'weibull' else float(p0_k)),
-            'd0_conn':           (None if args.conn_rule != 'weibull' else float(d0_k)),
-            'beta_conn':         (None if args.conn_rule != 'weibull' else float(beta_k)),
+            # Exactly the keys that are causally live under this rule. The
+            # rest are ABSENT, not NaN and not JSON null. Branch on
+            # 'conn_rule'; see manifest.json 'axis_declaration' for the
+            # authoritative swept/consumed/fixed/inert statement.
+            **conn_record_keys(args.conn_rule, conn_prob, p0_k, d0_k, beta_k),
             'topo_seed_base':    int(topo_seed_base),
             'seed_neuron':       int(seed_neuron_k),
             'seed_synapse':      int(seed_synapse_k),
@@ -1547,7 +1752,10 @@ def main():
             })
 
         # 6) Dispatch ---------------------------------------------------------
-        print(f'\n[main] topo_{topo_idx:05d} | conn_prob = {conn_prob:.4f} | '
+        _conn_desc = (f'conn_prob = {conn_prob:.4f}'
+                      if args.conn_rule == 'flat'
+                      else f'kernel p0={p0_k:.3f} d0={d0_k:.1f} beta={beta_k:.2f}')
+        print(f'\n[main] topo_{topo_idx:05d} | {_conn_desc} | '
               f'n_syn={len(topo["S_i"])}, n_gj={len(topo["GJ_i"])}, '
               f'n_stoa={len(topo["StoA_i"])}', flush=True)
         print(f'[main]   launching {len(tasks)} workers x '
