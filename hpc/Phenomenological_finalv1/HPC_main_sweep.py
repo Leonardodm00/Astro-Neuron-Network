@@ -335,11 +335,14 @@ def build_axis_declaration(args, active_idx):
 # Rows 12/13/30 (DeltaT/VT/gL) are FROZEN (never sampled) but kept for index
 # alignment; row 34 (I_inj) is the new swept per-neuron bias SCALE.
 PARAM_BOUNDS = np.array([
-    (1.0,    15.0),     # 0  Sigma      [mV]   noise amplitude                         (log)
+    (3.0,    15.0),     # 0  Sigma      [mV]   noise amplitude   (LINEAR: log10(15/3)=0.70 < 1;
+                        #                      restored to the v1-v9 box. Lowering lo to 1.0
+                        #                      makes the span >= 1 decade and FLIPS this axis
+                        #                      to log via the LOG_PARAMS rule below.)
     (0.01,   10.0),     # 1  gbarA      [nS]   max subthreshold adaptation g_barA      (log)  [widened for swept-Cm regime]
     (2.0,    150.0),     # 2  EC50_ampa  [mmole]  brackets B_tot 0.2-2.5 mM
     (0.5,    50.0),     # 3  EC50_nmda  [mmole]  brackets B_tot 0.2-2.5 mM
-    (10.0,   1000.0),   # 4  tauA       [ms]   adaptation time constant tau_A          (log)
+    (10.0,   2000.0),   # 4  tauA       [ms]   adaptation time constant tau_A          (log)
     (1e-4,   0.05),     # 5  U_0_ar     [dimensionless]  async release prob
     (0.1,    1.0),      # 6  U_max      [1/ms]
     (0.1,    1.0),      # 7  U_0_sr     [dimensionless]
@@ -349,9 +352,9 @@ PARAM_BOUNDS = np.array([
     (0.1,    1.0),      # 11 alpha_syn  [dimensionless]
     (2.0,    2.0),      # 12 DeltaT     [mV]   FROZEN at 2 mV (spike-initiation slope; Bucket-A quartet)
     (-51.0, -51.0),     # 13 VT         [mV]   FROZEN at -51.0 mV (GROUNDED Gunhanlar AP thr -50.9; gap=7.2mV)
-    (0.05,    5.0),     # 14 g_ampa     [nS]   widened x5 for swept Cm (EPSP peak ~ g_ampa/Cm); summed drive ~ R_in
-    (0.01,    1.0),     # 15 g_nmda     [nS]   Doorn Table 1 [0, 1]; floor 0.01 to keep log axis valid
-    (0.001,   4.0),     # 16 delta_gA   [nS]   recalibrated for swept Cm (charge-limited ~1/Cm)        (log)
+    (0.01,    5.0),     # 14 g_ampa     [nS]   restored to the v1-v9 box (was 0.05 lo: 'widened x5 for swept Cm')
+    (0.01,    5.0),     # 15 g_nmda     [nS]   restored to the v1-v9 box (was hi 1.0: 'Doorn Table 1 [0, 1]')
+    (0.005,   10.0),    # 16 delta_gA   [nS]   restored to the v1-v9 box (was [0.001, 4.0]: 'recalibrated for swept Cm')  (log)
     (0.05,   0.5),      # 17 x0         [dimensionless]  quantal vesicle size
     (0.1,    10.0),     # 18 O_G        [1/(uM s)]  mGluR binding rate
     (1e-3,   1e-1),     # 19 Omega_G    [1/s]   mGluR inactivation
@@ -369,7 +372,7 @@ PARAM_BOUNDS = np.array([
     (-73.0,  -38.0),    # 31 VA         [mV]   subthreshold adaptation activation V_A  (linear; shifted -3.0 to track VT)
     (0.1,    15.0),     # 32 DeltaA     [mV]   subthreshold adaptation slope Delta_A>0 (log)
     (-68.2,  -48.2),    # 33 VR         [mV]   reset potential V_R                     (linear; shifted -3.2 to track El)
-    (2,     7.5),     # 34 I_inj      [pA]   per-neuron bias SCALE (Doorn scale: dV=I_inj*u/g_L; linear)
+    (4.5,    7.5),      # 34 I_inj      [pA]   restored to the v1-v9 box (was lo 2: 'Doorn scale dV=I_inj*u/g_L')  (linear)
     (9.2,    34.5),     # 35 Cm         [pF]   SWEPT: tau_m=Cm/gl in [8,30] ms at gl=1.15 nS (linear -> uniform tau_m)
 ], dtype=np.float64)
 
