@@ -16,7 +16,9 @@
 set -u
 
 _HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "${_HERE}/.." && pwd)"
+# MEAMA/ is self-contained: the pipeline files (HPC_main_sweep.py etc.) live
+# IN this folder, not in its parent. REPO_DIR is therefore this folder itself.
+REPO_DIR="$_HERE"
 WORKER="${_HERE}/submit_MEAMA.sh"
 
 for f in "${REPO_DIR}/HPC_main_sweep.py" "$WORKER"; do
@@ -53,6 +55,7 @@ ASTRO_FRAC="${ASTRO_FRAC:-0.5}"      # astrocyte share of TOTAL cells
 
 # --- campaign configuration -----------------------------------------------
 CAMPAIGN_TAG="${CAMPAIGN_TAG:-meama_rho1600_full_v1}"
+CONDA_ENV="${CONDA_ENV:-brian_final}"
 MODE="${MODE:-Full}"
 SWEEP_GROUP="${SWEEP_GROUP:-tripartite}"
 CONN_RULE="${CONN_RULE:-flat}"
@@ -76,7 +79,7 @@ if [ "$SIZING_CONFIRMED" != "1" ]; then
     echo "  Run the sizing benchmark first:" >&2
     echo "      bash MEAMA/launch_bench.sh" >&2
     echo "      python MEAMA/bench_report.py \\" >&2
-    echo "          \$(ls -td ${REPO_DIR}/MEAMA/bench_out/bench_* | head -1)" >&2
+    echo "          \$(ls -td ${REPO_DIR}/bench_out/bench_* | head -1)" >&2
     echo "" >&2
     echo "  Then set C_MAX, SIMTIME, N_TOPOLOGIES_WORKER and K_PARAMS in this" >&2
     echo "  file from the report and flip SIZING_CONFIRMED=1 (or export it for" >&2
@@ -166,6 +169,7 @@ echo "density        : rho_total=${RHO_TOTAL}/mm^2, astro frac ${ASTRO_FRAC}"
 echo "                 -> rho_n=${DENSITY}, rho_a=${DENSITY_ASTRO}"
 echo "                 -> Nn=${NN_EXP}, Na=${NA_EXP}, total=$((NN_EXP + NA_EXP)) cells"
 echo "sizing         : N_TOPOLOGIES=${N_TOPOLOGIES_WORKER}  k=${K_PARAMS}"
+echo "conda env      : ${CONDA_ENV}"
 echo "target         : ${TARGET} sims  (headroom ${HEADROOM_PCT}%)"
 echo "============================================================"
 echo
@@ -189,7 +193,7 @@ for q in "${QUEUES[@]}"; do
     printf "  %-6s : %4d tasks  (<=%2d at once, %3dc)  seeds %d-%d  ~%d target sims\n" \
         "$name" "$ntasks" "$conc" "$nc" "$sb" "$hi" "$sims_q"
 
-    VARS="REPO_DIR=${REPO_DIR},NODETAG=${name},SEED_BASE=${sb}"
+    VARS="REPO_DIR=${REPO_DIR},NODETAG=${name},SEED_BASE=${sb},CONDA_ENV=${CONDA_ENV}"
     VARS="${VARS},LAUNCH_ID=${LAUNCH_ID},CAMPAIGN_TAG=${CAMPAIGN_TAG}"
     VARS="${VARS},N_TOPOLOGIES=${N_TOPOLOGIES_WORKER},N_PARAMS_PER_WORKER=${K_PARAMS}"
     VARS="${VARS},C_MAX=${C_MAX},SIMTIME=${SIMTIME}"

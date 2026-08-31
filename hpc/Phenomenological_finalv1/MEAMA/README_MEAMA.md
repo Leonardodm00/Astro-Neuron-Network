@@ -1,15 +1,41 @@
 # MEAMA -- MEA Manifold Analysis
 
-Launch code for the Full-mode tripartite campaign whose output feeds (a) SBI
-posterior fitting against control and pathological MEA recordings and (b)
-manifold analysis of the resulting summary-statistic space.
+Self-contained working folder for the Full-mode tripartite campaign whose
+output feeds (a) SBI posterior fitting against control and pathological MEA
+recordings and (b) manifold analysis of the resulting summary-statistic space.
 
-Only *launch code* lives here. Campaign **output** is written to
-`../campaign_<TAG>/`, at the repository root, because `seed_alloc.py`,
-`aggregate_sweep.py`, `status_sweep.py` and the MEA pipeline all glob
-`campaign_*/sweep_*` from there. Benchmark output is the exception: it goes to
-`MEAMA/bench_out/`, deliberately *not* named `campaign_*`, so timing artifacts
-can never be aggregated into an SBI training set.
+**Everything lives in this one folder** -- launch code, the pipeline it calls,
+and the output it produces:
+
+```
+MEAMA/
+  HPC_main_sweep.py, HPC_single_run.py, ASD_fun_BD_cpp.py   pipeline (patched:
+                                                              37-D registry,
+                                                              O_N, contact gate)
+  aggregate_sweep.py, burst_metrics.py, burst_plots.py      aggregation
+  seed_alloc.py                                             disjoint seed ranges
+  synapse_pdist.csv                                         Sholl bouton placement
+  smoke_test_param_recording.py, smoke_test_stoa_gate.py    regression checks
+  launch_campaign.sh, submit_sweep_mixed.sh                 the rho=1300 campaign
+                                                              (kept for reference;
+                                                              not used by MEAMA)
+  launch_bench.sh, bench_sizing.sh, bench_report.py         sizing benchmark
+  launch_MEAMA.sh, submit_MEAMA.sh                          the MEAMA campaign
+  README_MEAMA.md                                           this file
+  bench_out/                                                benchmark timing runs
+                                                              (never named campaign_*,
+                                                              so nothing globs it in)
+  campaign_meama_rho1600_full_v1/                           campaign output, once launched
+  artifacts/seed_ledger.tsv                                 seed disjointness ledger
+```
+
+`launch_bench.sh` and `launch_MEAMA.sh` resolve their own directory
+(`REPO_DIR`) and require the pipeline files to sit *there*, not in a parent
+directory -- if `HPC_main_sweep.py` isn't in this folder, both refuse to run
+with an explicit error naming what's missing. `seed_alloc.py`'s ledger and
+`aggregate_sweep.py`'s glob both operate on this same folder, so nothing here
+depends on where `MEAMA/` sits relative to any other checkout.
+
 
 ## Files
 
@@ -24,31 +50,31 @@ can never be aggregated into an SBI training set.
 ## Order of operations
 
 ```bash
-cd ~/Astro-Neuron-Network/hpc/Phenomenological_finalv1
+cd /davinci-1/home/ldellamea/ANN/Phenomenological/MEAMA
 
 # 0. prerequisites (the O_N port + contact gate must already be in place)
 python -c "import HPC_main_sweep as S; assert S.N_DIMS==37; \
            assert len(S.resolve_sweep_group('tripartite'))==32; print('prereqs OK')"
 
 # 1. size it  (~2-4 h wall; 6 configs x 2 topologies x 12 workers x 3 params)
-bash MEAMA/launch_bench.sh
+bash launch_bench.sh
 #    single-config smoke first, if you prefer:
 #    QUEUE=intel NCPUS=8 C_MAX_LIST=300 SIMTIME_LIST=200 N_TOPO_BENCH=1 \
-#        K_BENCH=2 N_BENCH_WORKERS=4 bash MEAMA/launch_bench.sh
+#        K_BENCH=2 N_BENCH_WORKERS=4 bash launch_bench.sh
 
 # 2. read the sizing
-python MEAMA/bench_report.py $(ls -td MEAMA/bench_out/bench_* | head -1) \
+python bench_report.py $(ls -td bench_out/bench_* | head -1) \
        --workers 192 --hours 20 --target 1000000
 
 # 3. transcribe C_MAX, SIMTIME, N_TOPOLOGIES_WORKER, K_PARAMS into
 #    launch_MEAMA.sh, then flip SIZING_CONFIRMED=1
 
 # 4. dry run, read every qsub line, then launch
-DRYRUN=1 bash MEAMA/launch_MEAMA.sh
-bash MEAMA/launch_MEAMA.sh
+DRYRUN=1 bash launch_MEAMA.sh
+bash launch_MEAMA.sh
 
 # 5. monitor
-python status_sweep.py campaign_meama_rho1600_full_v1 --target 1000000
+python aggregate_sweep.py campaign_meama_rho1600_full_v1 --write-index
 ```
 
 `launch_MEAMA.sh` refuses to submit while `SIZING_CONFIRMED=0`. That gate is

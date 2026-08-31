@@ -11,18 +11,23 @@
 #     DRYRUN=1 bash MEAMA/launch_bench.sh        # print the qsub, submit nothing
 #
 # Interactive alternative (no scheduler, for a quick single-config probe):
-#     REPO_DIR=$(pwd) C_MAX_LIST=300 SIMTIME_LIST=200 N_TOPO_BENCH=1 \
+#     REPO_DIR=$(pwd)/MEAMA C_MAX_LIST=300 SIMTIME_LIST=200 N_TOPO_BENCH=1 \
 #         K_BENCH=2 N_BENCH_WORKERS=4 bash MEAMA/bench_sizing.sh
 # =============================================================================
 set -u
 
 _HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "${_HERE}/.." && pwd)"
+# MEAMA/ is self-contained: the pipeline files (HPC_main_sweep.py etc.) live
+# IN this folder, not in its parent. REPO_DIR is therefore this folder itself.
+REPO_DIR="$_HERE"
 WORKER="${_HERE}/bench_sizing.sh"
 
 if [ ! -f "${REPO_DIR}/HPC_main_sweep.py" ]; then
-    echo "ERROR: ${REPO_DIR} does not look like Phenomenological_finalv1" >&2
-    echo "       (HPC_main_sweep.py not found). Is MEAMA/ in the right place?" >&2
+    echo "ERROR: ${REPO_DIR} does not contain HPC_main_sweep.py." >&2
+    echo "       MEAMA/ must be self-contained: HPC_main_sweep.py," >&2
+    echo "       HPC_single_run.py, ASD_fun_BD_cpp.py, aggregate_sweep.py," >&2
+    echo "       burst_metrics.py, burst_plots.py, seed_alloc.py, and" >&2
+    echo "       synapse_pdist.csv all belong in THIS folder." >&2
     exit 2
 fi
 if [ ! -f "$WORKER" ]; then
@@ -58,6 +63,7 @@ echo "MEAMA sizing benchmark"
 echo "REPO_DIR   : ${REPO_DIR}"
 echo "worker     : ${WORKER}"
 echo "queue      : ${QUEUE}   ncpus=${NCPUS}   walltime=${WALLTIME}"
+echo "conda env  : ${CONDA_ENV:-brian_final}"
 echo "grid       : C_MAX {${C_MAX_LIST}}  x  SIMTIME {${SIMTIME_LIST}}"
 echo "density    : rho_total=${RHO_TOTAL}/mm^2  ->  neurons ${RHO_N}, astro ${RHO_A}"
 echo "per config : ${N_TOPO_BENCH} topo x ${N_BENCH_WORKERS} workers x ${K_BENCH} params"
@@ -70,7 +76,9 @@ for c in $C_MAX_LIST; do
 done
 echo "============================================================"
 
-VARS="REPO_DIR=${REPO_DIR}"
+CONDA_ENV="${CONDA_ENV:-brian_final}"
+
+VARS="REPO_DIR=${REPO_DIR},CONDA_ENV=${CONDA_ENV}"
 VARS="${VARS},C_MAX_LIST=${C_MAX_LIST}"
 VARS="${VARS},SIMTIME_LIST=${SIMTIME_LIST}"
 VARS="${VARS},RHO_TOTAL=${RHO_TOTAL}"
@@ -101,4 +109,4 @@ fi
 echo "submitted: ${jid}"
 echo
 echo "watch    : qstat -u \$USER"
-echo "report   : python ${_HERE}/bench_report.py \$(ls -td ${REPO_DIR}/MEAMA/bench_out/bench_* | head -1)"
+echo "report   : python ${_HERE}/bench_report.py \$(ls -td ${REPO_DIR}/bench_out/bench_* | head -1)"

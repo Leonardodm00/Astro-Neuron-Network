@@ -102,12 +102,26 @@ cd "$REPO_DIR" || exit 2
 # this script inside an ALREADY-ACTIVE environment (an interactive login-node
 # session, or a local check). It is never set by the launchers, so a scheduled
 # job always takes the normal path.
+CONDA_ENV="${CONDA_ENV:-brian_final}"     # injected via qsub -v; see launchers
 if [ -z "${MEAMA_NO_ENV:-}" ]; then
     module load python
     source "$(conda info --base)/etc/profile.d/conda.sh"
-    conda activate brian_env
+    conda activate "$CONDA_ENV" || {
+        echo "ERROR: conda activate ${CONDA_ENV} failed." >&2; exit 2; }
+    # Guard against the module-loaded system python winning on PATH, and
+    # against a damaged environment (brian_env was found with an incomplete
+    # stdlib: lib/python3.11/urllib/ missing). Both fail loudly here rather
+    # than deep inside a simulation hours later.
+    python - <<'PYCHK' || { echo "ERROR: ${CONDA_ENV} is not usable." >&2; exit 2; }
+import os, sys, urllib, pathlib          # urllib: the exact brian_env failure
+p = os.environ.get('CONDA_PREFIX', '')
+assert p and sys.executable.startswith(p), \
+    f"python is {sys.executable}, not from CONDA_PREFIX={p}"
+import brian2, numpy
+print(f"[env] {sys.executable} | brian2 {brian2.__version__} | numpy {numpy.__version__}")
+PYCHK
 else
-    echo "[env] MEAMA_NO_ENV=1 -- using the ambient python, NOT brian_env."
+    echo "[env] MEAMA_NO_ENV=1 -- using the ambient python, NOT ${CONDA_ENV}."
 fi
 mkdir -p "$OUTPUT_DIR"
 

@@ -1,0 +1,87 @@
+MEAMA -- new environment (brian_final) + self-contained folder fix
+=================================================================
+Target: /davinci-1/home/ldellamea/ANN/Phenomenological/MEAMA/
+
+Copy EVERY file in this zip into that folder, overwriting where present.
+
+NEW
+  make_brian_final.sh   builds the brian_final conda environment
+  env_check.py          verifies an environment can actually run the pipeline
+                        (stdlib + deps + a REAL cpp_standalone compile-and-run)
+
+REPLACE
+  bench_sizing.sh       CONDA_ENV variable + fail-fast environment guard
+  submit_MEAMA.sh       same
+  launch_bench.sh       forwards CONDA_ENV via qsub -v; REPO_DIR = this folder
+  launch_MEAMA.sh       same
+  README_MEAMA.md       self-contained layout
+
+ADD (missing from your ls -- required, MEAMA is self-contained now)
+  seed_alloc.py         without it, seed disjointness is NOT checked
+  burst_metrics.py      imported by aggregate_sweep.py
+  burst_plots.py        imported by aggregate_sweep.py
+  synapse_pdist.csv     required by the topology build
+
+
+ORDER OF OPERATIONS
+===================
+
+  cd /davinci-1/home/ldellamea/ANN/Phenomenological/MEAMA
+
+  # 1. build the environment (do NOT delete brian_env yet -- its conda-meta/
+  #    is the only record of which versions produced the old campaigns, and
+  #    the script reads it for provenance before building)
+  module load proxy
+  bash make_brian_final.sh
+
+  # 2. verify it. This is the gate -- do not skip it.
+  conda activate brian_final
+  python env_check.py                 # expect 47 passed, 0 failed
+
+  # 3. re-run the pipeline checks in the new environment
+  python -c "import HPC_main_sweep as S; print(S.N_DIMS, len(S.resolve_sweep_group('tripartite')))"
+  python smoke_test_stoa_gate.py      # 36 passed
+  python smoke_test_param_recording.py # 119 checks
+  python bench_report.py --selftest   # 23 passed
+  bash launch_MEAMA.sh                # must REFUSE, exit 3
+
+  # 4. only once all of the above pass:
+  bash launch_bench.sh
+
+
+NOTES
+=====
+* The job scripts now read CONDA_ENV (default brian_final), forwarded by the
+  launchers via qsub -v. To use a different environment for one run:
+      CONDA_ENV=brian_test bash launch_bench.sh
+  There is no hardcoded environment name left to drift.
+
+* Every job now runs a guard immediately after `conda activate`: it imports
+  urllib (the exact module missing from brian_env) and asserts that
+  sys.executable lives under CONDA_PREFIX (catching the module-loaded system
+  python winning on PATH). A bad environment now fails in the first seconds of
+  a job with a clear message, not hours in.
+
+* make_brian_final.sh installs: python 3.11, numpy, scipy, pandas, matplotlib,
+  seaborn, scikit-learn, cython, gxx_linux-64 (a compiler inside the env, so
+  cpp_standalone does not depend on whichever gcc a node exposes), then brian2
+  via pip. That list came from the actual imports in HPC_main_sweep.py,
+  HPC_single_run.py, ASD_fun_BD_cpp.py, aggregate_sweep.py, burst_metrics.py,
+  burst_plots.py, seed_alloc.py and both smoke tests -- not from memory.
+
+* VERSION REPRODUCIBILITY: the script records brian_env's package versions to
+  brian_env_versions_<timestamp>.txt before building, and prints the key ones.
+  `conda list` reads conda-meta/, so it works even though that interpreter is
+  broken. If you need to reproduce the OLD campaigns numerically, pin brian2
+  and numpy to those versions. For MEAMA (a new campaign family) current
+  versions are fine -- but whichever you use becomes part of its provenance,
+  so record it.
+
+* Keep brian_env until brian_final passes env_check.py. Then remove it
+  deliberately:  conda env remove -n brian_env
+
+* Why brian_env broke is still unknown. Missing stdlib files on a shared home
+  filesystem can indicate a quota or storage problem rather than a one-off. If
+  it recurs in brian_final, check `quota -s` and raise it with the davinci
+  admins -- a rebuilt environment will not survive a filesystem that is
+  silently dropping files.
