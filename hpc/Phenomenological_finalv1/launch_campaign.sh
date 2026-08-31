@@ -17,8 +17,14 @@ WORKER="./submit_sweep_mixed.sh"
 # Campaign-wide simulation mode + parameter group, passed to every worker via -v
 # (overriding the worker's own defaults).
 #   MODE        : Full | Neuronal
-#   SWEEP_GROUP : all | neuron | synapse | astro | neuron_synapse
-#   In MODE=Full     'neuron' sweeps only the 10 CAdEx axes.
+#   SWEEP_GROUP : all | neuron | synapse | astro | neuron_synapse | tripartite
+#   In MODE=Full     'neuron' sweeps only the 9 CAdEx axes (this comment read
+#                    "10" until 2026-08; the registry resolves to 9).
+#   'tripartite' (THIS campaign) = neuron(9) + synapse(14) + the Giulia astro
+#                    table: O_beta O_3K Omega_5P I_bias(<=1.0) F C_Theta U_A
+#                    G_T O_N swept; I_Theta/omega_I frozen at nominal. 32
+#                    run_args axes; + conn_prob + stoa_gate_p at topology
+#                    level = 34 swept axes total under CONN_RULE=flat.
 #   In MODE=Neuronal astro axes are inert and synaptic axes are ALWAYS swept, so
 #                    'all'/'neuron'/'neuron_synapse' all sweep neuron+synapse (23
 #                    = 9 NEURON_PARAMS + 14 SYNAPSE_PARAMS; DeltaT/VT/gL frozen).
@@ -30,8 +36,8 @@ WORKER="./submit_sweep_mixed.sh"
 #            synapse-to-astrocyte group -- 10 causally inert axes at once.
 #            Use neuron_synapse. HPC_main_sweep now declares any such axis in
 #            manifest.json 'axis_declaration'.inert_axes and prints it at launch.
-MODE="Neuronal"
-SWEEP_GROUP="neuron_synapse"
+MODE="Full"
+SWEEP_GROUP="tripartite"
 
 # Campaign-wide connectivity rule, also passed to every worker via -v.
 #   CONN_RULE     : flat | weibull   (this SBI campaign uses weibull: every
@@ -58,24 +64,42 @@ SWEEP_GROUP="neuron_synapse"
 #                   sizes -- the scale-invariance prerequisite. Empty => the
 #                   worker's NN is used as-is. SET THIS (and C_MAX in
 #                   submit_sweep_mixed.sh) to pin density before launching.
-CONN_RULE="weibull"
+CONN_RULE="flat"                # THIS campaign: uniform Bernoulli (2 topology-level
+                                # axes incl. the gate; ~2.8k topologies at 1M sims
+                                # is thin for the 4-axis weibull alternative)
 CONN_PERIODIC=0
-DENSITY=""                  # e.g. 2000  (neurons/mm^2); empty keeps worker's NN
+DENSITY=1300                 # e.g. 2000  (neurons/mm^2); empty keeps worker's NN
+DENSITY_ASTRO=""             # astrocytes/mm^2. EMPTY preserves the worker's NA:NN
+                             # ratio (115:115 -> 1:1, i.e. Na=Nn=637 at rho=1300,
+                             # C_MAX=700). Set explicitly for a different ratio.
+
+# --- Astrocyte contact gate (topology-level axis; THIS campaign) -----------
+#   Per topology: stoa_gate_p ~ U[STOA_GATE_LO, STOA_GATE_HI]; each VIABLE
+#   synapse->astrocyte link (nearest astrocyte within STOA_CUTOFF) is then
+#   kept i.i.d. with that probability; glutamate spillover (S->A) and
+#   gliotransmission (A->S) are gated together. Prior U[0.2, 1.0] chosen
+#   2026-08 (tissue EM anchors: ~0.57 hippocampus, ~0.68-0.82 cortex; see
+#   Ventura & Harris 1999, Genoud et al. 2006). LO=HI fixes the gate;
+#   LO=HI=1.0 disables it (bit-identical to pre-gate campaigns).
+#   READ ONLY UNDER MODE=Full -- the launcher refuses a gated Neuronal launch
+#   (it would be a causally inert axis; see axis_declaration.inert_axes).
+STOA_GATE_LO=0.2
+STOA_GATE_HI=1.0
 
 # --- Campaign-wide config -------------------------------------------------
-TARGET=300000
+TARGET=1000000
 N_TOPOLOGIES_WORKER=80      # MUST match N_TOPOLOGIES in submit_sweep_mixed.sh
                             # NOTE: weibull sweeps a 3-D kernel prior on top of
                             # the 34-D run_args, so the topology budget should be
                             # raised substantially vs the flat (1-D conn_prob)
                             # campaign. Scale this with your compute decision.
-K_PARAMS=1                  # MUST match N_PARAMS_PER_WORKER in submit_sweep_mixed.sh
+K_PARAMS=5                  # MUST match N_PARAMS_PER_WORKER in submit_sweep_mixed.sh
 HEADROOM_PCT=200            # 2x oversize -- covers straggler spread and walltime
                             # kills (with real ~4-6k s/topology an 80-topo task
                             # is killed partway through a 24h slot). Tasks are
                             # concurrency-capped and qdel'd at target, so
                             # over-provisioning costs nothing.
-WALLTIME="24:00:00"
+WALLTIME="200:00:00"
 
 # --- Queues:  "name:ncpus:concurrency:seedbase" ---------------------------
 # Verified CPU compute queues on davinci-1 (ncpus from the queue cheat-sheet).
@@ -87,14 +111,28 @@ WALLTIME="24:00:00"
 #     -- see the SEED ALLOCATION block below. Do NOT hand-edit seeds here; that
 #     is the mechanism that produced 2.9x duplicated draws across v1..v9.
 QUEUES=(
-    "cfd:192:4:1000000"      # AMD EPYC Turin 192c   (lightly loaded: 3 running)
-    "egeos:192:8:2000000"    # AMD EPYC Turin 192c   (huge: 811 running, 1 queued)
-    "intel:48:10:3000000"    # Intel Sapphire  48c   (busy: 19 running, 20 queued)
-    "cpu:48:10:4000000"      # Intel Cascade   48c   (25 running, 6 queued)
+   "cfd:192:2:1000000"      # AMD EPYC Turin 192c   (lightly loaded: 3 running)
+    #"egeos:192:8:2000000"    # AMD EPYC Turin 192c   (huge: 811 running, 1 queued)
+    "intel:48:5:3000000"    # Intel Sapphire  48c   (busy: 19 running, 20 queued)
+    "cpu:48:5:4000000"      # Intel Cascade   48c   (25 running, 6 queued)
   # "amd:96:8:5000000"       # AMD EPYC Genoa 96c (dvnode057-062) -- RESTRICTED
                               #   enable only if your project has entitlement
 )
 # --------------------------------------------------------------------------
+
+# --- GUARD: a gated launch outside MODE=Full is a causally inert axis ------
+if [ "$MODE" != "Full" ]; then
+    if [ "$(awk -v a="$STOA_GATE_LO" -v b="$STOA_GATE_HI" 'BEGIN{print (a==1.0 && b==1.0) ? 1 : 0}')" != "1" ]; then
+        echo "ERROR: STOA_GATE_LO/HI=(${STOA_GATE_LO}, ${STOA_GATE_HI}) with MODE=${MODE}." >&2
+        echo "       The contact gate is only read in MODE=Full; sweeping it here" >&2
+        echo "       would draw a causally inert axis. Set both to 1.0 or use Full." >&2
+        exit 4
+    fi
+fi
+if [ "$(awk -v a="$STOA_GATE_LO" -v b="$STOA_GATE_HI" 'BEGIN{print (a>=0 && a<=b && b<=1) ? 1 : 0}')" != "1" ]; then
+    echo "ERROR: need 0 <= STOA_GATE_LO <= STOA_GATE_HI <= 1, got (${STOA_GATE_LO}, ${STOA_GATE_HI})." >&2
+    exit 4
+fi
 
 # Total throughput weight = sum of (ncpus * concurrency)
 total_weight=0
@@ -191,6 +229,7 @@ echo "Spreading ${TARGET} sims across ${#QUEUES[@]} queues"
 echo "(work proportional to ncpus*concurrency; up to ${total_weight} cores at once)"
 echo "mode = ${MODE}   sweep_group = ${SWEEP_GROUP}"
 echo "conn_rule = ${CONN_RULE}   conn_periodic = ${CONN_PERIODIC}"
+echo "stoa contact gate: p ~ U[${STOA_GATE_LO}, ${STOA_GATE_HI}] per topology"
 echo
 
 QDEL_IDS=""
@@ -218,13 +257,13 @@ for q in "${QUEUES[@]}"; do
         jid=$(qsub -q "$name" \
             -l "select=1:ncpus=${nc},walltime=${WALLTIME}" \
             -J "0-$((ntasks-1))%${conc}" \
-            -v "NODETAG=${name},SEED_BASE=${sb},LAUNCH_ID=${LAUNCH_ID},SWEEP_GROUP=${SWEEP_GROUP},MODE=${MODE},CONN_RULE=${CONN_RULE},CONN_PERIODIC=${CONN_PERIODIC},DENSITY=${DENSITY}" \
+            -v "NODETAG=${name},SEED_BASE=${sb},LAUNCH_ID=${LAUNCH_ID},SWEEP_GROUP=${SWEEP_GROUP},MODE=${MODE},CONN_RULE=${CONN_RULE},CONN_PERIODIC=${CONN_PERIODIC},DENSITY=${DENSITY},DENSITY_ASTRO=${DENSITY_ASTRO},STOA_GATE_LO=${STOA_GATE_LO},STOA_GATE_HI=${STOA_GATE_HI}" \
             "$WORKER")
     else
         # PBS rejects a single-element array; submit a plain job (IDX defaults to 0)
         jid=$(qsub -q "$name" \
             -l "select=1:ncpus=${nc},walltime=${WALLTIME}" \
-            -v "NODETAG=${name},SEED_BASE=${sb},LAUNCH_ID=${LAUNCH_ID},SWEEP_GROUP=${SWEEP_GROUP},MODE=${MODE},CONN_RULE=${CONN_RULE},CONN_PERIODIC=${CONN_PERIODIC},DENSITY=${DENSITY}" \
+            -v "NODETAG=${name},SEED_BASE=${sb},LAUNCH_ID=${LAUNCH_ID},SWEEP_GROUP=${SWEEP_GROUP},MODE=${MODE},CONN_RULE=${CONN_RULE},CONN_PERIODIC=${CONN_PERIODIC},DENSITY=${DENSITY},DENSITY_ASTRO=${DENSITY_ASTRO},STOA_GATE_LO=${STOA_GATE_LO},STOA_GATE_HI=${STOA_GATE_HI}" \
             "$WORKER")
     fi
     echo "           submitted: ${jid:-<FAILED>}"
@@ -235,6 +274,6 @@ echo
 echo "  max yield across all queues: ${GRAND_MAX} sims  (target ${TARGET})"
 echo
 echo "Monitor combined progress:"
-echo "    python status_sweep.py campaign_cadex_hhgap_v1 --target ${TARGET}"
+echo "    python status_sweep.py campaign_${CAMPAIGN_TAG:-<TAG>} --target ${TARGET}"
 echo "Stop ALL remaining subjobs once you reach ${TARGET}:"
 echo "    qdel${QDEL_IDS}"

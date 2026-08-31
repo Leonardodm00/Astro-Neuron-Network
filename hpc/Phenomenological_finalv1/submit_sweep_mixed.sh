@@ -2,7 +2,7 @@
 #PBS -S /bin/bash
 #PBS -N asn_campaign
 #PBS -k eo
-#PBS -l walltime=24:00:00
+#PBS -l walltime=40:00:00
 ##########################################################################
 # Resource-AGNOSTIC worker for the 300k campaign.
 #
@@ -51,10 +51,13 @@ IDX="${PBS_ARRAY_INDEX:-0}"          # 0 if run as a non-array single task
 #   up to ~1080 s (35% over 800 s, e.g. mild straggler spread), 80 topologies
 #   still complete cleanly (80*1080 = 86,400 s = 24 h). If stragglers are worse,
 #   the task is walltime-killed safely (each sim saved before the next).
-CAMPAIGN_TAG="cadex_hhgap_v1"
+CAMPAIGN_TAG="cadex_rho1300_full_v1"   # NEW tag family: keeps the Full/tripartite
+                                       # cohort out of the Neuronal glob
+                                       # 'campaign_cadex_rho1300v*' used by
+                                       # multi_campaign_report.py
 TARGET_HOURS=20                      # ~compute target per task (buffer under 24 h)
 N_TOPOLOGIES=80                      # pre-sized for 800 s/sim (see note above)
-N_PARAMS_PER_WORKER=1                # 3-4 to tame straggler tax; fewer topologies
+N_PARAMS_PER_WORKER=5                # 3-4 to tame straggler tax; fewer topologies
 
 SCRIPT_PATH="./HPC_main_sweep.py"
 LIB_DIR="."
@@ -77,13 +80,23 @@ CONN_PROB_HI=0.6
 CONN_RULE="${CONN_RULE:-flat}"
 CONN_PERIODIC="${CONN_PERIODIC:-0}"
 DENSITY="${DENSITY:-}"
+DENSITY_ASTRO="${DENSITY_ASTRO:-}"
+
+# Astrocyte contact gate (injected by launch_campaign.sh via qsub -v).
+#   Per topology: stoa_gate_p ~ U[STOA_GATE_LO, STOA_GATE_HI]; each VIABLE
+#   synapse->astrocyte link is kept i.i.d. with that probability (S->A and
+#   A->S gated together). Defaults 1.0/1.0 = gate OFF (bit-identical to
+#   pre-gate campaigns). Only read under MODE=Full.
+STOA_GATE_LO="${STOA_GATE_LO:-1.0}"
+STOA_GATE_HI="${STOA_GATE_HI:-1.0}"
+SEED_STOA_GATE=71                    # per-topology offset for the DEDICATED gate RNG
 
 # --- NETWORK / SIM CONFIG (MUST MATCH YOUR BENCHMARK) -------------------
-SIMTIME=300
+SIMTIME=180
 MODE="${MODE:-Full}"                 # Full | Neuronal (optionally injected via qsub -v)
 NN=115                               # ignored if DENSITY is set (Nn derived from C_MAX)
 NA=115
-C_MAX=240                            # <-- value that gave [240 um]2 in your run
+C_MAX=700                            # <-- value that gave [240 um]2 in your run
 DISPL_BIAS=20
 
 TOPOLOGY_MODE="wallach"
@@ -140,6 +153,7 @@ echo "SEED_MASTER            : ${SEED_MASTER:-<deferred>}   ($SEED_SOURCE)"
 echo "Output dir             : $OUTPUT_DIR"
 echo "SWEEP_GROUP            : $SWEEP_GROUP"
 echo "CONN_RULE              : $CONN_RULE   (weibull: kernel drawn per-topology; periodic=$CONN_PERIODIC)"
+echo "STOA_GATE              : U[${STOA_GATE_LO}, ${STOA_GATE_HI}]   (1.0/1.0 = off; Full mode only)"
 echo "============================================================"
 
 ARGS=(
@@ -163,6 +177,9 @@ ARGS=(
     --gj_dist              "$GJ_DIST"
     --gj_max_dist          "$GJ_MAX_DIST"
     --stoa_cutoff          "$STOA_CUTOFF"
+    --stoa_gate_lo         "$STOA_GATE_LO"
+    --stoa_gate_hi         "$STOA_GATE_HI"
+    --seed_stoa_gate       "$SEED_STOA_GATE"
     --stoa_sigma           "$STOA_SIGMA"
     --seed_device          "$SEED_DEVICE"
     --seed_neuron          "$SEED_NEURON"
@@ -174,6 +191,7 @@ ARGS=(
 [ -n "$SYN_PDIST_CSV" ] && ARGS+=(--syn_pdist_csv "$SYN_PDIST_CSV")
 [ "$CONN_PERIODIC" -eq 1 ] && ARGS+=(--conn_periodic)   # weibull-only; no-op under flat
 [ -n "$DENSITY" ] && ARGS+=(--density "$DENSITY")        # derive Nn from C_MAX if set
+[ -n "$DENSITY_ASTRO" ] && ARGS+=(--density_astro "$DENSITY_ASTRO")  # else Na:Nn ratio preserved
 
 python "$SCRIPT_PATH" "${ARGS[@]}"
 EXIT_CODE=$?
