@@ -35,12 +35,13 @@
 #   --ncpus N               cores per array member (default: 48)
 #   --walltime HH:MM:SS     per array member (default: 06:00:00)
 #   --conda-prefix PATH     full path to the python env the JOBS should use.
-#                          OPTIONAL: submit_mea_array.sh already activates a
-#                          built-in default environment internally (see
-#                          DEFAULT_ENV_NAME there). Use this only to override
-#                          that for one submission. Auto-filled from
-#                          $CONDA_PREFIX if you launch with an env active.
-#   --conda-env NAME        env NAME instead of a full path (same purpose)
+#   --conda-env NAME        env NAME instead of a full path (same purpose).
+#                          Give ONE of the two, and it wins. With neither, the
+#                          env active in THIS shell ($CONDA_PREFIX, base
+#                          included) is forwarded as the prefix, and the
+#                          launcher says so; with no env active either, the
+#                          jobs activate submit_mea_array.sh's built-in
+#                          DEFAULT_ENV_NAME.
 #   --concurrency N         max array members running at once (default: 20;
 #                          this is the %N throttle in -J "0-M%N", keep it
 #                          within your fairshare/queue limits)
@@ -61,11 +62,13 @@ QUEUE="cpu"
 NCPUS=48
 WALLTIME="06:00:00"
 CONCURRENCY=20
-# If an env is active in THIS shell, forward it to the jobs as an override.
-# If not, that is fine: submit_mea_array.sh activates its own built-in default
-# (DEFAULT_ENV_NAME) internally, so jobs never rely on inheriting anything.
-CONDA_PREFIX_ARG="${CONDA_PREFIX:-}"
-CONDA_ENV_ARG="${CONDA_DEFAULT_ENV:-}"
+# The JOBS' environment: --conda-prefix or --conda-env, whichever is given,
+# wins. Only when neither is given is the env active in THIS shell forwarded
+# (resolved after the options, below). Until 2026-09-28 the ambient prefix
+# was the starting value of CONDA_PREFIX_ARG, so with any env active --
+# base included -- it silently beat an explicit --conda-env.
+CONDA_PREFIX_ARG=""
+CONDA_ENV_ARG=""
 MANIFEST="./mea_manifest_$(date +%Y%m%d_%H%M%S).tsv"
 EXTRA_ARGS=""
 SKIP_DONE=""
@@ -101,6 +104,15 @@ fi
 if [ ${#CAMPAIGN_ROOTS[@]} -eq 0 ] && [ ${#GLOBS[@]} -eq 0 ]; then
     echo "ERROR: give at least one --campaign-root or --glob" >&2
     exit 2
+fi
+if [ -n "$CONDA_PREFIX_ARG" ] && [ -n "$CONDA_ENV_ARG" ]; then
+    echo "ERROR: give --conda-prefix OR --conda-env, not both" >&2
+    exit 2
+fi
+if [ -z "$CONDA_PREFIX_ARG" ] && [ -z "$CONDA_ENV_ARG" ] && [ -n "${CONDA_PREFIX:-}" ]; then
+    CONDA_PREFIX_ARG="${CONDA_PREFIX}"
+    echo "[launch] no --conda-prefix / --conda-env given: forwarding the env active"
+    echo "[launch] in THIS shell, ${CONDA_DEFAULT_ENV:-?} (${CONDA_PREFIX})"
 fi
 
 # --- 1. build the eap library ONCE, synchronously, before submitting -----

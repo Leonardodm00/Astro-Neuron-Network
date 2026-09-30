@@ -23,10 +23,11 @@
 #                dozens/hundreds of array members don't each pay the ~30s
 #                HH-integration cost separately)
 # OPTIONAL -v variables:
-#     ENV_PREFIX full path to the python environment to use (preferred; see
-#                the environment block below). Set automatically by
-#                launch_mea_array.sh from --conda-prefix / $CONDA_PREFIX.
-#     CONDA_ENV  conda environment NAME, as a fallback to ENV_PREFIX.
+#     ENV_PREFIX full path to the python environment to use (see the
+#                environment block below). Set by launch_mea_array.sh from
+#                --conda-prefix, or from the launching shell's $CONDA_PREFIX
+#                when neither --conda-prefix nor --conda-env was given.
+#     CONDA_ENV  conda environment NAME (launch_mea_array.sh --conda-env).
 #     EXTRA_ARGS extra flags passed through to process_campaign.py verbatim,
 #                e.g. "--plots --limit_iters 5" for a partial/inspectable run
 ##########################################################################
@@ -70,15 +71,18 @@ cd "${PBS_O_WORKDIR:-.}"
 #
 #   DEFAULT_ENV_NAME  <-- EDIT THIS if your environment is ever renamed.
 # It can also be overridden per-submission without editing this file, via
-# qsub -v: ENV_PREFIX=/full/path/to/env (preferred, no conda init needed) or
-# CONDA_ENV=name. The launchers pass those automatically when given.
+# qsub -v: ENV_PREFIX=/full/path/to/env or CONDA_ENV=name. The launchers pass
+# those automatically when given. Both are ACTIVATED through conda when conda
+# is available, so the env's activate.d hooks run -- on davinci they set the
+# LD_LIBRARY_PATH scipy needs; a bare PATH prepend is only the fallback.
 DEFAULT_ENV_NAME="brian_env"
 
 # Try every reasonable way to put an environment's python on the PATH.
 # Returns 0 on success. Kept deliberately exhaustive because which of these
 # works depends on how conda was installed on the node, and a job that picks
-# the wrong interpreter fails in a confusing way much later.
-activate_env_by_name() {
+# the wrong interpreter fails in a confusing way much later. $1 is an env
+# NAME or a full env PATH (conda activate accepts both).
+_activate_env_by_name_unguarded() {
     envname="$1"
 
     # 1. conda already resolvable, with a working shell hook
@@ -131,9 +135,32 @@ activate_env_by_name() {
     return 1
 }
 
+# conda's hook, `conda activate` and the env's activate.d / deactivate.d
+# scripts read variables that are unset in a batch shell. Under this
+# script's `set -u` the shell dies INSIDE the eval -- silently, since every
+# line above discards its output, and `|| true` cannot catch an unbound-
+# variable abort. So -u is lifted around the whole attempt and restored after
+# (2026-09-28; the same guard as the conda block of every job script in
+# Simulation-Based-Inference/hpc).
+activate_env_by_name() {
+    local _had_u=0 _rc=0
+    case "$-" in *u*) _had_u=1 ;; esac
+    set +u
+    if _activate_env_by_name_unguarded "$1"; then _rc=0; else _rc=$?; fi
+    if [ "$_had_u" -eq 1 ]; then set -u; fi
+    return "$_rc"
+}
+
 if [ -n "${ENV_PREFIX:-}" ]; then
     echo "[mea-array] activating env by prefix: ${ENV_PREFIX}"
-    export PATH="${ENV_PREFIX}/bin:${PATH}"
+    if activate_env_by_name "${ENV_PREFIX}"; then
+        echo "[mea-array] env activated: $(command -v python3)"
+    else
+        echo "[mea-array] WARNING: conda could not activate ${ENV_PREFIX}; putting" >&2
+        echo "[mea-array]          its bin/ first on PATH instead. Its activate.d" >&2
+        echo "[mea-array]          hooks do NOT run; the preflight below checks scipy." >&2
+        export PATH="${ENV_PREFIX}/bin:${PATH}"
+    fi
 else
     ENV_NAME="${CONDA_ENV:-$DEFAULT_ENV_NAME}"
     echo "[mea-array] activating env by name: ${ENV_NAME}"

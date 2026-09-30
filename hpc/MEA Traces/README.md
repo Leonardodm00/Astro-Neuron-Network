@@ -405,9 +405,10 @@ python smoke_test_eap_library.py        # 10 checks, HH model + template library
 python smoke_test_mea_pipeline.py       # 10 checks, probe + synthesis + detection
 python smoke_test_mea_plots.py          # 9 checks, all diagnostic plots
 python process_campaign.py --self_test  # 7 checks, full pipeline on a synthetic topology
+python smoke_test_mea_env.py            # 12 checks, how the array launchers choose and activate the jobs' env
 ```
 
-All four must print `PASSED` before trusting output from a real campaign.
+All five must print `PASSED` before trusting output from a real campaign.
 
 ### Process a real campaign directory
 
@@ -570,6 +571,7 @@ exist right now.) Or name specific campaigns explicitly (repeatable):
 | `--concurrency` | `20` | the `%N` throttle in `-J "0-M%N"`; keep within your fairshare/queue limits |
 | `--skip-done` | off | omit work units whose output already has a complete `mea_manifest.json` — use this to top up a campaign after new sweeps finish, without reprocessing what's already done |
 | `--extra-args "..."` | — | forwarded verbatim to every array member's `process_campaign.py` call, e.g. `--extra-args "--plots"` |
+| `--conda-env NAME` / `--conda-prefix PATH` | — | the environment the JOBS run in. Give one, not both; it wins. With neither, the env active in the launching shell (`$CONDA_PREFIX`, `base` included) is forwarded and the launcher says so; with none active, the jobs use `DEFAULT_ENV_NAME` in `submit_mea_array.sh` (`brian_env`). The job activates either through conda with `set -u` lifted around the activation (2026-09-28: before, an explicit `--conda-env` lost to an active env, a prefix was only prepended to `PATH`, and the by-name activation could die silently under `set -u`) |
 | `--dry-run` | off | build the manifest and print the `qsub` command without submitting — use this to sanity-check the plan first |
 
 **Always `--dry-run` first** on a new campaign layout — it costs nothing and

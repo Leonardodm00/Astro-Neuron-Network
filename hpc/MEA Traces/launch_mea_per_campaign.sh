@@ -37,10 +37,10 @@
 # every per-campaign call): --lib --queue --ncpus --walltime --concurrency
 # --conda-prefix --conda-env --skip-done --extra-args --dry-run.
 # NOTE on --conda-prefix/--conda-env: compute nodes do NOT inherit your login
-# shell's conda environment. Both launchers auto-detect $CONDA_PREFIX from the
-# submitting shell, so ACTIVATE YOUR ENV BEFORE LAUNCHING, or pass the path
-# explicitly -- otherwise jobs fall back to the system python3 (often 3.6,
-# too old: this pipeline needs >= 3.7). Run with --help for the full list, or
+# shell's conda environment. Pass --conda-env NAME or --conda-prefix PATH
+# (one of the two; it wins). With neither, launch_mea_array.sh forwards the
+# env active in the submitting shell ($CONDA_PREFIX), and with none active
+# the jobs activate submit_mea_array.sh's DEFAULT_ENV_NAME. Run with --help for the full list, or
 # see launch_mea_array.sh --help -- the semantics are identical, just applied
 # once per campaign instead of once overall.
 ##########################################################################
@@ -59,11 +59,12 @@ CONCURRENCY=20
 SKIP_DONE=""
 EXTRA_ARGS=""
 DRY_RUN=0
-# Auto-detected from the submitting shell; forwarded to every per-campaign
-# launch so the compute nodes use the same interpreter (they inherit none of
-# it otherwise -- see launch_mea_array.sh --conda-prefix).
-CONDA_PREFIX_ARG="${CONDA_PREFIX:-}"
-CONDA_ENV_ARG="${CONDA_DEFAULT_ENV:-}"
+# Forwarded to every per-campaign launch ONLY when given here. With neither,
+# launch_mea_array.sh applies its own fallback (the env active in this same
+# shell). Until 2026-09-28 both were pre-filled from the ambient env and BOTH
+# forwarded, so an explicit --conda-env lost to the ambient prefix.
+CONDA_PREFIX_ARG=""
+CONDA_ENV_ARG=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -138,7 +139,7 @@ for CROOT in "${CAMPAIGN_ROOTS[@]}"; do
 
     echo "=== $NAME ==="
     LOG="$(mktemp)"
-    "${SCRIPT_DIR}/launch_mea_array.sh" "${ARGS[@]}" | tee "$LOG"
+    bash "${SCRIPT_DIR}/launch_mea_array.sh" "${ARGS[@]}" | tee "$LOG"
     JID="$(grep '^\[launch\] submitted:' "$LOG" | sed 's/.*submitted: //' || true)"
     SUMMARY+=("$NAME	${JID:-<dry-run, not submitted>}")
     rm -f "$LOG"
