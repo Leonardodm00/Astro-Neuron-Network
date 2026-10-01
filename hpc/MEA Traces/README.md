@@ -405,7 +405,7 @@ python smoke_test_eap_library.py        # 10 checks, HH model + template library
 python smoke_test_mea_pipeline.py       # 10 checks, probe + synthesis + detection
 python smoke_test_mea_plots.py          # 9 checks, all diagnostic plots
 python process_campaign.py --self_test  # 7 checks, full pipeline on a synthetic topology
-python smoke_test_mea_env.py            # 12 checks, how the array launchers choose and activate the jobs' env
+python smoke_test_mea_env.py            # 14 checks, how the array launchers choose and activate the jobs' env, the per-unit mea_env.json
 ```
 
 All five must print `PASSED` before trusting output from a real campaign.
@@ -593,6 +593,28 @@ qstat -u $USER           # everything you have queued/running
 Each array member's stdout/stderr (via `#PBS -k eo`) will show which
 `campaign`/`out` pair it was assigned and its worker count — useful for
 tracing a specific failed array index back to a specific sweep directory.
+
+**Provenance per work unit (2026-10-01).** Before it runs
+`process_campaign.py`, each array member writes `<out>/mea_env.json`: the
+interpreter and its python / numpy / scipy versions, the env name and prefix,
+the host and PBS job id, the template library's path and sha256, and the
+sha256 of the tool files it ran (`process_campaign.py`, `mea_probe.py`,
+`mea_detection.py`, `mea_synthesis.py`, `mea_plots.py`,
+`eap_template_library.py`, `submit_mea_array.sh`). `meta_json` inside every
+`mea_iter_*.npz` records only the pipeline knobs, so this file is what says
+what produced a root of detections; a killed task still leaves it, and the
+run's completion is `mea_manifest.json`, as before.
+
+**Where the job looks for conda.** On PATH; through `module load
+miniconda3|anaconda3|conda|python`; then `conda.sh` under `KNOWN_CONDA_BASE`
+(davinci-1's `/archive/apps/miniconda/miniconda3/py312_2`; override with
+`qsub -v KNOWN_CONDA_BASE=...` or edit the line next to `DEFAULT_ENV_NAME`),
+`~/miniconda3`, `~/anaconda3`, `~/.conda`, `/opt/conda`, `/usr/local/*`; last,
+the env's own `bin/` first on PATH, with a WARNING, which skips the env's
+`activate.d` hooks (on davinci those set the `LD_LIBRARY_PATH` scipy needs,
+so an env that needs them must be activated, not prepended). Read the first
+member's log before trusting an array: `[mea-array] env activated:` versus the
+WARNING, then the `python` / `numpy` / `scipy` preflight lines.
 
 ### 9.3 One separate job per campaign: `launch_mea_per_campaign.sh`
 

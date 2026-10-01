@@ -76,6 +76,10 @@ cd "${PBS_O_WORKDIR:-.}"
 # is available, so the env's activate.d hooks run -- on davinci they set the
 # LD_LIBRARY_PATH scipy needs; a bare PATH prepend is only the fallback.
 DEFAULT_ENV_NAME="brian_env"
+# Where the cluster's own conda lives when it is neither on PATH nor a
+# module. davinci-1: the "base" row of `conda env list` (2026-10-01). Edit
+# for another cluster; a path that does not exist is skipped.
+KNOWN_CONDA_BASE="${KNOWN_CONDA_BASE:-/archive/apps/miniconda/miniconda3/py312_2}"
 
 # Try every reasonable way to put an environment's python on the PATH.
 # Returns 0 on success. Kept deliberately exhaustive because which of these
@@ -95,7 +99,8 @@ _activate_env_by_name_unguarded() {
     # 2. environment-modules (note: `module` is often a shell FUNCTION, so
     #    `command -v` can miss it -- `type` catches both)
     if type module >/dev/null 2>&1; then
-        module load anaconda3 >/dev/null 2>&1 \
+        module load miniconda3 >/dev/null 2>&1 \
+            || module load anaconda3 >/dev/null 2>&1 \
             || module load conda >/dev/null 2>&1 \
             || module load python >/dev/null 2>&1 || true
         if command -v conda >/dev/null 2>&1; then
@@ -105,8 +110,13 @@ _activate_env_by_name_unguarded() {
         fi
     fi
 
-    # 3. source conda.sh directly from the usual install locations
-    for csh in "${HOME}/miniconda3/etc/profile.d/conda.sh" \
+    # 3. source conda.sh directly from the usual install locations. First
+    #    the cluster's own base (davinci-1: the "base" row of `conda env
+    #    list`; neither a module nor on a compute node's PATH there, which
+    #    is why every job of 2026-08 fell through to the PATH prepend), then
+    #    the generic ones.
+    for csh in "${KNOWN_CONDA_BASE}/etc/profile.d/conda.sh" \
+               "${HOME}/miniconda3/etc/profile.d/conda.sh" \
                "${HOME}/anaconda3/etc/profile.d/conda.sh" \
                "${HOME}/.conda/etc/profile.d/conda.sh" \
                "/opt/conda/etc/profile.d/conda.sh" \
@@ -123,6 +133,7 @@ _activate_env_by_name_unguarded() {
     #    This needs no conda machinery at all -- if the interpreter is there,
     #    putting it first on PATH is sufficient.
     for pfx in "${HOME}/.conda/envs/${envname}" \
+               "${KNOWN_CONDA_BASE}/envs/${envname}" \
                "${HOME}/miniconda3/envs/${envname}" \
                "${HOME}/anaconda3/envs/${envname}" \
                "/opt/conda/envs/${envname}"; do
@@ -204,6 +215,61 @@ PYEOF
 
 NCPUS="${PBS_NCPUS:-1}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
+
+# --- provenance: one mea_env.json per work unit (2026-10-01) ---------------
+# process_campaign.py records its own knobs in every mea_iter_*.npz
+# (meta_json) and nothing else: not the interpreter, not numpy / scipy, not
+# the template library, not which copy of the code ran. This file records
+# them, next to the mea_manifest.json the run will write, so that a root of
+# detections can say what produced it. Written BEFORE the run (a killed task
+# still leaves it); the run's completion is mea_manifest.json.
+mkdir -p "$OUT"
+MEA_ENV_JSON="${OUT}/mea_env.json" MEA_CAMPAIGN="$CAMPAIGN" MEA_LIB="$LIB" \
+MEA_EXTRA="$EXTRA_ARGS" MEA_INDEX="$IDX" MEA_WORKERS="$NCPUS" \
+MEA_ENV_NAME="${CONDA_DEFAULT_ENV:-}" MEA_ENV_PREFIX="${CONDA_PREFIX:-${ENV_PREFIX:-}}" \
+python3 - <<'PYEOF' || echo "[mea-array] WARNING: mea_env.json not written" >&2
+import hashlib, json, os, platform, socket, sys, time
+def sha(p):
+    h = hashlib.sha256()
+    try:
+        with open(p, 'rb') as f:
+            for b in iter(lambda: f.read(1 << 20), b''):
+                h.update(b)
+        return h.hexdigest()
+    except OSError:
+        return None
+import numpy, scipy
+rec = {
+    'record': 'mea_env', 'version': 1,
+    'written': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+    'host': socket.gethostname(),
+    'pbs_jobid': os.environ.get('PBS_JOBID'),
+    'array_index': int(os.environ['MEA_INDEX']),
+    'campaign': os.environ['MEA_CAMPAIGN'],
+    'out': os.path.dirname(os.environ['MEA_ENV_JSON']),
+    'workers': int(os.environ['MEA_WORKERS']),
+    'extra_args': os.environ['MEA_EXTRA'],
+    'env_name': os.environ['MEA_ENV_NAME'] or None,
+    'env_prefix': os.environ['MEA_ENV_PREFIX'] or None,
+    'python': platform.python_version(),
+    'executable': sys.executable,
+    'numpy': numpy.__version__,
+    'scipy': scipy.__version__,
+    'library': os.path.abspath(os.environ['MEA_LIB']),
+    'library_sha256': sha(os.environ['MEA_LIB']),
+    'tools_dir': os.getcwd(),
+    'tools_sha256': {n: sha(n) for n in (
+        'process_campaign.py', 'mea_probe.py', 'mea_detection.py',
+        'mea_synthesis.py', 'mea_plots.py', 'eap_template_library.py',
+        'submit_mea_array.sh')},
+}
+tmp = os.environ['MEA_ENV_JSON'] + '.tmp'
+with open(tmp, 'w') as f:
+    json.dump(rec, f, indent=2, sort_keys=True)
+    f.write('\n')
+os.replace(tmp, os.environ['MEA_ENV_JSON'])
+print('[mea-array] env record: ' + os.environ['MEA_ENV_JSON'])
+PYEOF
 
 echo "[mea-array] index    : $IDX (manifest line $LINE)"
 echo "[mea-array] campaign : $CAMPAIGN"

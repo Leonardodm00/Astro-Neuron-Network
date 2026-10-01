@@ -6,7 +6,7 @@ activate the python environment of their jobs.
     python3 smoke_test_mea_env.py                    # tests the scripts next to this file
     python3 smoke_test_mea_env.py --scripts-dir DIR  # tests another copy (negative control)
 
-Expect: ALL 12 CHECKS PASSED. Needs bash and a python3 with numpy + scipy
+Expect: ALL 14 CHECKS PASSED. Needs bash and a python3 with numpy + scipy
 (the job's own preflight imports both). No conda, no PBS, no campaign data:
 it writes a throwaway fixture and a FAKE `conda` that reproduces the
 davinci failure mode -- the hook and `conda activate` read variables that
@@ -26,6 +26,13 @@ E4  no env at all, no conda           -> DEFAULT_ENV_NAME not found, WARNING,
     the job still reaches its preflight (unchanged behaviour)
 E5  activate_env_by_name lifts -u and RESTORES it: -u on before -> on after
 E6  ... and off before -> off after
+E7  the per-unit provenance record <out>/mea_env.json (2026-10-01): written
+    before the run, by the activated interpreter; names python, numpy, scipy,
+    the env, the library and its sha256, the tool files and their sha256
+E8  no conda on PATH, no module, but a conda base at KNOWN_CONDA_BASE (as
+    davinci-1's /archive/apps/miniconda/miniconda3/py312_2): its conda.sh is
+    sourced and the env is activated through it (2026-10-01; before, the
+    lookup did not know that path and fell through to the PATH prepend)
 launch_mea_array.sh --dry-run (prints the qsub line, submits nothing):
 L1  an env active in the shell AND --conda-env NAME -> CONDA_ENV=NAME
     forwarded, no ENV_PREFIX (before: the ambient prefix won)
@@ -322,9 +329,54 @@ def main(argv=None):
             raise AssertionError("per-campaign launch lost --conda-env (rc %d): %s" % (rc, q))
         return "per-campaign: --conda-env reaches the inner launch; 644 scripts run"
 
+    def e7():
+        import hashlib
+        import json
+        rc, out = F.run_submit(True, CONDA_ENV="fakeenv", EXTRA_ARGS="--n_side 3")
+        rec_path = os.path.join(F.root, "out", "x", "mea_env.json")
+        if rc != 0 or not os.path.isfile(rec_path) or "env record:" not in out:
+            raise AssertionError("mea_env.json not written (rc %d):\n%s" % (rc, out[-600:]))
+        with open(rec_path) as fh:
+            rec = json.load(fh)
+        import numpy
+        import scipy
+        want = {"record": "mea_env", "array_index": 0, "campaign": F.unit,
+                "out": os.path.join(F.root, "out", "x"), "extra_args": "--n_side 3",
+                "env_name": "fakeenv", "env_prefix": F.env,
+                "python": "%d.%d.%d" % sys.version_info[:3],
+                "numpy": numpy.__version__, "scipy": scipy.__version__,
+                "library": F.lib,
+                "library_sha256": hashlib.sha256(open(F.lib, "rb").read()).hexdigest(),
+                "tools_dir": F.work}
+        bad = {k: (rec.get(k), v) for k, v in want.items() if rec.get(k) != v}
+        if bad:
+            raise AssertionError("record fields differ (got, want): %r" % bad)
+        stub = hashlib.sha256(open(os.path.join(F.work, "process_campaign.py"), "rb").read()).hexdigest()
+        ts = rec.get("tools_sha256", {})
+        if ts.get("process_campaign.py") != stub or ts.get("submit_mea_array.sh") is not None:
+            raise AssertionError("tools_sha256 wrong: %r" % ts)
+        if not rec.get("host") or not rec.get("written") or not rec.get("executable"):
+            raise AssertionError("host / written / executable missing: %r" % rec)
+        return "mea_env.json written before the run, with versions, library and tool hashes"
+
+    def e8():
+        # a conda base reachable only through KNOWN_CONDA_BASE: no conda on
+        # PATH, no module; its conda.sh defines the fake `conda` function
+        base = os.path.join(F.root, "known_base")
+        os.makedirs(os.path.join(base, "etc", "profile.d"))
+        hook = subprocess.run([os.path.join(F.conda_bin, "conda"), "shell.bash", "hook"],
+                              capture_output=True, text=True, check=True).stdout
+        with open(os.path.join(base, "etc", "profile.d", "conda.sh"), "w") as fh:
+            fh.write(hook)
+        rc, out = F.run_submit(False, CONDA_ENV="fakeenv", KNOWN_CONDA_BASE=base)
+        if rc != 0 or "FAKE_ACTIVATED=%s" % F.env not in out or "could not activate" in out:
+            raise AssertionError("KNOWN_CONDA_BASE route did not activate (rc %d):\n%s"
+                                 % (rc, out[-600:]))
+        return "no conda on PATH: activated through KNOWN_CONDA_BASE's conda.sh"
+
     for nm, fn in (("E1", e1), ("E2", e2), ("E3", e3), ("E4", e4), ("E5", e5),
-                   ("E6", e6), ("L1", l1), ("L2", l2), ("L3", l3), ("L4", l4),
-                   ("L5", l5), ("P1", p1)):
+                   ("E6", e6), ("E7", e7), ("E8", e8), ("L1", l1), ("L2", l2),
+                   ("L3", l3), ("L4", l4), ("L5", l5), ("P1", p1)):
         check(nm, fn)
     shutil.rmtree(F.root, ignore_errors=True)
     print("-" * 70)
