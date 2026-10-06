@@ -114,6 +114,7 @@ One file per input iteration: `<out>/topo_<k>/mea_iter_<n>.npz`
 | `electrode_centers` | `(9,2)` float32 | probe coordinates, µm |
 | `params` | `(36,)` float64 | pass-through from the input iter file |
 | `theta`, `conn_prob`, `topo_idx`, `iter_idx`, `seed_run` | — | pass-through / provenance |
+| `noise_entropy` | `(4,)` int64 (`(1,)` under `topo_iter`) | the integers the iteration's noise was seeded from (2026-10-06) |
 | `fs`, `simtime` | float | recording sample rate (Hz), simulated duration (s) |
 | `meta_json` | str | full pipeline configuration used for this run (reproducibility) |
 | `traces` | `(9, T)` float32 | **only present** if `--save_traces_first` is set, and only for iteration 0 of each topology |
@@ -405,10 +406,25 @@ python smoke_test_eap_library.py        # 10 checks, HH model + template library
 python smoke_test_mea_pipeline.py       # 10 checks, probe + synthesis + detection
 python smoke_test_mea_plots.py          # 9 checks, all diagnostic plots
 python process_campaign.py --self_test  # 7 checks, full pipeline on a synthetic topology
-python smoke_test_mea_env.py            # 14 checks, how the array launchers choose and activate the jobs' env, the per-unit mea_env.json
+python smoke_test_mea_env.py            # 15 checks, how the array launchers choose and activate the jobs' env, the per-unit mea_env.json, the worker count
+python smoke_test_mea_workers.py        # 5 checks, the detections are the same with 1 and N workers and any OMP_NUM_THREADS (~1 min)
+python smoke_test_mea_noise.py          # 7 checks, how each iteration's noise is seeded (--noise_seed_scheme; ~1 min)
 ```
 
-All five must print `PASSED` before trusting output from a real campaign.
+All seven must print `PASSED` before trusting output from a real campaign.
+
+**Noise seeding (2026-10-06).** Each iteration's additive noise is drawn from
+`numpy.random.default_rng(SeedSequence([noise_seed_base, seed_run, topo_idx, iter_idx]))`
+(`--noise_seed_scheme sim`, the default): `seed_run` is the simulation's own draw
+in `HPC_main_sweep.py`, so every simulation has its own noise and a replay of a
+simulation in another campaign folder the same noise as its copy; a missing or
+negative `seed_run` is replaced by `2**32 + crc32('campaign/sweep')`. Before, the
+seed was `noise_seed_base + 1000 * topo_idx + iter_idx` alone, so the same
+(topology, iteration) indices drew the same noise in every task, and iteration
+`i >= 1000` of a topology the noise of iteration `i - 1000` of the next one;
+`--noise_seed_scheme topo_iter` reproduces that scheme bit for bit, for roots made
+with it (C8's `Outputs_v2`, August's `mea_out_1electrode`). Every `mea_iter_*.npz`
+records the integers it was seeded from (`noise_entropy`), and `meta_json` the scheme.
 
 ### Process a real campaign directory
 
@@ -566,7 +582,7 @@ exist right now.) Or name specific campaigns explicitly (repeatable):
 | `--glob` | — | a shell glob matching multiple campaign directories (repeatable; quote it) |
 | `--lib` | `./eap_library.npz` | built **once, synchronously, before submitting** — so array members never race to generate it |
 | `--queue` | `cpu` | PBS queue |
-| `--ncpus` | `48` | cores per array member -> forwarded as `--workers` to `process_campaign.py` |
+| `--ncpus` | `48` | cores per array member; the job runs one worker per core it was given -> `--workers` to `process_campaign.py` (**2026-10-06:** before, the job read only `PBS_NCPUS`, a TORQUE variable PBS Pro does not set, so every array member ran 1 worker; it now takes `PBS_NCPUS`, else PBS Pro's `NCPUS`, else `nproc` inside a PBS job, and pins BLAS/OpenMP to 1 thread per worker) |
 | `--walltime` | `06:00:00` | per array member |
 | `--concurrency` | `20` | the `%N` throttle in `-J "0-M%N"`; keep within your fairshare/queue limits |
 | `--skip-done` | off | omit work units whose output already has a complete `mea_manifest.json` — use this to top up a campaign after new sweeps finish, without reprocessing what's already done |

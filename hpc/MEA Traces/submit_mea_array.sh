@@ -213,7 +213,31 @@ for mod in ('numpy', 'scipy'):
 sys.exit(0 if ok else 1)
 PYEOF
 
-NCPUS="${PBS_NCPUS:-1}"
+# Worker processes: one per core the job was given (D-071, 2026-10-06).
+# PBS Pro sets NCPUS (and OMP_NUM_THREADS) from the chunk's ncpus; PBS_NCPUS
+# is TORQUE's name and is not set on davinci, which left every task of the
+# 2026-10-05 C8 run on 1 worker of its 48 cores. Inside a PBS job with
+# neither set: the cores this process may run on (nproc). Outside PBS: 1, as
+# before. process_campaign.py runs one topology per worker, so a task with
+# fewer topologies than workers leaves the rest idle (it says so).
+if [ -n "${PBS_NCPUS:-}" ]; then
+    NCPUS="$PBS_NCPUS"; NCPUS_FROM=PBS_NCPUS
+elif [ -n "${NCPUS:-}" ]; then
+    NCPUS_FROM=NCPUS
+elif [ -n "${PBS_JOBID:-}" ]; then
+    NCPUS="$(nproc 2>/dev/null || echo 1)"; NCPUS_FROM=nproc
+else
+    NCPUS=1; NCPUS_FROM="default, not a PBS job"
+fi
+case "$NCPUS" in
+    ''|*[!0-9]*|0)
+        echo "[mea-array] WARNING: worker count '$NCPUS' from $NCPUS_FROM is not a positive integer; using 1" >&2
+        NCPUS=1 ;;
+esac
+# One process per topology: each keeps BLAS and OpenMP single-threaded
+# (process_campaign.py, THREADING), whatever PBS put in OMP_NUM_THREADS; the
+# detections do not depend on either (smoke_test_mea_workers.py).
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 
 # --- provenance: one mea_env.json per work unit (2026-10-01) ---------------
@@ -275,7 +299,7 @@ echo "[mea-array] index    : $IDX (manifest line $LINE)"
 echo "[mea-array] campaign : $CAMPAIGN"
 echo "[mea-array] out      : $OUT"
 echo "[mea-array] library  : $LIB"
-echo "[mea-array] workers  : $NCPUS"
+echo "[mea-array] workers  : $NCPUS (from $NCPUS_FROM)"
 echo "[mea-array] extra    : ${EXTRA_ARGS:-<none>}"
 
 python3 process_campaign.py \

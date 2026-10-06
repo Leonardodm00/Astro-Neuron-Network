@@ -25,6 +25,8 @@
 #   electrode_centers                 (E,2) [um]
 #   params, theta                     the SWEPT parameter vector + SBI coords
 #   conn_prob, topo_idx, iter_idx, seed_run
+#   noise_entropy                     the integers the additive noise was seeded
+#                                     from (2026-10-06, D-072; see noise_entropy())
 #   meta_json                         full pipeline config (reproducibility)
 #   traces (optional)                 (E,T) raw trace, only for a saved subset
 #
@@ -77,6 +79,7 @@ import multiprocessing as mp
 import tempfile
 import time
 import traceback
+import zlib
 from dataclasses import asdict
 
 import numpy as np
@@ -119,6 +122,10 @@ class PipelineConfig:
         # template assignment
         self.tmpl_seed_base = kw.get('tmpl_seed_base', 20260)
         self.noise_seed_base = kw.get('noise_seed_base', 70000)
+        # how each iteration's additive noise is seeded (noise_entropy below):
+        # 'sim' (2026-10-06, D-072) -- per simulation; 'topo_iter' -- the scheme
+        # before, kept to reproduce earlier roots (C8's Outputs_v2, August's)
+        self.noise_seed_scheme = kw.get('noise_seed_scheme', 'sim')
         # match window
         self.match_window_ms = kw.get('match_window_ms', 1.5)
         # diagnostics plots
@@ -200,9 +207,52 @@ def _visible_rows(W, reach, max_rows):
     return np.sort(keep)
 
 
+NOISE_SCHEMES = ('sim', 'topo_iter')
+TASK_KEY_OFFSET = 2 ** 32      # above every seed_run (the sweep draws them below 2**31)
+
+
+def noise_entropy(cfg, seed_run, topo_idx, iter_idx, task_name):
+    """The integers one iteration's additive recording noise is seeded from.
+
+    'topo_iter' (the scheme before 2026-10-06; C8's and August's roots):
+        (noise_seed_base + 1000 * topo_idx + iter_idx,) -- nothing from the task
+        or the simulation, so the same (topology, iteration) indices draw the
+        same noise in every task, and index i of topology t the noise of index
+        i - 1000 of topology t + 1.
+    'sim' (D-072): (noise_seed_base, key, topo_idx, iter_idx), seeded through
+        numpy's SeedSequence. key is the simulation's own seed_run -- one
+        master_rng draw per simulation in HPC_main_sweep.py, so every
+        simulation has its own noise and a replay (the same simulation in
+        another campaign folder) the noise of its copy. Where seed_run is
+        missing or negative (the sweep stores -1 when it could not seed the
+        run), key = TASK_KEY_OFFSET + crc32 of task_name ('campaign/sweep'):
+        distinct per task, never equal to a seed_run.
+    """
+    if cfg.noise_seed_scheme == 'topo_iter':
+        return (int(cfg.noise_seed_base) + 1000 * int(topo_idx) + int(iter_idx),)
+    if cfg.noise_seed_scheme != 'sim':
+        raise ValueError('noise_seed_scheme %r is not one of %s'
+                         % (cfg.noise_seed_scheme, NOISE_SCHEMES))
+    seed_run = int(seed_run)
+    if seed_run >= 0:
+        key = seed_run
+    else:
+        key = TASK_KEY_OFFSET + zlib.crc32(str(task_name).encode('utf-8'))
+    return (int(cfg.noise_seed_base), key, int(topo_idx), int(iter_idx))
+
+
+def noise_seed(entropy):
+    """What np.random.default_rng is given: the integer itself for the
+    one-integer 'topo_iter' entropy (bit for bit the old behaviour), a
+    SeedSequence over the four integers of 'sim'."""
+    if len(entropy) == 1:
+        return int(entropy[0])
+    return np.random.SeedSequence([int(x) for x in entropy])
+
+
 def process_iter(iter_npz, probe, W, reach, lib_fs, tmpl_assign, cfg,
                  noise_rms, out_path, topo_idx, save_traces=False,
-                 plot_dir=None):
+                 plot_dir=None, task_name=''):
     """Synthesize + detect + match for a single iter; write output npz."""
     d = np.load(iter_npz, allow_pickle=False)
     spk_t = np.asarray(d['spk_N_t'], dtype=float)
@@ -216,10 +266,10 @@ def process_iter(iter_npz, probe, W, reach, lib_fs, tmpl_assign, cfg,
     # simtime: infer from the last spike (rounded up) if not otherwise known.
     simtime = float(np.ceil(spk_t.max())) if spk_t.size else 1.0
 
-    noise_seed = cfg.noise_seed_base + 1000 * topo_idx + iter_idx
+    entropy = noise_entropy(cfg, seed_run, topo_idx, iter_idx, task_name)
     traces, t = S.synthesize_traces(
         spk_t, spk_i, W, lib_fs, tmpl_assign, cfg.fs, simtime,
-        noise_rms=noise_rms, reach=reach, seed=noise_seed)
+        noise_rms=noise_rms, reach=reach, seed=noise_seed(entropy))
 
     det = D.detect(traces, cfg.fs, cfg.detect_cfg())
     src, dt = D.match_to_truth(det, W, spk_t, spk_i, cfg.fs,
@@ -238,6 +288,7 @@ def process_iter(iter_npz, probe, W, reach, lib_fs, tmpl_assign, cfg,
         topo_idx=np.int32(topo_idx),
         iter_idx=np.int32(iter_idx),
         seed_run=np.int64(seed_run),
+        noise_entropy=np.array(entropy, dtype=np.int64),
         fs=np.float64(cfg.fs),
         simtime=np.float64(simtime),
         meta_json=np.array(json.dumps(cfg.to_dict())),
@@ -274,6 +325,10 @@ def process_topo(topo_dir, campaign_dir, out_topo_dir, lib, cfg,
     """Build geometry once, then process every iter in this topo dir."""
     os.makedirs(out_topo_dir, exist_ok=True)
     topo_idx = _iter_index_from_name(topo_dir)
+    # 'campaign/sweep', the fallback noise key when an iteration has no seed_run
+    task_dir = os.path.abspath(campaign_dir)
+    task_name = '%s/%s' % (os.path.basename(os.path.dirname(task_dir)),
+                           os.path.basename(task_dir))
 
     topo = np.load(os.path.join(topo_dir, 'topology.npz'), allow_pickle=False)
     N_pos = np.asarray(topo['N_pos'], dtype=float)
@@ -326,7 +381,7 @@ def process_topo(topo_dir, campaign_dir, out_topo_dir, lib, cfg,
         try:
             process_iter(ip, probe, W, reach, lib_fs, tmpl_assign, cfg,
                          noise_rms, out_path, topo_idx, save_traces=save_tr,
-                         plot_dir=pdir)
+                         plot_dir=pdir, task_name=task_name)
             n_done += 1
         except Exception as exc:  # noqa: BLE001
             with open(os.path.join(out_topo_dir, '_failures.log'), 'a') as f:
@@ -551,6 +606,11 @@ def build_parser():
     p.add_argument('--pitch', type=float, default=60.0)
     p.add_argument('--edge', type=float, default=25.0)
     p.add_argument('--n_side', type=int, default=3)
+    p.add_argument('--noise_seed_scheme', choices=NOISE_SCHEMES, default='sim',
+                   help="'sim' (default, 2026-10-06): each simulation's noise is "
+                        "seeded from its own seed_run; 'topo_iter': the scheme "
+                        "before, from the topology and iteration indices alone "
+                        "(reproduces earlier roots)")
     return p
 
 
@@ -567,6 +627,7 @@ def main():
         k=args.k, band_lo=args.band_lo, band_hi=args.band_hi,
         refractory_ms=args.refractory_ms, n_sub=args.n_sub, pitch=args.pitch,
         edge=args.edge, n_side=args.n_side,
+        noise_seed_scheme=args.noise_seed_scheme,
         plots=args.plots, plot_window_s=args.plot_window_s,
         plot_max_true_rows=args.plot_max_true_rows)
     lib, lib_path = resolve_library(args.library)

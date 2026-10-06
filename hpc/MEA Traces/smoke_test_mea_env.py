@@ -6,7 +6,7 @@ activate the python environment of their jobs.
     python3 smoke_test_mea_env.py                    # tests the scripts next to this file
     python3 smoke_test_mea_env.py --scripts-dir DIR  # tests another copy (negative control)
 
-Expect: ALL 14 CHECKS PASSED. Needs bash and a python3 with numpy + scipy
+Expect: ALL 15 CHECKS PASSED. Needs bash and a python3 with numpy + scipy
 (the job's own preflight imports both). No conda, no PBS, no campaign data:
 it writes a throwaway fixture and a FAKE `conda` that reproduces the
 davinci failure mode -- the hook and `conda activate` read variables that
@@ -33,6 +33,12 @@ E8  no conda on PATH, no module, but a conda base at KNOWN_CONDA_BASE (as
     davinci-1's /archive/apps/miniconda/miniconda3/py312_2): its conda.sh is
     sourced and the env is activated through it (2026-10-01; before, the
     lookup did not know that path and fell through to the PATH prepend)
+E9  the worker count (2026-10-06, D-071): PBS_NCPUS wins; else PBS Pro's
+    NCPUS; else, inside a PBS job, nproc; else 1; a non-integer is refused
+    with a WARNING and 1; the count reaches --workers and mea_env.json, and
+    process_campaign.py starts with OMP/OpenBLAS/MKL/numexpr at 1 thread
+    whatever OMP_NUM_THREADS PBS set (before: PBS_NCPUS or 1 -- every task
+    of the 2026-10-05 C8 run used 1 worker of 48)
 launch_mea_array.sh --dry-run (prints the qsub line, submits nothing):
 L1  an env active in the shell AND --conda-env NAME -> CONDA_ENV=NAME
     forwarded, no ENV_PREFIX (before: the ambient prefix won)
@@ -95,6 +101,8 @@ exit 1
 STUB_PROCESS_CAMPAIGN = '''import os, shutil, sys
 print("STUB ran python3=%s FAKE_ACTIVATED=%s argv=%s" % (
     shutil.which("python3"), os.environ.get("FAKE_ACTIVATED", ""), sys.argv[1:]))
+print("STUB threads %s" % ",".join("%s=%s" % (k, os.environ.get(k, "")) for k in (
+    "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS")))
 '''
 
 
@@ -177,7 +185,9 @@ class Fixture:
                                   "PBS_", "EXTRA_ARGS", "_FAKE", "BASH_FUNC_",
                                   "MODULE", "LOADEDMODULES", "_LMFILES_",
                                   "LMOD", "__LMOD", "_ModuleTable"))
-             and k not in ("BASH_ENV", "ENV")}
+             and k not in ("BASH_ENV", "ENV", "NCPUS", "OMP_NUM_THREADS",
+                           "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+                           "NUMEXPR_NUM_THREADS")}
         e["PATH"] = (self.conda_bin + os.pathsep if with_conda else "") + \
             self.py_bin + os.pathsep + self.base_path
         e["HOME"] = self.root            # step 3/4 of the activation search find nothing here
@@ -374,8 +384,39 @@ def main(argv=None):
                                  % (rc, out[-600:]))
         return "no conda on PATH: activated through KNOWN_CONDA_BASE's conda.sh"
 
+    def e9():
+        import json
+        import re
+        rec_path = os.path.join(F.root, "out", "x", "mea_env.json")
+        cases = (({"PBS_NCPUS": "6", "NCPUS": "4"}, "6", "PBS_NCPUS"),
+                 ({"NCPUS": "4", "OMP_NUM_THREADS": "4"}, "4", "NCPUS"),
+                 ({"PBS_JOBID": "1.pbsserver01"}, str(len(os.sched_getaffinity(0))), "nproc"),
+                 ({}, "1", "default, not a PBS job"),
+                 ({"NCPUS": "abc"}, "1", "NCPUS"))
+        seen = []
+        for extra, want, src in cases:
+            rc, out = F.run_submit(True, CONDA_ENV="fakeenv", **extra)
+            if rc != 0 or "index 0 done." not in out:
+                raise AssertionError("%r: job did not complete (rc %d):\n%s" % (extra, rc, out[-600:]))
+            m = re.search(r"'--workers', '([^']*)'", out)
+            if not m or m.group(1) != want:
+                raise AssertionError("%r: --workers %s, want %s" % (extra, m and m.group(1), want))
+            if ("[mea-array] workers  : %s (from %s)" % (want, src)) not in out:
+                raise AssertionError("%r: the workers line does not name %s / %s:\n%s"
+                                     % (extra, want, src, out[-600:]))
+            with open(rec_path) as fh:
+                if json.load(fh).get("workers") != int(want):
+                    raise AssertionError("%r: mea_env.json workers is not %s" % (extra, want))
+            if ("STUB threads OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1,"
+                    "NUMEXPR_NUM_THREADS=1") not in out:
+                raise AssertionError("%r: BLAS/OpenMP not pinned to 1 thread:\n%s" % (extra, out[-600:]))
+            if (extra.get("NCPUS") == "abc") != ("is not a positive integer" in out):
+                raise AssertionError("%r: the non-integer WARNING is wrong:\n%s" % (extra, out[-600:]))
+            seen.append("%s->%s" % (src, want))
+        return "worker count: %s; threads pinned to 1" % ", ".join(seen)
+
     for nm, fn in (("E1", e1), ("E2", e2), ("E3", e3), ("E4", e4), ("E5", e5),
-                   ("E6", e6), ("E7", e7), ("E8", e8), ("L1", l1), ("L2", l2),
+                   ("E6", e6), ("E7", e7), ("E8", e8), ("E9", e9), ("L1", l1), ("L2", l2),
                    ("L3", l3), ("L4", l4), ("L5", l5), ("P1", p1)):
         check(nm, fn)
     shutil.rmtree(F.root, ignore_errors=True)
