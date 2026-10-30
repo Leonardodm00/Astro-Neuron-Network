@@ -6,7 +6,8 @@ smoke_test_range_check.py -- checks of hpc/range_check/ (specs/SPEC.md Block 6).
       lo < hi gets K points, each point differs from the nominal theta on exactly
       one axis, the end points lie on the theta box, padding to n_workers x k
   R2  the same pipeline with the LindaColloDUP freeze patch and freeze list:
-      13 free axes, the frozen ones absent, VA/VR held at the freeze values
+      13 free axes, the frozen ones absent, VA/VR held at the freeze values;
+      a list with values off the nominal shows that NAME=VALUE is applied
   R3  --rc-like: parsing the rebuilt argument list reproduces every job_args value
   R4  37-D Giulia copy: the design builds for its synapse_astro group (22 axes)
   R5  end to end (needs Brian2 and a C++ compiler): oat phase on a tiny
@@ -18,12 +19,22 @@ smoke_test_range_check.py -- checks of hpc/range_check/ (specs/SPEC.md Block 6).
   R7  bytes: pure ASCII, LF only, in every file of this folder
   R8  submit_range_check.sh with module, conda and python replaced by stub
       shell functions, in an environment built from scratch (only PATH kept;
-      see the comment above STUB_FUNCS): for SETUP=lcdup it
-      calls range_check.py 3 times (oat at 0.1 0.35 0.6) and once (prior), then
-      the analysis and the plots, with the LindaColloDUP settings; SETUP=giulia
-      finds LIKE in the hhgap_v5 campaign and passes EXTRA to every phase and
-      OAT_EXTRA to the oat phases only; FREEZE_ENC is decoded; an unknown
-      SETUP exits 2
+      see the comment above STUB_FUNCS); a probe first confirms the stubs
+      are the functions the job's shell sees, else R8 stops. For SETUP=lcdup
+      it calls range_check.py 3 times (oat at 0.01 0.255 0.5) and once (prior),
+      then the analysis and the plots, with the LindaColloDUP settings;
+      SETUP=giulia finds LIKE in the hhgap_v5 campaign, uses conn_prob 0.1
+      0.35 0.6, passes EXTRA to every phase and OAT_EXTRA to the oat phases
+      only; FREEZE_ENC is decoded; PHASES=oat / prior / none and ANALYZE
+      select what runs; CHECK_ONLY=1 runs nothing; an lcdup folder without
+      the g box patch, a bad PHASES and an unknown SETUP exit 2
+  R9  launch_range_check.sh with a stub qsub, in the same sealed environment
+      (probed first like R8, so the real qsub is never reached and no job is
+      ever submitted): three jobs (oat on intel, prior x16 on cpu, the
+      analysis on cpu with 8 cores held by depend=afterany on the first two),
+      one OUT and the pass-through variables in all three; DRYRUN=1, a failed
+      precheck and a comma in a passed variable submit nothing; a failed
+      second submission stops there and names the job to qdel
 
 Run:  python3 smoke_test_range_check.py | tail -1        (about 2 min with R5)
       python3 smoke_test_range_check.py --no-sim          (skip R5)
@@ -41,7 +52,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PIPE = os.path.join(HERE, '..', 'Phenomenological_finalv1')
 GIULIA = os.path.join(PIPE, 'Giulia')
 CSV = os.path.join(PIPE, 'MEAMA', 'synapse_pdist.csv')
-LCDUP_FREEZE = 'Cm,I_inj,VA=-50,DeltaA,VR=-55,EC50_ampa,EC50_nmda,alpha_syn,O_G,Omega_G'
+LCDUP_FREEZE = 'Cm,I_inj,VA=-48,DeltaA,VR=-58.2,EC50_ampa,EC50_nmda,alpha_syn,O_G,Omega_G'
+OFF_NOMINAL_FREEZE = 'Cm,I_inj,VA=-50,DeltaA,VR=-55,EC50_ampa,EC50_nmda,alpha_syn,O_G,Omega_G'
+BOX_MARK = '[LindaColloDUP box 2026-10-30]'
 RESULTS = {'passed': 0, 'failed': 0, 'skipped': 0}
 
 
@@ -120,8 +133,14 @@ def r2(tmp):
     if d:
         frozen = {x.split('=')[0] for x in LCDUP_FREEZE.split(',')}
         check(len(d['free']) == 13 and not frozen & set(d['free']), '13 free axes, none frozen: %s' % d['free'])
-        check(abs(d['va'] + 50) < 1e-12 and abs(d['vr'] + 55) < 1e-12, 'VA, VR held at -50, -55 mV')
+        check(abs(d['va'] + 48) < 1e-12 and abs(d['vr'] + 58.2) < 1e-12, 'VA, VR held at -48, -58.2 mV')
         check(d['n_pts'] == 91 and d['k'] == 2 and d['n_pad'] == 5, '91 points, k=2, 5 nominal')
+    # -48 / -58.2 are also the registry nominals: a list off the nominal shows
+    # that NAME=VALUE really reaches the design
+    d2 = in_subprocess(os.path.join(tmp, 'lib36f'), DESIGN_BODY % (
+        ['--out_dir', 'x', '--mode', 'Neuronal', '--sweep_group', 'neuron_synapse', '--freeze', OFF_NOMINAL_FREEZE],))
+    check(d2 is not None and abs(d2['va'] + 50) < 1e-12 and abs(d2['vr'] + 55) < 1e-12,
+          'off-nominal list: VA, VR held at -50, -55 mV')
 
 
 def r3(tmp):
@@ -260,6 +279,36 @@ exec "$BASH" "$1"
 BASH = shutil.which('bash') or '/bin/bash'
 
 
+def stubs_loaded(funcs, names, env):
+    """Whether every command in `names` is a shell function in the shell that
+    will run the script under test (same wrapper, same environment). R8 and R9
+    stop when it is not: a stub that failed to load would leave the real
+    python running range_check.py, or the real qsub submitting jobs."""
+    probe = os.path.join(env['HOME'], 'stub_probe.sh')
+    with open(probe, 'w') as f:
+        f.write('for n in %s; do printf "%%s=%%s\\n" "$n" "$(type -t "$n")"; done\n' % ' '.join(names))
+    r = subprocess.run([BASH, '-c', funcs, 'probe', probe], env=env, capture_output=True, text=True)
+    got = dict(line.split('=', 1) for line in r.stdout.split() if '=' in line)
+    ok = check(all(got.get(n) == 'function' for n in names),
+               '%s: the stub shell function%s, in the tested shell'
+               % (', '.join(names), 's' if len(names) > 1 else ''))
+    if not ok:
+        print('    resolved as %s; the remaining checks of this section were not run' % (got or r.stderr.strip()))
+    return ok
+
+
+def make_fake_setup(path, box=True):
+    """A stand-in setup folder for the job script: stub pipeline files, the
+    LindaColloDUP box markers when box=True, and a Giulia-style campaign task."""
+    os.makedirs(os.path.join(path, 'campaign_cadex_hhgap_v5', 'sweep_intel_task0000'))
+    marks = ('    (0.01,   10.0),     # 14 g_ampa  %s\n    (0.01,   10.0),     # 15 g_nmda  %s\n'
+             % (BOX_MARK, BOX_MARK)) if box else ''
+    open(os.path.join(path, 'HPC_main_sweep.py'), 'w').write('# stub\n' + marks)
+    open(os.path.join(path, 'ASD_fun_BD_cpp.py'), 'w').write('# stub\n')
+    open(os.path.join(path, 'campaign_cadex_hhgap_v5', 'sweep_intel_task0000', 'job_args.json'), 'w').write('{}')
+    return path
+
+
 def r8(tmp):
     print('\n[R8] the PBS job script with stub module, conda and python')
     base = os.path.join(tmp, 'stubbase')
@@ -268,23 +317,25 @@ def r8(tmp):
         'conda() { return 0; }\nmodule() { return 0; }\n')
     home = os.path.join(tmp, 'r8_home')
     os.makedirs(home)
-    lib = os.path.join(tmp, 'fake_setup')
-    os.makedirs(os.path.join(lib, 'campaign_cadex_hhgap_v5', 'sweep_intel_task0000'))
-    for f in ('HPC_main_sweep.py', 'ASD_fun_BD_cpp.py'):
-        open(os.path.join(lib, f), 'w').write('# stub\n')
-    open(os.path.join(lib, 'campaign_cadex_hhgap_v5', 'sweep_intel_task0000', 'job_args.json'), 'w').write('{}')
+    lib = make_fake_setup(os.path.join(tmp, 'fake_setup'))
+    nobox = make_fake_setup(os.path.join(tmp, 'fake_setup_nobox'), box=False)
     n_jobs = [0]
+    if not stubs_loaded(STUB_FUNCS, ['python', 'conda', 'module'],
+                        dict(PATH=os.environ.get('PATH', '/usr/bin:/bin'), HOME=home, LC_ALL='C',
+                             STUB_LOG=os.path.join(tmp, 'r8_probe.log'), STUB_BASE=base)):
+        return
 
     def job(**env):
         n_jobs[0] += 1
         log = os.path.join(tmp, 'r8_calls_%d.log' % n_jobs[0])
         e = dict(PATH=os.environ.get('PATH', '/usr/bin:/bin'), HOME=home, LC_ALL='C',
                  STUB_LOG=log, STUB_BASE=base, PBS_O_WORKDIR=HERE, PBS_NCPUS='48',
-                 LIB_DIR=lib, OUT=os.path.join(tmp, 'job_out_%d' % n_jobs[0]), **env)
+                 LIB_DIR=lib, OUT=os.path.join(tmp, 'job_out_%d' % n_jobs[0]))
+        e.update(env)
         r = subprocess.run([BASH, '-c', STUB_FUNCS, 'r8', os.path.join(HERE, 'submit_range_check.sh')],
                            env=e, capture_output=True, text=True)
-        calls = open(log).read().splitlines() if os.path.exists(log) else []
-        return r, [c for c in calls if not c.startswith('-c ')]
+        raw = open(log).read().splitlines() if os.path.exists(log) else []
+        return r, [c for c in raw if not c.startswith('-c ')], raw
 
     def explain(ok, r, calls):
         """After a failed check, print what the job did, so a pasted run shows the cause."""
@@ -295,38 +346,148 @@ def r8(tmp):
             for line in text.strip().splitlines()[-8:]:
                 print('    %s| %s' % (tag, line))
 
-    r, calls = job(SETUP='lcdup')
-    oat = [c for c in calls if '--rc-phase oat' in c]
-    ok = check(r.returncode == 0 and len(oat) == 3 and sum('--rc-phase prior' in c for c in calls) == 1
+    def phase_calls(calls):
+        return ([c for c in calls if '--rc-phase oat' in c], [c for c in calls if '--rc-phase prior' in c])
+
+    r, calls, _ = job(SETUP='lcdup')
+    oat, prior = phase_calls(calls)
+    ok = check(r.returncode == 0 and len(oat) == 3 and len(prior) == 1
                and len(calls) >= 2 and calls[-2].startswith('range_analysis.py')
                and calls[-1].startswith('range_plots.py'),
                'lcdup: 3 oat + 1 prior + analysis + plots (%d calls)' % len(calls))
     explain(ok, r, calls)
-    check(len(oat) == 3
-          and all('--freeze Cm,I_inj,VA=-50,DeltaA,VR=-55' in c and '--mode Neuronal' in c
-                  and '--n_workers 48' in c for c in oat)
-          and ['--rc-conn 0.1 ' in oat[0], '--rc-conn 0.35 ' in oat[1], '--rc-conn 0.6 ' in oat[2]] == [True] * 3,
-          'lcdup: settings, 48 workers, conn levels in order')
-    r, calls = job(SETUP='giulia', EXTRA='--stoa_gate_lo 0.2 --stoa_gate_hi 1.0',
-                   OAT_EXTRA='--stoa_gate_lo 0.6 --stoa_gate_hi 0.6')
-    oat = [c for c in calls if '--rc-phase oat' in c]
-    prior = [c for c in calls if '--rc-phase prior' in c]
+    check(len(oat) == 3 and len(prior) == 1
+          and all('--freeze Cm,I_inj,VA=-48,DeltaA,VR=-58.2' in c and '--mode Neuronal' in c
+                  and '--n_workers 48' in c and '--conn_prob_lo 0.01 --conn_prob_hi 0.5' in c for c in oat + prior)
+          and ['--rc-conn 0.01 ' in oat[0], '--rc-conn 0.255 ' in oat[1], '--rc-conn 0.5 ' in oat[2]] == [True] * 3,
+          'lcdup: freeze VA=-48 VR=-58.2, conn_prob box 0.01-0.5, 48 workers, oat at 0.01 0.255 0.5')
+    r, calls, _ = job(SETUP='giulia', EXTRA='--stoa_gate_lo 0.2 --stoa_gate_hi 1.0',
+                      OAT_EXTRA='--stoa_gate_lo 0.6 --stoa_gate_hi 0.6')
+    oat, prior = phase_calls(calls)
     ok = check(r.returncode == 0 and len(oat) == 3 and len(prior) == 1
                and all('campaign_cadex_hhgap_v5/sweep_intel_task0000/job_args.json' in c for c in oat + prior),
                'giulia: LIKE found in the hhgap_v5 campaign')
     explain(ok, r, calls)
+    check(len(oat) == 3
+          and ['--rc-conn 0.1 ' in oat[0], '--rc-conn 0.35 ' in oat[1], '--rc-conn 0.6 ' in oat[2]] == [True] * 3,
+          'giulia: oat at conn_prob 0.1 0.35 0.6')
     check(len(oat) == 3 and len(prior) == 1
           and all('--stoa_gate_lo 0.2 --stoa_gate_hi 1.0' in c for c in oat + prior)
           and all(c.endswith('--stoa_gate_lo 0.6 --stoa_gate_hi 0.6') for c in oat)
           and '0.6 --stoa_gate_hi 0.6' not in prior[0], 'giulia: EXTRA everywhere, OAT_EXTRA last in oat only')
-    r, calls = job(SETUP='lcdup', FREEZE_ENC='Cm:I_inj:VA@-48:DeltaA:VR@-58.2:EC50_ampa:EC50_nmda:alpha_syn:O_G:Omega_G')
+    r, calls, _ = job(SETUP='lcdup', FREEZE_ENC='Cm:I_inj:VA@-50:DeltaA:VR@-55:EC50_ampa:EC50_nmda:alpha_syn:O_G:Omega_G')
     phases = [c for c in calls if '--rc-phase' in c]
     ok = check(r.returncode == 0 and len(phases) == 4
-               and all('--freeze Cm,I_inj,VA=-48,DeltaA,VR=-58.2,EC50_ampa' in c for c in phases),
-               'lcdup: FREEZE_ENC decoded')
+               and all('--freeze Cm,I_inj,VA=-50,DeltaA,VR=-55,EC50_ampa' in c for c in phases),
+               'lcdup: FREEZE_ENC decoded (a list that differs from the default)')
     explain(ok, r, calls)
-    r, calls = job(SETUP='nonsense')
-    ok = check(r.returncode == 2 and not calls, 'unknown SETUP: exit 2, nothing run')
+    r, calls, _ = job(SETUP='lcdup', PHASES='oat', ANALYZE='0')
+    oat, prior = phase_calls(calls)
+    ok = check(r.returncode == 0 and len(oat) == 3 and len(calls) == 3, 'PHASES=oat ANALYZE=0: the 3 oat calls only')
+    explain(ok, r, calls)
+    r, calls, _ = job(SETUP='lcdup', PHASES='prior', ANALYZE='0', PRIOR_TOPOS='16')
+    ok = check(r.returncode == 0 and len(calls) == 1 and '--rc-phase prior --rc-topologies 16 ' in calls[0],
+               'PHASES=prior ANALYZE=0 PRIOR_TOPOS=16: one prior call with 16 topologies')
+    explain(ok, r, calls)
+    out_a = os.path.join(tmp, 'analysis_out')
+    os.makedirs(os.path.join(out_a, 'prior'))
+    open(os.path.join(out_a, 'prior', 'design.json'), 'w').write('{}')
+    r, calls, _ = job(SETUP='lcdup', PHASES='none', ANALYZE='1', OUT=out_a, PBS_NCPUS='8')
+    ok = check(r.returncode == 0 and len(calls) == 2 and calls[0].startswith('range_analysis.py %s --workers 8' % out_a)
+               and calls[1].startswith('range_plots.py'), 'PHASES=none ANALYZE=1: analysis and plots only')
+    explain(ok, r, calls)
+    r, calls, raw = job(SETUP='lcdup', PHASES='none', ANALYZE='1', OUT=os.path.join(tmp, 'empty_out'))
+    ok = check(r.returncode == 2 and not raw, 'PHASES=none on an OUT without results: exit 2, nothing run')
+    explain(ok, r, calls)
+    r, calls, raw = job(SETUP='lcdup', CHECK_ONLY='1')
+    ok = check(r.returncode == 0 and not raw and 'precheck OK' in r.stdout, 'CHECK_ONLY=1: exit 0, no python at all')
+    explain(ok, r, calls)
+    r, calls, raw = job(SETUP='lcdup', LIB_DIR=nobox)
+    ok = check(r.returncode == 2 and not raw and 'box patch' in r.stderr,
+               'lcdup folder without the g box patch: exit 2, nothing run')
+    explain(ok, r, calls)
+    r, calls, raw = job(SETUP='lcdup', PHASES='everything')
+    ok = check(r.returncode == 2 and not raw, 'bad PHASES: exit 2, nothing run')
+    explain(ok, r, calls)
+    r, calls, raw = job(SETUP='nonsense')
+    ok = check(r.returncode == 2 and not raw, 'unknown SETUP: exit 2, nothing run')
+    explain(ok, r, calls)
+
+
+# qsub stand-in for R9, a shell function like the stubs of R8: it logs each
+# call on its own line and answers "10<n>.pbsserver"; call number QSUB_FAIL_AT
+# fails without output, as a refused submission does.
+QSUB_FUNCS = r'''qsub() {
+  local n=$(( $(wc -l < "$QSUB_LOG") + 1 ))
+  printf '%s\n' "$*" >> "$QSUB_LOG"
+  if [ "$n" = "${QSUB_FAIL_AT:-0}" ]; then echo "qsub: refused" >&2; return 1; fi
+  echo "10${n}.pbsserver"
+}
+export -f qsub
+exec "$BASH" "$1"
+'''
+
+
+def r9(tmp):
+    print('\n[R9] launch_range_check.sh with a stub qsub')
+    home = os.path.join(tmp, 'r9_home')
+    os.makedirs(home)
+    lib = make_fake_setup(os.path.join(tmp, 'r9_setup'))
+    nobox = make_fake_setup(os.path.join(tmp, 'r9_setup_nobox'), box=False)
+    out = os.path.join(tmp, 'r9_out')
+    n_runs = [0]
+    probe_log = os.path.join(tmp, 'r9_probe.log')
+    open(probe_log, 'w').close()
+    if not stubs_loaded(QSUB_FUNCS, ['qsub'], dict(PATH=os.environ.get('PATH', '/usr/bin:/bin'),
+                                                  HOME=home, LC_ALL='C', QSUB_LOG=probe_log)):
+        return
+
+    def launch(**env):
+        n_runs[0] += 1
+        log = os.path.join(tmp, 'r9_qsub_%d.log' % n_runs[0])
+        open(log, 'w').close()
+        e = dict(PATH=os.environ.get('PATH', '/usr/bin:/bin'), HOME=home, LC_ALL='C',
+                 QSUB_LOG=log, SETUP='lcdup', LIB_DIR=lib, OUT=out)
+        e.update(env)
+        r = subprocess.run([BASH, '-c', QSUB_FUNCS, 'r9', os.path.join(HERE, 'launch_range_check.sh')],
+                           env=e, capture_output=True, text=True)
+        return r, open(log).read().splitlines()
+
+    def explain(ok, r, calls):
+        if ok:
+            return
+        print('    launcher exit %d, %d qsub calls; its last output lines:' % (r.returncode, len(calls)))
+        for tag, text in (('out', r.stdout), ('err', r.stderr)):
+            for line in text.strip().splitlines()[-8:]:
+                print('    %s| %s' % (tag, line))
+
+    r, calls = launch()
+    common = 'SETUP=lcdup,OUT=%s,LIB_DIR=%s' % (out, lib)
+    ok = check(r.returncode == 0 and len(calls) == 3
+               and '-q intel -N rc_oat -l select=1:ncpus=48 -l walltime=12:00:00' in calls[0]
+               and (common + ',PHASES=oat,ANALYZE=0') in calls[0]
+               and '-q cpu -N rc_prior -l select=1:ncpus=48' in calls[1]
+               and (common + ',PHASES=prior,ANALYZE=0,PRIOR_TOPOS=16') in calls[1]
+               and calls[0].endswith('submit_range_check.sh') and calls[1].endswith('submit_range_check.sh'),
+               'oat job on intel and prior job (16 topologies) on cpu, 48 cores each, one OUT')
+    explain(ok, r, calls)
+    ok = check(len(calls) == 3 and '-q cpu -N rc_analysis -l select=1:ncpus=8 -l walltime=02:00:00' in calls[2]
+               and '-W depend=afterany:101.pbsserver:102.pbsserver' in calls[2]
+               and (common + ',PHASES=none,ANALYZE=1') in calls[2],
+               'analysis job on cpu, 8 cores, held by depend=afterany on both, same OUT')
+    explain(ok, r, calls)
+    r, calls = launch(DRYRUN='1')
+    ok = check(r.returncode == 0 and not calls and r.stdout.count('[dry run] qsub') == 3,
+               'DRYRUN=1: three qsub lines printed, nothing submitted')
+    explain(ok, r, calls)
+    r, calls = launch(LIB_DIR=nobox)
+    r2, calls2 = launch(EXTRA='--a 1,--b 2')
+    ok = check(r.returncode == 2 and not calls and r2.returncode == 2 and not calls2,
+               'failed precheck, or a comma in a passed variable: exit 2, nothing submitted')
+    explain(ok, r, calls)
+    r, calls = launch(QSUB_FAIL_AT='2')
+    ok = check(r.returncode == 3 and len(calls) == 2 and 'qdel 101.pbsserver' in r.stderr,
+               'second submission refused: exit 3, no third job, the first job named for qdel')
     explain(ok, r, calls)
 
 
@@ -344,6 +505,7 @@ def main():
         r6(tmp)
         r7()
         r8(tmp)
+        r9(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print('\nRESULT: %d passed, %d failed%s' % (RESULTS['passed'], RESULTS['failed'],

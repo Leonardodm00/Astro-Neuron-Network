@@ -18,7 +18,9 @@ date of the decision.
 Last reviewed at commit: 4aa3fdb (first draft at 562a9fd; Block 5, the repository
 invariant of Block 1 and section 5.1 added on 2026-10-30 on top of 5f21a3d;
 Block 5's REFUSED rule for an unrecognised CAdEx line added on top of 4aa3fdb;
-its GIT CLONE status and queued-job hold added on top of 4e12a40)
+its GIT CLONE status and queued-job hold added on top of 4e12a40; Block 4's
+g box patch, conn_prob box, VA/VR values and clone folder, and Block 6's
+two-node split, added on top of 15f82c9)
 
 ## 0. Coverage
 
@@ -150,10 +152,36 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
     prior boxes is measured with 20 s runs (Block 6) -- now for Giulia's
     setup and LindaColloDUP's, each as an independent 48-core job; the boxes
     of MEAMA and of the rho1300 family are retuned later (section 8).
+    [corrected 2026-10-30] Each setup now runs on two 48-core nodes (the
+    range-check entry below).
+  - 2026-10-30 [author]: every running campaign is stopped, and the reruns
+    are launched from folders of the git clone on davinci,
+    `/davinci-1/home/ldellamea/ANN/Astro-Neuron-Network`: everything under
+    the clone is clamped, every other `campaign_*` folder under `ANN/` is
+    old. Tags as proposed: `cadex_rho1300_clamp_v1`, `cadex_hhgap_clamp_v1`,
+    `meama_rho1600_clamp_n01`; LindaColloDUP keeps
+    `lcdup15_rho1300_neur_n01` (never launched, and launched only clamped;
+    the one exception to the `clamp` stem). LindaColloDUP goes first, from
+    `hpc/Phenomenological_finalv1/LindaColloDUP/` in the clone; its 37-D
+    pipeline is copied in from the cluster's `MEAMA/` and kept out of git
+    (`.gitignore`, as is the campaign output) until the author sends the
+    files to be versioned.
+  - 2026-10-30 [author]: LindaColloDUP values. VA = -48 mV and VR = -58.2 mV,
+    the registry nominals (the cluster's `MEAMA/` registry has the root
+    copy's neuron and synapse rows: the author's paste, 2026-10-30);
+    I_inj = 4.0 pA; conn_prob ~ U[0.01, 0.5] per topology, to lighten the
+    simulations, with the density (1300 neurons/mm^2) and the culture width
+    (C_MAX 350 um, so Nn = 159) unchanged; g_ampa and g_nmda boxes
+    [0.01, 10] nS, log-uniform, nominal 0.3 nS (registry box [0.01, 5] nS).
+  - 2026-10-30 [author]: the range check of a setup runs on two 48-core
+    nodes, split as proposed by Claude: the one-axis sweeps on one node, the
+    prior sample (16 topologies) on the other, and the analysis as a short
+    job once both have ended (Block 6).
   - 2026-10-29 [author]: LindaColloDUP runs MODE Neuronal; freezes Cm,
     I_inj, VR, VA, DeltaA, EC50_ampa, EC50_nmda (and the inert alpha_syn,
     O_G, Omega_G); SIMTIME 180 s; RHO_TOTAL 1300 cells/mm^2; everything else
-    as MEAMA.
+    as MEAMA. The frozen values of VA, VR and I_inj were decided on
+    2026-10-30 (entry above).
 
 ## 5. Blocks
 
@@ -241,41 +269,80 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
 ### Block 4: LindaColloDUP launch package
 
 - Module: `hpc/Phenomenological_finalv1/LindaColloDUP/`: `launch_LCDUP.sh`,
-  `submit_LCDUP.sh`, `apply_freeze_patch.py`, `smoke_test_freeze.py`,
-  `apply_refractory_clamp.py`, `APPLY_LCDUP.txt` (procedure). Deployed on
-  davinci in `Phenomenological/LindaColloDUP/`, with the pipeline copied
-  from the cluster's 37-D `MEAMA/`, which is not in the repository.
+  `submit_LCDUP.sh`, `apply_freeze_patch.py`, `apply_box_patch.py`,
+  `smoke_test_freeze.py`, `apply_refractory_clamp.py`, `APPLY_LCDUP.txt`
+  (procedure), `.gitignore`. Deployed on davinci in this same folder of the
+  git clone (decided 2026-10-30, section 4), with the 8 pipeline files
+  copied in from the cluster's 37-D `MEAMA/`, which is not in the
+  repository. `.gitignore` (anchored patterns) keeps the copies, their
+  backups (`*.bak-*`, `*.crlf_bak`), `campaign_*/` and `artifacts/` out of
+  git; `git clean -x` would delete them.
 - `launch_LCDUP.sh` settings (environment variable = default): MODE =
   Neuronal; SWEEP_GROUP = neuron_synapse; RHO_TOTAL = 1300; ASTRO_FRAC = 0;
   C_MAX = 350 um; SIMTIME = 180 s; FREEZE =
-  Cm,I_inj,VA=-50,DeltaA,VR=-55,EC50_ampa,EC50_nmda,alpha_syn,O_G,Omega_G;
-  CONN_RULE = flat; CONN_PERIODIC = 0; CONN_PROB_LO/HI = 0.1/0.6;
-  STOA_GATE_LO/HI = 1.0/1.0; N_TOPOLOGIES_WORKER = 32; K_PARAMS = 1;
+  Cm,I_inj,VA=-48,DeltaA,VR=-58.2,EC50_ampa,EC50_nmda,alpha_syn,O_G,Omega_G
+  (VA and VR written out at the registry nominals, so a changed registry
+  cannot move them); CONN_RULE = flat; CONN_PERIODIC = 0; CONN_PROB_LO/HI =
+  0.01/0.5; STOA_GATE_LO/HI = 1.0/1.0; N_TOPOLOGIES_WORKER = 32; K_PARAMS = 1;
   WALLTIME = 24:00:00; TARGET = 1000000; HEADROOM_PCT = 200; CAMPAIGN_TAG =
-  lcdup15_rho1300_neur_n01; CONDA_ENV = brian_final; DRYRUN = 0.
-- Guards of `launch_LCDUP.sh`: exit 2 missing pipeline or package files;
-  exit 3 SIZING_CONFIRMED not set, or REFRACTORY_CLAMP unset or not yes/no;
-  exit 4 REFRACTORY_CLAMP disagreeing with the file, MODE, ASTRO_FRAC, gate,
-  conn_prob bounds, FREEZE syntax, existing campaign tag; exit 5 seed
-  allocator missing.
+  lcdup15_rho1300_neur_n01; CONDA_ENV = brian_final; DRYRUN = 0. The g boxes
+  are not launcher settings: they live in the folder's `HPC_main_sweep.py`
+  after `apply_box_patch.py`; the launcher prints them (`g boxes : ...`) and
+  writes them into the PROVENANCE file.
+- Guards of `launch_LCDUP.sh`: exit 2 missing pipeline or package files, a
+  `HPC_main_sweep.py` without the freeze patch, or one without both box
+  markers; exit 3 SIZING_CONFIRMED not set, or REFRACTORY_CLAMP unset or not
+  yes/no; exit 4 REFRACTORY_CLAMP disagreeing with the file, MODE,
+  ASTRO_FRAC, gate, conn_prob bounds, FREEZE syntax, existing campaign tag;
+  exit 5 seed allocator missing. `submit_LCDUP.sh` repeats the freeze and
+  box guards on the compute node (exit 2).
 - `apply_freeze_patch.py`: adds `--freeze` to the folder's own
   `HPC_main_sweep.py` (3 insertions, marker `[LindaColloDUP patch 2026-10-29]`);
   `--check`, `--self-test`; refuses CR bytes, partial or foreign patches,
   missing or duplicate anchors.
+- `apply_box_patch.py` (decided 2026-10-30): in the folder's own
+  `HPC_main_sweep.py`, rewrites the two rows of the `PARAM_BOUNDS` array
+  whose comments name g_ampa and g_nmda from the registry box (0.01, 5.0) to
+  (0.01, 10.0) nS and appends the marker `[LindaColloDUP box 2026-10-30]` to
+  each; nothing else in the file changes. Everything derived from
+  `PARAM_BOUNDS` follows at import: both axes stay in `LOG_PARAMS` (both
+  bounds > 0 and log10(hi/lo) >= 1), the theta box becomes
+  [ln 0.01, ln 10], and `job_args.json` `_axis_declaration` records
+  low 0.01, high 10, log true. Refuses, writing nothing (exit 1): CR bytes,
+  not UTF-8, no `PARAM_BOUNDS` block, a row missing or found twice, a box
+  other than (0.01, 5.0) or (0.01, 10.0), the new box without the marker, a
+  partial patch. Exit 0 patched or already patched. Backup
+  `HPC_main_sweep.py.bak-box-<YYYYmmdd_HHMMSS>`; atomic write keeping the
+  permissions; re-read (must classify as patched) and `py_compile`; restores
+  the backup on failure. `--check`, `--self-test`, `--file`.
 - `apply_refractory_clamp.py`: Block 1's flag on the folder's own
   `ASD_fun_BD_cpp.py` (marker `[LindaColloDUP clamp 2026-10-29]`); `--check`,
   `--self-test`; exit 0 patched or already clamped, 1 refused.
-- Test oracles: `smoke_test_freeze.py` (35 checks); the two patchers'
-  `--self-test` (the clamp's includes a Brian2 parse of the patched
-  equations); the dry run (Nn = 159, two qsub lines `-J 0-651%2`); the worker
-  probe of `APPLY_LCDUP.txt` step 6 (NaN warnings 0 when clamped).
+- Custom code: the two patchers and the box rule; no library edits a
+  registry in place.
+- Test oracles: `smoke_test_freeze.py` (40 checks: T1-T8; T4 also sets a
+  value off the nominal to prove NAME=VALUE is applied, since the campaign's
+  values equal the nominals; T7 checks the g boxes in `job_args.json`; T8
+  the box patch: both markers, box, log flag and theta box of each g axis);
+  the three patchers' `--self-test` (the box patcher's 20 checks include the
+  refusals, the backup, idempotence and file permissions; the clamp's
+  includes a Brian2 parse of the patched equations); the dry run (Nn = 159,
+  `conn_prob : U[0.01, 0.5] per topology`, `g boxes : g_ampa [0.01, 10.0]
+  nS; g_nmda [0.01, 10.0] nS`, two qsub lines `-J 0-651%2`); the worker
+  probe of `APPLY_LCDUP.txt` step 6 (NaN warnings 0 when clamped; its
+  `job_args.json` records 13 free axes, conn_prob 0.01-0.5, both g boxes,
+  VA -48, VR -58.2, I_inj 4.0).
 - Data flow: launches campaigns from the patched folder copies.
 - Confirmed: yes 2026-10-29 for the settings the author decided (freeze
-  list, SIMTIME, RHO_TOTAL, the rest as MEAMA) and 2026-10-30 for
-  REFRACTORY_CLAMP = yes; inferred for VA = -50 mV and VR = -55 mV, and for
-  I_inj = 4.0 pA (both open, section 8).
-- Status: smoke-tested 2026-10-29 in the sandbox on 36-D copies (skipped:
-  the 37-D files and davinci).
+  list, SIMTIME, RHO_TOTAL, the rest as MEAMA); yes 2026-10-30 for
+  REFRACTORY_CLAMP = yes, VA = -48 mV and VR = -58.2 mV, I_inj = 4.0 pA,
+  conn_prob U[0.01, 0.5], the g boxes [0.01, 10] nS and the clone folder.
+- Status: smoke-tested 2026-10-30 in the sandbox on a fresh folder built
+  from the package files and a stand-in for the `MEAMA/` copy (the
+  repository's root 36-D files, whose registry rows equal `MEAMA/`'s; the
+  unclamped model of d0ced88; the three 37-D flags as no-op options):
+  `APPLY_LCDUP.txt` steps 2-7 as written, the guards above, the probe.
+  Skipped: the 37-D files and davinci.
 
 ### Block 5: clamp_cadex_copies, the cluster-wide clamp
 
@@ -348,8 +415,10 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   and a sample of the joint prior; 20 s per run.
 - Modules (`hpc/range_check/`): `range_check.py` (driver), `range_analysis.py`
   (per-run metrics and summaries), `range_plots.py` (figures only),
-  `submit_range_check.sh` (PBS job, one node, 48 cores, one setup per job),
-  `smoke_test_range_check.py`, `README_RANGE_CHECK.txt`.
+  `submit_range_check.sh` (the PBS job; PHASES and ANALYZE choose its part),
+  `launch_range_check.sh` (login node: one setup as three PBS jobs on two
+  48-core nodes, decided 2026-10-30), `smoke_test_range_check.py`,
+  `README_RANGE_CHECK.txt`.
 - Driver: `python3 range_check.py --rc-phase {oat,prior} --rc-out DIR
   [--rc-like JOB_ARGS] [--rc-conn P] [--rc-points K] [--rc-topologies R]
   [--rc-k-prior k] [--rc-simtime T] [--rc-seed S] <HPC_main_sweep.py
@@ -407,7 +476,58 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   0.01 Hz) and with the burst rate; `scipy.stats.spearmanr`).
 - Plots (`range_plots.py DIR`): `oat_curves.png` (one panel per free axis:
   median mean rate against the axis value, one line per conn level, min-max
-  band; log x on `LOG_PARAMS` axes), `prior_rates.png`, `prior_spearman.png`.
+  band; log x on `LOG_PARAMS` axes; the legend gives each level with `%g`,
+  so 0.255 reads 0.255), `prior_rates.png`, `prior_spearman.png`.
+- Job script (`submit_range_check.sh`, `#PBS -l select=1:ncpus=48`,
+  walltime 12 h, `-k eo`): SETUP = lcdup | giulia (anything else: exit 2).
+  - lcdup: LIB_DIR default
+    `/davinci-1/home/ldellamea/ANN/Astro-Neuron-Network/hpc/Phenomenological_finalv1/LindaColloDUP`
+    (the clone's folder, Block 4); the settings of `launch_LCDUP.sh`
+    written out (`--mode Neuronal --sweep_group neuron_synapse --freeze
+    <FREEZE> --density 1300 --density_astro 0 --c_max 350 --Na 0
+    --conn_rule flat --conn_prob_lo 0.01 --conn_prob_hi 0.5` and the fixed
+    block; `--Nn 115` is passed as in `submit_LCDUP.sh` and overridden by the
+    density, so Nn = 159); FREEZE default
+    `Cm,I_inj,VA=-48,DeltaA,VR=-58.2,EC50_ampa,EC50_nmda,alpha_syn,O_G,Omega_G`,
+    or FREEZE_ENC decoded (`:` for `,`, `@` for `=`); oat levels CONN_LEVELS
+    default `0.01 0.255 0.5`, the ends and the middle of the box; refuses
+    (exit 2) a LIB_DIR whose `HPC_main_sweep.py` lacks either box marker.
+  - giulia: LIB_DIR default `Phenomenological/Main/Giulia_Astro`; LIKE =
+    the first `campaign_cadex_hhgap_v5/sweep_*/job_args.json` there (none:
+    exit 2); CONN_LEVELS default `0.1 0.35 0.6`; EXTRA to every phase,
+    OAT_EXTRA last, to the oat phases only.
+  - PHASES = all (default) | oat | prior | none: the oat phase runs for all
+    or oat, the prior phase for all or prior; ANALYZE = 1 (default) | 0:
+    `range_analysis.py OUT --workers <ncpus>` then `range_plots.py OUT`.
+    PRIOR_TOPOS default 8 (16 from the launcher); POINTS 7; OAT_TOPOS 2;
+    RC_SIMTIME 20 s. Exit 2, before conda: PHASES or ANALYZE invalid,
+    PHASES=none with ANALYZE=0, `range_check.py` not in the submission
+    folder, a LIB_DIR without `HPC_main_sweep.py`, the lcdup box guard,
+    PHASES=none with no `OUT/*/design.json`. CHECK_ONLY=1 runs those guards
+    (all but the last), prints `[range_check] precheck OK: ...` and exits 0
+    without conda or python. Exit 2 also when `conda activate` or the
+    environment check (brian2, numpy, scipy, pandas importable from the
+    activated environment) fails. Exit status otherwise 1 if any phase,
+    analysis or plot call failed, else 0.
+- Launcher (`launch_range_check.sh SETUP=...`, login node): checks SETUP;
+  refuses (exit 2) a comma in OUT or in any variable it passes on (LIB_DIR,
+  LIKE, CONN_LEVELS, POINTS, OAT_TOPOS, RC_SIMTIME, EXTRA, OAT_EXTRA,
+  FREEZE_ENC, CONDA_ENV; `qsub -v` splits on commas); runs the job script
+  once with CHECK_ONLY=1 (failure: exit 2, nothing submitted); then submits,
+  all with one OUT (default `~/ANN/range_check/<setup>_<UTC>`):
+  - job 1 `rc_oat`: queue Q_OAT (intel), `select=1:ncpus=NCPUS` (48),
+    walltime WALLTIME (12 h), PHASES=oat ANALYZE=0;
+  - job 2 `rc_prior`: queue Q_PRIOR (cpu), same resources, PHASES=prior
+    ANALYZE=0 PRIOR_TOPOS (16);
+  - job 3 `rc_analysis`: queue Q_ANALYSIS (cpu), ANALYSIS_NCPUS (8),
+    ANALYSIS_WALLTIME (2 h), `-W depend=afterany:<job 1>:<job 2>`,
+    PHASES=none ANALYZE=1 (afterany: it also runs when a phase job failed).
+  Job 1 refused: exit 3, nothing else submitted; job 2 refused: exit 3 and
+  the `qdel` line for job 1; job 3 refused: exit 3 and the manual command.
+  DRYRUN=1 prints the three qsub lines and submits nothing. For
+  LindaColloDUP this is 576 oat runs (13 axes x 7 values = 91 points + 5
+  nominal = 96 per topology, x 2 topologies x 3 levels; 12 rounds of 48)
+  and 768 prior runs (16 x 48; 16 rounds).
 - Test oracles (`smoke_test_range_check.py`): the oat design (|free| x K
   points, each differing from nominal on exactly one axis, endpoints on the
   theta box, frozen axes absent, padding count); `--rc-like` (parsing the
@@ -416,15 +536,30 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   sidecars exactly R times; the prior phase writes T x n_workers x k runs);
   the analysis on synthetic Poisson trains of known rate (rate recovered
   within the Poisson tolerance; a silent run flagged); bytes; the PBS job
-  with stub `module`, `conda` and `python` (call sequence and arguments per
-  setup, an unknown setup refused). The stubs are shell functions and the
-  job's environment is built from scratch (only PATH kept), so nothing from
-  the caller's login shell reaches the job, and a noexec /tmp does not stop
-  the stubs.
+  with stub `module`, `conda` and `python` (R8, 15 checks: the stub probe,
+  call sequence and
+  arguments per setup, the lcdup freeze with VA -48 and VR -58.2, the
+  conn_prob box and the levels in order, the giulia levels, FREEZE_ENC with
+  values that differ from the default, PHASES and ANALYZE, CHECK_ONLY, the
+  refusals); the launcher with a stub `qsub` (R9, 6 checks: the stub probe,
+  queues, cores,
+  wall times, `depend=afterany` on both phase jobs, one OUT and the passed
+  variables in all three jobs, DRYRUN, a failed precheck, a comma, a refused
+  second submission). R2 also sets VA and VR off the nominal, since the
+  campaign's values equal the nominals. The stubs are shell functions and
+  the job's environment is built from scratch (only PATH kept), so nothing
+  from the caller's login shell reaches the job, and a noexec /tmp does not
+  stop the stubs. R8 and R9 first check, in that same environment, that each
+  stub resolves to a shell function, and stop otherwise, so the real python
+  or the real qsub is never reached from the test.
 - Confirmed: yes 2026-10-30 for the goal, the two setups, the design (axis
-  sweeps and a prior sample), 20 s, a reduced run here and a 48-core job per
-  setup on the cluster; inferred for K = 7, R = 2, the three conn levels (the
-  box's ends and middle), t_skip = 2 s, T = 8, k = 1 and the reporting
+  sweeps and a prior sample), 20 s, a reduced run here; a 48-core job per
+  setup on the cluster [corrected 2026-10-30: two 48-core nodes per setup,
+  oat and prior apart, the analysis after both], LindaColloDUP's conn_prob
+  box U[0.01, 0.5] and the clone folder; inferred for K = 7, R = 2, the
+  three conn levels (the box's ends and middle), t_skip = 2 s, PRIOR_TOPOS =
+  16 on two nodes (8 on one), k = 1, the queue assignment (oat on intel,
+  prior and analysis on cpu), the 12 h and 2 h wall times and the reporting
   cut-offs.
 - Status: smoke-tested 2026-10-30 in the sandbox (36-D root pipeline,
   freeze-patched copy, 37-D `Giulia/` copy; skipped: davinci, the cluster's
@@ -439,7 +574,16 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   (clone at 1757d3e, `--no-sim`: 26 passed, 1 skipped). With a noexec /tmp,
   R5 here and S4 of `smoke_test_clamp_cadex_copies.py` also fail (they run
   programs from the temporary folder); not changed, since davinci's /tmp
-  allows programs.
+  allows programs. Two-node split, sandbox 2026-10-30: 50 passed with
+  Brian2 (43 passed, 1 skipped with `--no-sim`), also with an exported
+  `module` function and a BASH_ENV redefining python, conda, module and
+  qsub in the caller's environment; 12 deliberate faults in the two scripts
+  (wrong levels, wrong box, guard removed, CHECK_ONLY ignored, a phase run
+  twice, FREEZE_ENC not decoded, the analysis waiting on one job, PRIOR_TOPOS
+  dropped, precheck ignored, comma accepted, a refused submission ignored,
+  DRYRUN submitting) were each caught; the stub probe stops R8 and R9 when
+  a stub is not exported. `DRYRUN=1 SETUP=lcdup bash launch_range_check.sh`
+  on the Block 4 test folder printed the three jobs. Skipped: davinci.
 
 ### 5.1 Projects and where their model runs
 
@@ -453,7 +597,7 @@ author, is the record for them.
 | Giulia's simulations | `campaign_cadex_hhgap_*` (`asn_campaign`) | `Phenomenological/Main/Giulia_Astro/ASD_fun_BD_cpp.py` (worker `lib_dir` = launch folder) (inferred) | `hpc/Phenomenological_finalv1/Giulia/` (relationship to `Giulia_Astro/` unresolved) | repository copy: Block 1; cluster copy: Block 5 |
 | rho1300 family, the 100-electrode project (confirmed 2026-10-30; 637 neurons, `C_MAX` 700 um in `submit_sweep_mixed.sh`) | `campaign_cadex_rho1300v*` (`asn_campaign`) | `Phenomenological/Main/ASD_fun_BD_cpp.py` (inferred) | root pipeline `hpc/Phenomenological_finalv1/` (the cluster copy may drift) | repository copy: Block 1; cluster copy: Block 5 |
 | MEAMA | `campaign_meama_rho1600_*` (`meama_campaign`) | `Phenomenological/MEAMA/ASD_fun_BD_cpp.py`, 37-D | launch code only (`hpc/Phenomenological_finalv1/MEAMA/`); the 37-D model is not in the repository | Block 5 |
-| LindaColloDUP | `campaign_lcdup15_*` (`lcdup_campaign`) | `Phenomenological/LindaColloDUP/ASD_fun_BD_cpp.py`, copied from `MEAMA/` | launch package (Block 4); the model file is not in the repository | inherits it from a clamped `MEAMA/` copy, or Block 4's `apply_refractory_clamp.py` (step 5a); its launcher refuses a mismatch with `REFRACTORY_CLAMP`. On a copy clamped by Block 5, step 5a prints `ALREADY CLAMPED` with exit 0 for `--check` and the patch, and the launcher reads the file as clamped (sandbox, 2026-10-30) |
+| LindaColloDUP | `campaign_lcdup15_*` (`lcdup_campaign`) | `Phenomenological/LindaColloDUP/ASD_fun_BD_cpp.py`, copied from `MEAMA/` [corrected 2026-10-30: `Astro-Neuron-Network/hpc/Phenomenological_finalv1/LindaColloDUP/ASD_fun_BD_cpp.py` in the git clone, copied from `MEAMA/` and ignored by git; Block 5 sees it as an ordinary file, not GIT CLONE, since it is untracked] | launch package (Block 4); the model file is not in the repository | inherits it from a clamped `MEAMA/` copy, or Block 4's `apply_refractory_clamp.py` (step 5a); its launcher refuses a mismatch with `REFRACTORY_CLAMP`. On a copy clamped by Block 5, step 5a prints `ALREADY CLAMPED` with exit 0 for `--check` and the patch, and the launcher reads the file as clamped (sandbox, 2026-10-30) |
 
 After each relaunch, Block 3's CODE section, run on the new campaign
 folders, must report CLAMPED for each (it reads the model file named by the
@@ -468,11 +612,14 @@ campaign's `job_args.json` `lib_dir`).
 | `qsub -q cpu submit_refractory_scan.sh` | per-run tables for every run | -- | up to 12 h |
 | `python apply_refractory_clamp.py --self-test` | Block 4 clamp patcher | embedded fixture | seconds |
 | `python apply_freeze_patch.py --self-test` | Block 4 freeze patcher | embedded fixture | seconds |
+| `python apply_box_patch.py --self-test` | Block 4 g box patcher | embedded fixture | seconds |
+| `python smoke_test_freeze.py` | Block 4, both patches and the axis set | the LindaColloDUP folder after both patches (numpy, matplotlib) | seconds |
 | `SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes DRYRUN=1 bash launch_LCDUP.sh` | Block 4 dry run | the LindaColloDUP folder on davinci | seconds |
 | `python3 clamp_cadex_copies.py --self-test` and `python3 smoke_test_clamp_cadex_copies.py` | Block 5 | embedded fixtures; a repository clone for the mock tree | seconds |
 | `python3 clamp_cadex_copies.py <repository root>` | the repository invariant of Block 1 | the repository | seconds |
 | `python3 smoke_test_range_check.py` | Block 6 | the repository pipeline, Brian2 and a C++ compiler | minutes |
-| `qsub -v SETUP=...,LIB_DIR=...,OUT=... submit_range_check.sh` | Block 6 on a setup | the setup's folder on davinci | hours (not timed on davinci) |
+| `qsub -v SETUP=...,LIB_DIR=...,OUT=... submit_range_check.sh` | Block 6 on a setup, one node | the setup's folder on davinci | hours (not timed on davinci) |
+| `SETUP=lcdup bash launch_range_check.sh` (first with `DRYRUN=1`) | Block 6 on a setup, two nodes and the analysis job | the setup's folder on davinci; `qsub` | seconds to submit; the jobs: hours (not timed on davinci) |
 
 ## 7. Not executable in the sandbox
 
@@ -487,7 +634,26 @@ campaign's `job_args.json` `lib_dir`).
 
 - Confirm Block 2's thresholds (t_early = 1 s; the late rule) (raised 2026-10-30).
 - LindaColloDUP: the VA/VR option and I_inj (raised 2026-10-29).
+  [closed 2026-10-30] VA -48 mV, VR -58.2 mV, I_inj 4.0 pA (section 4).
 - MEAMA: a clamped campaign in a folder of its own, or not (raised 2026-10-30).
+  [closed 2026-10-30] Superseded: the reruns are launched from folders of the
+  git clone (section 4); MEAMA's folder there is chosen when it is prepared.
+- LindaColloDUP at the low end of its conn_prob box (noted 2026-10-30, for
+  the range check to answer). Under the flat rule each directed pair is
+  wired independently, so a neuron's in-degree is Binomial(Nn - 1,
+  conn_prob). At conn_prob 0.01 and Nn = 159: mean in-degree 1.58,
+  20.4 % of the neurons (32.5 per network) receive no synapse, and the
+  largest strongly connected group holds 37 % of the neurons (weakly
+  connected: 95 %); at 0.02: 4.1 % without input, 91 % strongly connected;
+  at 0.05: 0.05 neurons per network without input, 99.9 %. 8.2 % of the
+  topologies drawn from U[0.01, 0.5] lie below 0.05. (Exact binomial values
+  and a Monte Carlo of the flat rule, 2000 networks per value, sandbox.)
+  Those networks may be driven mostly by the per-neuron bias and the noise
+  rather than by recurrence; the oat level 0.01 shows it.
+- The pipeline files of the LindaColloDUP folder in the clone are copies
+  outside git until the author sends them; versioning them in a separate
+  repository folder, matched to a campaign through the sha256 values in its
+  PROVENANCE file, would bring them under this spec (raised 2026-10-30).
 - Where this project's decision log lives (raised 2026-10-29).
 - The cluster folder of each project in section 5.1 (inferred paths) and that
   Block 5's report lists them all as CLAMPED (raised 2026-10-30).

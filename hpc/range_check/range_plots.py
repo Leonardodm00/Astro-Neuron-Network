@@ -54,7 +54,7 @@ def plot_oat(root, oat, runs, logx, style=STYLE):
     for ax, name in zip(axs.flat, axes_names):
         for c, lev in zip(colors, levels):
             s = oat[(oat.axis == name) & (oat.conn_level == lev)].sort_values('value')
-            ax.plot(s.value, s.rate_median, '-o', color=c, ms=3, label='conn_prob %.2f' % lev)
+            ax.plot(s.value, s.rate_median, '-o', color=c, ms=3, label='conn_prob %g' % lev)
             ax.fill_between(s.value, s.rate_min, s.rate_max, color=c, alpha=0.2, lw=0)
             nom = runs[(runs.phase == 'oat') & (runs.axis == 'nominal') & (runs.conn_level == lev)]
             if len(nom):
