@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
+import matplotlib.ticker  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 
 STYLE = dict(dpi=130, cmap='viridis', rate_floor_hz=0.01)
@@ -48,6 +49,8 @@ def plot_oat(root, oat, runs, logx, style=STYLE):
     fig, axs = plt.subplots(nrow, ncol, figsize=(4 * ncol, 2.8 * nrow), squeeze=False)
     levels = sorted(oat.conn_level.dropna().unique())
     colors = plt.get_cmap(style['cmap'])(np.linspace(0.1, 0.85, max(len(levels), 1)))
+    # one y scale for every panel, so an axis with no effect looks flat
+    ymax = 1.5 * max(float(np.nanmax(oat.rate_max)), float(np.nanmax(runs.mean_rate_hz)), 1.0)
     for ax, name in zip(axs.flat, axes_names):
         for c, lev in zip(colors, levels):
             s = oat[(oat.axis == name) & (oat.conn_level == lev)].sort_values('value')
@@ -59,7 +62,9 @@ def plot_oat(root, oat, runs, logx, style=STYLE):
         ax.set_title(name, fontsize=10)
         if name in logx:
             ax.set_xscale('log')
+            ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())   # no crowded minor labels
         ax.set_yscale('symlog', linthresh=0.1)
+        ax.set_ylim(0.0, ymax)
         ax.set_ylabel('mean rate [Hz]', fontsize=8)
         ax.tick_params(labelsize=7)
     for ax in list(axs.flat)[len(axes_names):]:
