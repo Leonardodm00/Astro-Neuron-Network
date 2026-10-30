@@ -32,6 +32,15 @@ Safety
     hours (default 6) may still be running a campaign, and patching would
     change the model for its remaining tasks. Such files are reported HELD and
     left untouched unless --force-running is given.
+    A folder from which one of your PBS jobs was launched and that qstat still
+    lists (queued, running, held; its PBS_O_WORKDIR or REPO_DIR is that folder)
+    is HELD as well, so tasks that have not started yet cannot pick up a
+    changed model; qdel those jobs first. Without qstat this check is skipped
+    and the report says so.
+    A copy tracked by a git clone (for example ~/ANN/Astro-Neuron-Network) is
+    never edited: a local edit would block every later "git pull" there. It
+    is reported GIT CLONE, and "git pull" in that clone brings the clamp
+    (main holds V since 0963b7b).
 
 Usage
     python3 clamp_cadex_copies.py                    # report; ROOT = /davinci-1/home/ldellamea/ANN
@@ -41,12 +50,15 @@ Usage
 Exit status
     0  every CAdEx copy found is clamped (after patching, with --apply)
     3  report mode: some copies are NOT CLAMPED (run again with --apply)
-    1  something was refused, held or failed (see the table), or no CAdEx copy was found
+    1  something was refused, held, failed or sits in a git clone (see the table),
+       or no CAdEx copy was found
 """
 import argparse
+import getpass
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -118,6 +130,67 @@ def find_copies(roots, max_depth):
     return sorted(set(out))
 
 
+def git_clone_of(path):
+    """Top folder of the git clone that tracks path, or None. With git installed
+    only a tracked file counts (only a tracked file can block a later git pull);
+    without git, any .git entry in the file's folder or above counts."""
+    folder = os.path.dirname(os.path.abspath(path))
+    try:
+        r = subprocess.run(['git', 'ls-files', '--error-unmatch', os.path.basename(path)], cwd=folder,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+                           timeout=30)
+        if r.returncode != 0:
+            return None
+        top = subprocess.run(['git', 'rev-parse', '--show-toplevel'], cwd=folder, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, universal_newlines=True, timeout=30)
+        return top.stdout.strip() or folder
+    except (OSError, subprocess.SubprocessError):
+        d = folder
+        while True:
+            if os.path.exists(os.path.join(d, '.git')):
+                return d
+            parent = os.path.dirname(d)
+            if parent == d:
+                return None
+            d = parent
+
+
+def pbs_jobs_by_folder(run=subprocess.run, user=None):
+    """Launch folders of the user's PBS jobs that qstat still lists (queued, running, held).
+
+    Returns (jobs, unknown, note): jobs maps the real path of a folder (a job's
+    PBS_O_WORKDIR or REPO_DIR) to job descriptions; unknown lists jobs whose
+    record names neither; note is non-empty when qstat could not be used."""
+    user = user or os.environ.get('USER') or getpass.getuser()
+    kw = dict(stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=120)
+    try:
+        r = run(['qstat', '-u', user], **kw)
+    except (OSError, subprocess.SubprocessError) as e:
+        return {}, [], 'qstat not available (%s): queued jobs NOT checked' % type(e).__name__
+    if r.returncode != 0:
+        return {}, [], 'qstat -u %s failed (exit %d): queued jobs NOT checked' % (user, r.returncode)
+    jobs, unknown = {}, []
+    for jid in re.findall(r'^\s*(\d+(?:\[\d*\])?)[.\s]', r.stdout, re.M):
+        try:
+            rec = run(['qstat', '-f', jid], **kw).stdout.replace('\n\t', '')   # qstat -f wraps with newline+TAB
+        except (OSError, subprocess.SubprocessError):
+            rec = ''
+        name = re.search(r'^\s*Job_Name = (\S+)', rec, re.M)
+        state = re.search(r'^\s*job_state = (\S+)', rec, re.M)
+        desc = '%s %s (state %s)' % (jid, name.group(1) if name else '?', state.group(1) if state else '?')
+        var = re.search(r'^\s*Variable_List = (.*)$', rec, re.M)
+        dirs = set()
+        for kv in (var.group(1).split(',') if var else []):
+            k, _, v = kv.partition('=')
+            if k.strip() in ('PBS_O_WORKDIR', 'REPO_DIR') and v.strip():
+                dirs.add(os.path.realpath(v.strip()))
+        for d in dirs:
+            jobs.setdefault(d, []).append(desc)
+        if not dirs:
+            unknown.append(desc)
+    return jobs, unknown, ''
+
+
 def newest_campaign_age_h(folder, now):
     """Hours since the newest campaign_*/ or campaign_*/<child>/ in the folder was written, or None."""
     newest = None
@@ -173,9 +246,11 @@ def apply_patch(path, text):
     return 'PATCHED', 'backup %s' % backup
 
 
-def scan(roots, apply=False, force_running=False, cfg=None):
-    """Classify (and with apply, patch) every copy; return the list of row dicts."""
+def scan(roots, apply=False, force_running=False, cfg=None, pbs=None):
+    """Classify (and with apply, patch) every copy; return the list of row dicts.
+    pbs: (jobs, unknown, note) as from pbs_jobs_by_folder(); queried when None."""
     cfg = dict(CFG, **(cfg or {}))
+    jobs = (pbs if pbs is not None else pbs_jobs_by_folder())[0]
     now = time.time()
     rows = []
     for path in find_copies(roots, cfg['max_depth']):
@@ -185,8 +260,18 @@ def scan(roots, apply=False, force_running=False, cfg=None):
             rows.append(dict(path=path, status='REFUSED', detail=err, age=age))
             continue
         status, detail, _ = classify_text(text)
+        clone = git_clone_of(path) if status == 'NOT CLAMPED' else None
+        if clone:
+            status, detail = 'GIT CLONE', ('tracked by the git clone %s: run "git pull" there (main holds V '
+                                           'since 0963b7b); this tool never edits a clone' % clone)
+        queued = jobs.get(os.path.realpath(os.path.dirname(path)), [])
+        if status == 'NOT CLAMPED' and queued and not apply:
+            detail = 'PBS jobs launched from this folder are in the queue: %s | %s' % ('; '.join(queued), detail)
         if apply and status == 'NOT CLAMPED':
-            if age is not None and age < cfg['recent_hours'] and not force_running:
+            if queued and not force_running:
+                status, detail = 'HELD', ('PBS jobs launched from this folder are in the queue: %s; qdel them '
+                                          'first (or --force-running)' % '; '.join(queued))
+            elif age is not None and age < cfg['recent_hours'] and not force_running:
                 status, detail = 'HELD', ('campaign output written %.1f h ago: a campaign may still be '
                                           'running here; stop it or use --force-running' % age)
             else:
@@ -198,19 +283,25 @@ def scan(roots, apply=False, force_running=False, cfg=None):
 def exit_code(rows, apply):
     statuses = [r['status'] for r in rows]
     cadex = [s for s in statuses if s != 'SKIP']
-    if not cadex or any(s in ('REFUSED', 'HELD', 'FAILED') for s in statuses):
+    if not cadex or any(s in ('REFUSED', 'HELD', 'FAILED', 'GIT CLONE') for s in statuses):
         return 1
     if any(s == 'NOT CLAMPED' for s in statuses):
         return 3
     return 0
 
 
-def report(rows, apply):
+def report(rows, apply, pbs=({}, [], '')):
+    _, unknown, note = pbs
+    if note:
+        print('WARNING: %s; stop the jobs of every folder you will patch before --apply' % note)
+    for u in unknown:
+        print('WARNING: launch folder of PBS job %s not readable; make sure it does not run from a '
+              'folder below' % u)
     print('%-12s %-9s %s' % ('status', 'output', 'file'))
     for r in rows:
         age = '-' if r['age'] is None else '%.1f h' % r['age']
         print('%-12s %-9s %s' % (r['status'], age, r['path']))
-        print('%-12s %-9s   %s' % ('', '', r['detail'][-150:]))
+        print('%-12s %-9s   %s' % ('', '', r['detail']))
     counts = {}
     for r in rows:
         counts[r['status']] = counts.get(r['status'], 0) + 1
@@ -218,8 +309,10 @@ def report(rows, apply):
     print("('output' = age of the newest campaign_* output in the file's folder)")
     code = exit_code(rows, apply)
     verdict = {0: 'ALL CAdEx COPIES CLAMPED', 3: 'SOME COPIES NOT CLAMPED: run again with --apply',
-               1: 'ATTENTION: refused, held or failed copies (or no CAdEx copy found)'}[code]
-    print('verdict: %s (exit %d)' % (verdict, code))
+               1: 'ATTENTION: copies refused, held, failed or in a git clone, see the table '
+                  '(or no CAdEx copy found)'}[code]
+    warned = bool(note or unknown)
+    print('verdict: %s (exit %d)%s' % (verdict, code, '; read the WARNING lines at the top' if warned else ''))
     return code
 
 
@@ -245,6 +338,7 @@ def self_test():
         ok = ok and bool(cond)
 
     print('SELF-TEST (embedded fixtures, temporary folder)')
+    NO_PBS = ({}, [], '')
     clamped = patch_text(_CADEX)
     expect('unclamped CAdEx -> NOT CLAMPED', classify_text(_CADEX)[0] == 'NOT CLAMPED')
     expect('patched text -> CLAMPED', classify_text(clamped)[0] == 'CLAMPED')
@@ -274,11 +368,11 @@ def self_test():
         old = time.time() - 30 * 3600
         for p in ('campaign_old/deep', 'campaign_old/' + TARGET, 'campaign_old'):   # children first
             os.utime(os.path.join(tmp, 'a', p), (old, old))
-        st = {os.path.basename(os.path.dirname(r['path'])): r['status'] for r in scan([tmp])}
+        st = {os.path.basename(os.path.dirname(r['path'])): r['status'] for r in scan([tmp], pbs=NO_PBS)}
         expect('report: 5 copies found, campaign output pruned', len(st) == 5)
         expect('report statuses', st == dict(a='NOT CLAMPED', b='CLAMPED', hh='SKIP', live='NOT CLAMPED',
                                               crlf='REFUSED'))
-        rows = scan([tmp], apply=True)
+        rows = scan([tmp], apply=True, pbs=NO_PBS)
         st = {os.path.basename(os.path.dirname(r['path'])): r['status'] for r in rows}
         expect('apply: a patched, live held (recent output), others unchanged',
                st == dict(a='PATCHED', b='CLAMPED', hh='SKIP', live='HELD', crlf='REFUSED'))
@@ -286,16 +380,80 @@ def self_test():
         expect('apply: backup written for a', any(n.startswith(TARGET + '.bak-clamp-')
                                                 for n in os.listdir(os.path.join(tmp, 'a'))))
         expect('apply: hh file byte-identical', open(os.path.join(tmp, 'hh', TARGET)).read() == _HH)
-        rows = scan([tmp], apply=True, force_running=True)
+        rows = scan([tmp], apply=True, force_running=True, pbs=NO_PBS)
         st = {os.path.basename(os.path.dirname(r['path'])): r['status'] for r in rows}
         expect('--force-running patches the live folder', st['live'] == 'PATCHED' and st['a'] == 'CLAMPED')
         os.remove(os.path.join(tmp, 'crlf', TARGET))
-        rows = scan([tmp], apply=True)
+        rows = scan([tmp], apply=True, pbs=NO_PBS)
         expect('second apply is a no-op, exit 0', exit_code(rows, True) == 0 and
                all(r['status'] in ('CLAMPED', 'SKIP') for r in rows))
         expect('report mode exit 3 when a copy is not clamped',
                exit_code([dict(status='NOT CLAMPED'), dict(status='CLAMPED')], False) == 3)
         expect('no CAdEx copy at all -> exit 1', exit_code([dict(status='SKIP')], False) == 1)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    tmp = tempfile.mkdtemp(prefix='clamp_selftest_git_')
+    try:
+        clone = os.path.join(tmp, 'Astro-Neuron-Network')
+        os.makedirs(os.path.join(clone, 'hpc'))
+        f = os.path.join(clone, 'hpc', TARGET)
+        open(f, 'w').write(_CADEX)
+        try:
+            for cmd in (['git', 'init', '-q'], ['git', 'add', 'hpc/' + TARGET]):
+                subprocess.run(cmd, cwd=clone, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            git_ok = subprocess.run(['git', 'ls-files', '--error-unmatch', 'hpc/' + TARGET], cwd=clone,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            os.makedirs(os.path.join(clone, '.git'))          # no git here: the .git-entry rule applies
+            git_ok = True
+        if git_ok:
+            rows = scan([tmp], apply=True, pbs=NO_PBS)
+            expect('copy tracked by a git clone -> GIT CLONE, never edited, exit 1',
+                   [r['status'] for r in rows] == ['GIT CLONE'] and open(f).read() == _CADEX
+                   and exit_code(rows, True) == 1
+                   and not [n for n in os.listdir(os.path.dirname(f)) if '.bak-clamp-' in n])
+        else:
+            print('  %-66s %s' % ('copy tracked by a git clone -> GIT CLONE', 'SKIPPED (git init failed)'))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    tmp = tempfile.mkdtemp(prefix='clamp_selftest_pbs_')
+    try:
+        q = os.path.join(tmp, 'MEAMA')
+        os.makedirs(q)
+        open(os.path.join(q, TARGET), 'w').write(_CADEX)
+        var = ('PBS_O_HOME=/home/u,PBS_O_LOGNAME=u,PBS_O_WORKDIR=/home/u,REPO_DIR=%s,NODETAG=intel,'
+               'SEED_BASE=862337136,CAMPAIGN_TAG=meama_rho1600_n01' % q)
+        wrapped = '\n\t'.join(var[i:i + 61] for i in range(0, len(var), 61))   # qstat -f wraps values
+        out = {('qstat', '-u', 'u'):
+               ('\npbsserver:\n                                                  Req\'d  Req\'d   Elap\n'
+                'Job ID          Username Queue    Jobname    SessID NDS TSK Memory Time  S Time\n'
+                '--------------- -------- -------- ---------- ------ --- --- ------ ----- - -----\n'
+                '1544754[].pbsse u        intel    meama_cam*    --    1  48    --  24:00 B   --\n'
+                '1545000.pbsserv u        cpu      STDIN       1234   1   1    --  01:00 R 00:10\n'),
+               ('qstat', '-f', '1544754[]'):
+               ('Job Id: 1544754[].pbsserver\n    Job_Name = meama_campaign\n    job_state = B\n'
+                '    Variable_List = %s\n    array = True\n' % wrapped),
+               ('qstat', '-f', '1545000'): 'Job Id: 1545000.pbsserver\n    Job_Name = STDIN\n    job_state = R\n'}
+
+        class _R(object):
+            def __init__(self, text):
+                self.returncode, self.stdout, self.stderr = 0, text, ''
+
+        jobs, unknown, note = pbs_jobs_by_folder(run=lambda cmd, **kw: _R(out[tuple(cmd)]), user='u')
+        expect('qstat parse: array job mapped to its REPO_DIR (wrapped line)',
+               jobs.get(os.path.realpath(q)) == ['1544754[] meama_campaign (state B)'] and note == '')
+        expect('qstat parse: job without a launch folder listed as unknown',
+               unknown == ['1545000 STDIN (state R)'])
+        rows = scan([tmp], apply=True, pbs=(jobs, unknown, note))
+        expect('queued job from the folder -> HELD, file untouched',
+               rows[0]['status'] == 'HELD' and open(os.path.join(q, TARGET)).read() == _CADEX)
+        rows = scan([tmp], pbs=(jobs, unknown, note))
+        expect('report mode names the queued job', rows[0]['status'] == 'NOT CLAMPED'
+               and '1544754[]' in rows[0]['detail'])
+
+        def _missing(cmd, **kw):
+            raise OSError('no qstat')
+        expect('no qstat -> a warning note, no jobs', pbs_jobs_by_folder(run=_missing, user='u')[2] != '')
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     try:
@@ -317,7 +475,7 @@ def main(argv=None):
     ap.add_argument('roots', nargs='*', default=[DEFAULT_ROOT])
     ap.add_argument('--apply', action='store_true', help='patch every NOT CLAMPED copy')
     ap.add_argument('--force-running', action='store_true',
-                    help='also patch folders whose campaign output is recent')
+                    help='also patch folders with recent campaign output or queued PBS jobs')
     ap.add_argument('--recent-hours', type=float, default=CFG['recent_hours'])
     ap.add_argument('--max-depth', type=int, default=CFG['max_depth'])
     ap.add_argument('--self-test', action='store_true')
@@ -330,9 +488,10 @@ def main(argv=None):
         return 1
     print('clamp_cadex_copies  %s  roots: %s  mode: %s' % (
         time.strftime('%Y-%m-%d %H:%M'), ' '.join(a.roots), 'APPLY' if a.apply else 'report'))
+    pbs = pbs_jobs_by_folder()
     rows = scan(a.roots, apply=a.apply, force_running=a.force_running,
-                cfg=dict(recent_hours=a.recent_hours, max_depth=a.max_depth))
-    return report(rows, a.apply)
+                cfg=dict(recent_hours=a.recent_hours, max_depth=a.max_depth), pbs=pbs)
+    return report(rows, a.apply, pbs)
 
 
 if __name__ == '__main__':

@@ -10,6 +10,9 @@ smoke_test_clamp_cadex_copies.py -- checks clamp_cadex_copies.py.
       only by the comment line and the flag; the HH file and the clamped file
       are untouched; one backup per patched file; a second --apply is a no-op
   S3  pure ASCII and LF-only bytes of the tool and of this test
+  S4  queued PBS jobs, through a stub qstat on PATH: a job whose REPO_DIR is
+      the folder (array id, wrapped Variable_List) makes --apply hold it
+      (exit 1, file untouched); with no job left, --apply patches it (exit 0)
 
 Run (any Python 3 with numpy; brian2 optional):
     python3 smoke_test_clamp_cadex_copies.py | tail -1
@@ -35,8 +38,8 @@ def check(cond, label):
     print('  %s %s' % ('ok  ' if cond else 'FAIL', label))
 
 
-def run(*args):
-    return subprocess.run([sys.executable, TOOL] + list(args), capture_output=True, text=True)
+def run(*args, **kw):
+    return subprocess.run([sys.executable, TOOL] + list(args), capture_output=True, text=True, **kw)
 
 
 def unclamp(text):
@@ -113,10 +116,54 @@ def s3():
         check(b.count(b'\r') == 0 and all(x < 128 for x in b), '%s: 0 CR, pure ASCII' % os.path.basename(p))
 
 
+STUB_QSTAT = '''#!/bin/bash
+# stub of PBS qstat for the smoke test: -u lists jobs, -f JOBID prints one record
+if [ "$1" = "-u" ]; then cat "$STUB_DIR/u.txt"; exit 0; fi
+if [ "$1" = "-f" ]; then f="$STUB_DIR/f_$(printf '%s' "$2" | tr -c '0-9' '_').txt"; [ -f "$f" ] && cat "$f"; exit 0; fi
+exit 1
+'''
+
+
+def s4():
+    print('\n[S4] queued PBS jobs through a stub qstat on PATH')
+    sys.path.insert(0, HERE)
+    import clamp_cadex_copies as tool
+    root = tempfile.mkdtemp(prefix='clamp_smoke_pbs_')
+    try:
+        meama = os.path.join(root, 'ANN', 'Phenomenological', 'MEAMA')
+        os.makedirs(meama)
+        model = os.path.join(meama, 'ASD_fun_BD_cpp.py')
+        open(model, 'w').write(tool._CADEX)
+        stub = os.path.join(root, 'bin')
+        os.makedirs(stub)
+        open(os.path.join(stub, 'qstat'), 'w').write(STUB_QSTAT)
+        os.chmod(os.path.join(stub, 'qstat'), 0o755)
+        var = 'PBS_O_HOME=/home/u,PBS_O_WORKDIR=/home/u,REPO_DIR=%s,NODETAG=intel,CAMPAIGN_TAG=x' % meama
+        open(os.path.join(stub, 'u.txt'), 'w').write(
+            'pbsserver:\nJob ID          Username Queue    Jobname    SessID NDS TSK Memory Time  S Time\n'
+            '--------------- -------- -------- ---------- ------ --- --- ------ ----- - -----\n'
+            '1544754[].pbsse u        intel    meama_cam*    --    1  48    --  24:00 B   --\n')
+        # the stub reads 'qstat -f 1544754[]' from f_1544754__.txt (non-digits of the id as '_')
+        open(os.path.join(stub, 'f_1544754__.txt'), 'w').write(
+            'Job Id: 1544754[].pbsserver\n    Job_Name = meama_campaign\n    job_state = B\n'
+            '    Variable_List = %s\n' % '\n\t'.join(var[i:i + 50] for i in range(0, len(var), 50)))
+        env = dict(os.environ, PATH=stub + os.pathsep + os.environ.get('PATH', ''), STUB_DIR=stub, USER='u')
+        r = run(os.path.join(root, 'ANN'), '--apply', env=env)
+        check(r.returncode == 1 and 'HELD' in r.stdout and '1544754[] meama_campaign (state B)' in r.stdout
+              and open(model).read() == tool._CADEX, 'queued job from MEAMA/ -> HELD, exit 1, file untouched')
+        open(os.path.join(stub, 'u.txt'), 'w').write('')
+        r = run(os.path.join(root, 'ANN'), '--apply', env=env)
+        check(r.returncode == 0 and 'PATCHED' in r.stdout and 'WARNING' not in r.stdout,
+              'no job left -> PATCHED, exit 0, no qstat warning')
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def main():
     s1()
     s2()
     s3()
+    s4()
     print('\nRESULT: %d passed, %d failed%s' % (RESULTS['passed'], RESULTS['failed'],
           (', %d skipped' % RESULTS['skipped']) if RESULTS['skipped'] else ''))
     return 0 if RESULTS['failed'] == 0 else 1

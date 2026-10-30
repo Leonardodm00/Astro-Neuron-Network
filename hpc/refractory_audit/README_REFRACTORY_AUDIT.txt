@@ -21,9 +21,14 @@ next to the scripts.
 BEFORE RERUNNING ANY PROJECT (since 2026-10-30; Giulia, MEAMA, LindaColloDUP,
 the rho1300 family) -- every project folder must run the clamped model:
   python3 clamp_cadex_copies.py --self-test | tail -1      (expect SELF-TEST: PASS)
-  qstat -u $USER                                           (stop what you will rerun)
+  qstat -u $USER                                           (qdel what you will rerun)
   python3 clamp_cadex_copies.py                            (report: every copy under ~/ANN)
   python3 clamp_cadex_copies.py --apply                    (expect "ALL CAdEx COPIES CLAMPED (exit 0)")
+  Statuses: CLAMPED fine; SKIP a Hodgkin-Huxley model, never touched; PATCHED
+  done (backup next to it); HELD left alone because a PBS job launched from
+  that folder is still in qstat, or campaign output is younger than 6 h:
+  qdel, then --apply again; GIT CLONE a file of a git clone: "git pull" there;
+  REFUSED nothing written, send the row in the chat.
 Relaunch with NEW campaign tags. After the first tasks start, the CODE section of
   bash check_refractory_nan.sh --sample 20 <new campaign folders>
 must say CLAMPED for each.

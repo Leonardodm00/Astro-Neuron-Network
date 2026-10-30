@@ -17,7 +17,8 @@ date of the decision.
 
 Last reviewed at commit: 4aa3fdb (first draft at 562a9fd; Block 5, the repository
 invariant of Block 1 and section 5.1 added on 2026-10-30 on top of 5f21a3d;
-Block 5's REFUSED rule for an unrecognised CAdEx line added on top of 4aa3fdb)
+Block 5's REFUSED rule for an unrecognised CAdEx line added on top of 4aa3fdb;
+its GIT CLONE status and queued-job hold added on top of 4e12a40)
 
 ## 0. Coverage
 
@@ -278,9 +279,21 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   marker `[refractory clamp]` present without the flag, or the term present
   but carried by no single-line `dV/dt = ... : volt`). An unrecognised CAdEx
   copy is therefore REFUSED, never SKIP.
-- With `--apply`, for each NOT CLAMPED file: HELD (left untouched) if a
+- A NOT CLAMPED file tracked by a git clone (git `ls-files --error-unmatch`
+  succeeds in its folder; without git, a `.git` entry in its folder or above)
+  becomes GIT CLONE, in both modes, and is never edited: a local edit would
+  block every later `git pull` there; the remedy is `git pull` in that clone.
+- Queued jobs: `qstat -u $USER`, then `qstat -f <id>` per job (lines rejoined
+  where qstat wraps them with newline + TAB); a job belongs to a folder when
+  its `Variable_List` has `PBS_O_WORKDIR` or `REPO_DIR` equal to that folder
+  (real paths). Report mode names such jobs in the file's row. Without
+  qstat, or for a job whose record names neither variable, a WARNING line is
+  printed and the verdict line points to it; the check then does not hold
+  anything (fail open, loudly).
+- With `--apply`, for each NOT CLAMPED file: HELD (left untouched) if a job
+  of the user still listed by qstat belongs to its folder, or if a
   `campaign_*` folder next to it, or one of that folder's children, was
-  modified less than H hours ago and `--force-running` is not given;
+  modified less than H hours ago, and `--force-running` is not given;
   otherwise backup `<file>.bak-clamp-<YYYYmmdd_HHMMSS>`, insert one comment
   line holding the marker above the dV/dt line, append ` (unless refractory)`,
   write atomically keeping the permissions, re-read, re-classify (must be
@@ -290,20 +303,25 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   folder, path, the dV/dt line or the reason) and a verdict line.
 - Exit status: 0 every CAdEx copy is clamped (after patching, with
   `--apply`); 3 report mode with at least one NOT CLAMPED copy; 1 any
-  REFUSED, HELD or FAILED row, a missing root, or no CAdEx copy at all.
+  REFUSED, HELD, FAILED or GIT CLONE row, a missing root, or no CAdEx copy
+  at all.
 - Custom code: the scan and the patch rule; no library does this. Same patch
   rule as `hpc/Phenomenological_finalv1/LindaColloDUP/apply_refractory_clamp.py`,
   with the CAdEx-term condition added and a neutral marker.
-- Test oracles: `--self-test` (22 checks: classification of each case, the
+- Test oracles: `--self-test` (28 checks: classification of each case, the
   patch adds only the comment line and the flag, HH untouched, HELD and
-  `--force-running`, backups, idempotence, exit codes, Brian2 parse of the
-  patched equations); `smoke_test_clamp_cadex_copies.py` (16 checks: a mock
-  of the cluster folders built from the repository's real model files,
-  report exit 3, apply exit 0, byte-exact diff, one backup per patched file,
-  second apply a no-op; bytes).
+  `--force-running`, backups, idempotence, exit codes, a copy tracked by a
+  git clone, qstat parsing with a wrapped `Variable_List` and a job without
+  one, HELD by a queued job, no qstat, Brian2 parse of the patched
+  equations); `smoke_test_clamp_cadex_copies.py` (18 checks: a mock of the
+  cluster folders built from the repository's real model files, report exit
+  3, apply exit 0, byte-exact diff, one backup per patched file, second apply
+  a no-op; bytes; a stub `qstat` on PATH: a queued job holds its folder, none
+  left lets the patch through).
 - Confirmed: yes 2026-10-30 for the goal (every project folder runs the
-  clamped model, section 4); inferred for the H = 6 h hold rule and the
-  pruned folder names.
+  clamped model, section 4); inferred for the H = 6 h hold rule, the pruned
+  folder names, the git-clone rule and the queued-job rule (the real
+  `qstat -f` layout on davinci has not been read).
 - Status: smoke-tested 2026-10-30 in the sandbox (skipped: davinci).
 
 ### 5.1 Projects and where their model runs
