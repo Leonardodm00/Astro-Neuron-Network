@@ -431,12 +431,15 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   gate version). davinci 2026-10-30, clone at 1a0932a, `--no-sim`: R8 found
   0 stub calls and then crashed on an unguarded index. The cause is the
   caller's environment reaching the job (an inherited `module` function, or
-  BASH_ENV) or a noexec /tmp: each reproduced the failure here; which one
-  applied on davinci is not known. R8 rebuilt as above, with guarded checks
-  and the job's output printed after a failed check; passes here under
-  both causes; rerun on davinci pending. With a noexec /tmp, R5 here and
-  S4 of `smoke_test_clamp_cadex_copies.py` also fail (they run programs
-  from the temporary folder); not changed.
+  BASH_ENV) or a noexec /tmp: each reproduced the failure here. On davinci
+  it was the inherited function: there `env` lists an exported `module`
+  function, BASH_ENV is unset, and neither /tmp nor home is mounted noexec.
+  R8 rebuilt as above, with guarded checks and the job's output printed
+  after a failed check; passes here under both causes, and on davinci
+  (clone at 1757d3e, `--no-sim`: 26 passed, 1 skipped). With a noexec /tmp,
+  R5 here and S4 of `smoke_test_clamp_cadex_copies.py` also fail (they run
+  programs from the temporary folder); not changed, since davinci's /tmp
+  allows programs.
 
 ### 5.1 Projects and where their model runs
 
