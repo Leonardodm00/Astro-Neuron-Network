@@ -1,45 +1,54 @@
 LindaColloDUP -- neurons-only campaign (MODE=Neuronal), set up from MEAMA
 ==========================================================================
-Target folder: /davinci-1/home/ldellamea/ANN/Phenomenological/LindaColloDUP/
+Folder (decided 2026-10-30): this folder of the git clone on davinci,
+  /davinci-1/home/ldellamea/ANN/Astro-Neuron-Network/hpc/Phenomenological_finalv1/LindaColloDUP/
+The launch package comes with git. The pipeline is copied in from the
+cluster's MEAMA/ folder (step 0) and stays out of git (.gitignore), as do the
+campaigns. Never run "git clean -x" in the clone: it deletes ignored files.
 Full procedure and the reasons behind each setting:
 project doc claude/LindaColloDUP_Campaign_Operations.md
 
-THIS ARCHIVE (unpack inside the target folder)
+THIS FOLDER (repository path hpc/Phenomenological_finalv1/LindaColloDUP/)
   launch_LCDUP.sh            launcher, login node; single source of truth for all settings
   submit_LCDUP.sh            PBS worker; never qsub it directly
   apply_freeze_patch.py      adds --freeze to the folder's own HPC_main_sweep.py copy
-  smoke_test_freeze.py       checks the freeze patch and the 13 free axes (no simulation)
-  apply_refractory_clamp.py  holds V at VR during t_ref (step 5a; decided 2026-10-30)
+  apply_box_patch.py         widens the g_ampa and g_nmda boxes to [0.01, 10] nS
+  smoke_test_freeze.py       checks both patches and the 13 free axes (no simulation)
+  apply_refractory_clamp.py  holds V at VR during t_ref (step 5a)
   APPLY_LCDUP.txt            this file
+  .gitignore                 keeps the pipeline copies, campaign_*/ and artifacts/ out of git
+  checks/                    sandbox checks behind the settings (not needed on davinci)
 
-NOT IN THE ARCHIVE: the pipeline. It is copied from the cluster's MEAMA/
-folder (the 37-D version, which is not on GitHub) in step 0.
+NOT IN GIT: the pipeline. It is copied from the cluster's MEAMA/ folder (the
+37-D version, which is not on GitHub) in step 0.
 
-DECIDED 2026-10-30: clamp (step 5a, then REFRACTORY_CLAMP=yes in steps 7-8).
+DECIDED 2026-10-30 (operations doc, section 2): VA -48 mV and VR -58.2 mV (the
+registry values), I_inj 4.0 pA, conn_prob U[0.01, 0.5], g_ampa and g_nmda
+[0.01, 10] nS, and the clamp (step 5a, then REFRACTORY_CLAMP=yes in steps 7-8).
 Without the clamp, a neuron driven above VT during its refractory period runs
-away to NaN and never spikes again; in the LindaColloDUP prior this silences
-most or all of the network in most runs (operations doc, section 3).
+away to NaN and never spikes again (operations doc, section 3).
+The launch (step 8) waits for the range check, which needs steps 0-5a done
+(see the note after step 7).
 
 ORDER OF OPERATIONS (paste one line at a time)
 
-0. create the folder and copy the 37-D pipeline from MEAMA/ (expect 8 files):
-cd /davinci-1/home/ldellamea/ANN/Phenomenological && mkdir LindaColloDUP && cp MEAMA/{HPC_main_sweep.py,HPC_single_run.py,ASD_fun_BD_cpp.py,aggregate_sweep.py,burst_metrics.py,burst_plots.py,seed_alloc.py,synapse_pdist.csv} LindaColloDUP/ && ls LindaColloDUP
+0. update the clone and copy the 37-D pipeline from MEAMA/ (expect the 8
+   files in the listing and NO output from git status: the copies are ignored):
+cd ~/ANN/Astro-Neuron-Network && git pull && cd hpc/Phenomenological_finalv1/LindaColloDUP && cp ~/ANN/Phenomenological/MEAMA/{HPC_main_sweep.py,HPC_single_run.py,ASD_fun_BD_cpp.py,aggregate_sweep.py,burst_metrics.py,burst_plots.py,seed_alloc.py,synapse_pdist.csv} . && ls && git status --short .
 
-1. copy LindaColloDUP_pkg.tar.gz into that folder with the MobaXterm file
-   browser (binary transfer, not paste), then unpack:
-cd /davinci-1/home/ldellamea/ANN/Phenomenological/LindaColloDUP && tar -xzf LindaColloDUP_pkg.tar.gz && ls
+1. nothing to unpack: the package files arrived with git pull in step 0.
 
-2. byte check of the delivered files (expect "0 CR 0 non-ASCII" five times):
-python3 -c "import sys;[print(p, open(p,'rb').read().count(b'\r'), 'CR', sum(b>127 for b in open(p,'rb').read()), 'non-ASCII') for p in sys.argv[1:]]" launch_LCDUP.sh submit_LCDUP.sh apply_freeze_patch.py smoke_test_freeze.py apply_refractory_clamp.py
+2. byte check of the package files (expect "0 CR 0 non-ASCII" six times):
+python3 -c "import sys;[print(p, open(p,'rb').read().count(b'\r'), 'CR', sum(b>127 for b in open(p,'rb').read()), 'non-ASCII') for p in sys.argv[1:]]" launch_LCDUP.sh submit_LCDUP.sh apply_freeze_patch.py apply_box_patch.py smoke_test_freeze.py apply_refractory_clamp.py
 
 3. environment and registry (expect "37"):
 conda activate brian_final && python -c "import HPC_main_sweep as S; print(S.N_DIMS)"
 
-4. freeze patch, then its smoke test (expect "CHECK OK", "PATCHED", then
-   "RESULT: 35 passed, 0 failed"):
-python apply_freeze_patch.py --check && python apply_freeze_patch.py && python smoke_test_freeze.py | tail -3
+4. freeze patch, box patch, then the smoke test (expect "CHECK OK" and
+   "PATCHED" for each patch, then "RESULT: 40 passed, 0 failed"):
+python apply_freeze_patch.py --check && python apply_freeze_patch.py && python apply_box_patch.py --check && python apply_box_patch.py && python smoke_test_freeze.py | tail -3
 
-5a. CLAMP (decided 2026-10-30; expect "SELF-TEST: PASS", "CHECK OK", "CLAMPED").
+5a. CLAMP (expect "SELF-TEST: PASS", "CHECK OK", "CLAMPED").
     If MEAMA/ was clamped first with clamp_cadex_copies.py (hpc/refractory_audit/),
     the copy from step 0 is already clamped and 5a prints "ALREADY CLAMPED ... nothing
     written" twice, exit 0: that is correct, go on to step 6.
@@ -47,13 +56,21 @@ python apply_refractory_clamp.py --self-test | tail -1 && python apply_refractor
 5b. (not used since 2026-10-30) without the clamp: skip 5a and use REFRACTORY_CLAMP=no in steps 7-8.
 
 6. probe, about 1-2 min on the login node: 2 tiny runs through the real worker
-   (expect the dV/dt line ending in "(unless refractory)" if you clamped,
-   "topo_00000 done: 2 ok", and NaN count 0 if you clamped), then clean up:
-mkdir -p artifacts && LCDUP_NO_ENV=1 NODETAG=probe CAMPAIGN_TAG=probe_check SEED_BASE=1000 N_TOPOLOGIES=1 C_MAX=120 SIMTIME=2 PBS_NCPUS=2 FREEZE_ENC=Cm:I_inj:VA@-50:DeltaA:VR@-55:EC50_ampa:EC50_nmda:alpha_syn:O_G:Omega_G bash submit_LCDUP.sh > artifacts/probe_check.log 2>&1; grep -E "dV/dt \(model|topo_00000 done" artifacts/probe_check.log; echo "NaN warnings: $(grep -c 'has NaN' artifacts/probe_check.log)"; rm -rf campaign_probe_check
+   (expect the dV/dt line ending in "(unless refractory)", "topo_00000 done: 2 ok"
+   and NaN count 0), then clean up:
+mkdir -p artifacts && LCDUP_NO_ENV=1 NODETAG=probe CAMPAIGN_TAG=probe_check SEED_BASE=1000 N_TOPOLOGIES=1 C_MAX=120 SIMTIME=2 PBS_NCPUS=2 FREEZE_ENC=Cm:I_inj:VA@-48:DeltaA:VR@-58.2:EC50_ampa:EC50_nmda:alpha_syn:O_G:Omega_G bash submit_LCDUP.sh > artifacts/probe_check.log 2>&1; grep -E "dV/dt \(model|topo_00000 done" artifacts/probe_check.log; echo "NaN warnings: $(grep -c 'has NaN' artifacts/probe_check.log)"; rm -rf campaign_probe_check
 
-7. dry run (expect Nn=159, the freeze list, "V clamp (t_ref): yes", two
-   "[dry run] qsub ... -J 0-651%2" lines and "[dry run] nothing submitted."):
+7. dry run (expect Nn=159, the freeze list with VA=-48 and VR=-58.2,
+   "conn_prob      : U[0.01, 0.5] per topology",
+   "g boxes        : g_ampa [0.01, 10.0] nS; g_nmda [0.01, 10.0] nS",
+   "V clamp (t_ref): yes", two "[dry run] qsub ... -J 0-651%2" lines and
+   "[dry run] nothing submitted."):
 SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes DRYRUN=1 bash launch_LCDUP.sh
+
+   BEFORE STEP 8 (decided 2026-10-30): the range check on two nodes, from the
+   range_check folder of the clone (README_RANGE_CHECK.txt there):
+cd ~/ANN/Astro-Neuron-Network/hpc/range_check && SETUP=lcdup bash launch_range_check.sh
+   Launch the campaign once its results have been discussed.
 
 8. launch (keep the "stop all: qdel ..." line; the launch also writes
    campaign_<tag>/PROVENANCE_<launch id>.txt):
@@ -67,7 +84,7 @@ python -c "import json,glob; f=sorted(glob.glob('campaign_lcdup15_rho1300_neur_n
     doc section 5): 32 topologies fit 20 h below ~2,250 s each and 24 h below
     ~2,700 s; a walltime kill loses only the topology in progress. Then the
     number of job error logs carrying Brian2's NaN warning (Brian2 writes to
-    stderr, so the .e files; expect 0 if you clamped):
+    stderr, so the .e files; expect 0):
 grep -h "topo_.* done:" ~/lcdup_campaign.o* | tail -5
 grep -l "variable 'V' has NaN" ~/lcdup_campaign.e* 2>/dev/null | wc -l
 

@@ -20,8 +20,11 @@
 #
 # The folder is self-contained: the pipeline (HPC_main_sweep.py etc., the
 # 37-D copy from the cluster's MEAMA/ folder, patched with
-# apply_freeze_patch.py), the seed ledger and the campaign output all live in
-# the folder that holds this script.
+# apply_freeze_patch.py and apply_box_patch.py), the seed ledger and the
+# campaign output all live in the folder that holds this script. Since
+# 2026-10-30 that folder is hpc/Phenomenological_finalv1/LindaColloDUP/ of the
+# git clone on davinci; .gitignore keeps the pipeline copies and the output
+# out of git (never run "git clean -x" there).
 # =============================================================================
 set -u
 
@@ -39,6 +42,15 @@ if ! grep -q "def _apply_freeze(" "${REPO_DIR}/HPC_main_sweep.py"; then
     echo "       Run  python3 apply_freeze_patch.py  in this folder first." >&2
     exit 2
 fi
+# g_ampa / g_nmda boxes widened to [0.01, 10] nS (decided 2026-10-30)
+N_BOX=$(grep -cF "[LindaColloDUP box 2026-10-30]" "${REPO_DIR}/HPC_main_sweep.py")
+if [ "$N_BOX" != "2" ]; then
+    echo "ERROR: ${REPO_DIR}/HPC_main_sweep.py lacks the g_ampa/g_nmda box patch (${N_BOX} of 2 markers)." >&2
+    echo "       Run  python3 apply_box_patch.py  in this folder first." >&2
+    exit 2
+fi
+G_BOXES="$(sed -nE 's/^[[:space:]]*\(([^,]+),[[:space:]]*([^)]+)\).*#[[:space:]]*[0-9]+[[:space:]]+(g_ampa|g_nmda)[[:space:]].*/\3 [\1, \2] nS/p' \
+    "${REPO_DIR}/HPC_main_sweep.py" | sed 's/[[:space:]]\{2,\}/ /g' | paste -sd ';' - | sed 's/;/; /g')"
 
 # ===========================================================================
 # SIZING -- per-simulation cost differs from MEAMA (Neuronal, Nn=159); see
@@ -69,11 +81,12 @@ MODE="${MODE:-Neuronal}"
 SWEEP_GROUP="${SWEEP_GROUP:-neuron_synapse}"
 # Axes taken out of SWEEP_GROUP: NAME = held at its nominal value,
 # NAME=VALUE = held at VALUE (natural units). Leaves 13 free axes.
-FREEZE="${FREEZE:-Cm,I_inj,VA=-50,DeltaA,VR=-55,EC50_ampa,EC50_nmda,alpha_syn,O_G,Omega_G}"
+# VA, VR at the registry values (decided 2026-10-30; equal to the nominals).
+FREEZE="${FREEZE:-Cm,I_inj,VA=-48,DeltaA,VR=-58.2,EC50_ampa,EC50_nmda,alpha_syn,O_G,Omega_G}"
 CONN_RULE="${CONN_RULE:-flat}"
 CONN_PERIODIC="${CONN_PERIODIC:-0}"
-CONN_PROB_LO="${CONN_PROB_LO:-0.1}"  # conn_prob ~ U[LO, HI], one draw per topology
-CONN_PROB_HI="${CONN_PROB_HI:-0.6}"
+CONN_PROB_LO="${CONN_PROB_LO:-0.01}" # conn_prob ~ U[LO, HI], one draw per topology (decided 2026-10-30)
+CONN_PROB_HI="${CONN_PROB_HI:-0.5}"
 STOA_GATE_LO="${STOA_GATE_LO:-1.0}"  # astrocyte contact gate: off (no astrocytes)
 STOA_GATE_HI="${STOA_GATE_HI:-1.0}"
 
@@ -203,6 +216,7 @@ echo "mode/group/rule: ${MODE} / ${SWEEP_GROUP} / ${CONN_RULE} (periodic=${CONN_
 echo "freeze         : ${FREEZE}"
 echo "V clamp (t_ref): ${CLAMP_STATE}   [${DV_LINE}]"
 echo "conn_prob      : U[${CONN_PROB_LO}, ${CONN_PROB_HI}] per topology"
+echo "g boxes        : ${G_BOXES}"
 echo "well / simtime : ${C_MAX} um / ${SIMTIME} s"
 echo "density        : ${DENSITY} neurons/mm^2, no astrocytes -> Nn=${NN_EXP}"
 echo "sizing         : N_TOPOLOGIES=${N_TOPOLOGIES_WORKER}  k=${K_PARAMS}  walltime ${WALLTIME}"
@@ -287,6 +301,7 @@ mkdir -p "${REPO_DIR}/campaign_${CAMPAIGN_TAG}"
     echo "density / well : ${DENSITY} neurons/mm^2, Nn=${NN_EXP} / ${C_MAX} um"
     echo "simtime        : ${SIMTIME} s"
     echo "conn_prob      : U[${CONN_PROB_LO}, ${CONN_PROB_HI}] (${CONN_RULE})"
+    echo "g boxes        : ${G_BOXES}"
     echo "sizing         : N_TOPOLOGIES=${N_TOPOLOGIES_WORKER} k=${K_PARAMS} walltime ${WALLTIME}"
     echo "jobs           :${QDEL_IDS}"
     echo "sha256         :"

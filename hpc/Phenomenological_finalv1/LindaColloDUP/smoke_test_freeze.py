@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-smoke_test_freeze.py -- checks the --freeze patch and the LindaColloDUP axis set.
+smoke_test_freeze.py -- checks the --freeze patch, the g box patch and the
+LindaColloDUP axis set.
 
-Run inside the LindaColloDUP folder, after apply_freeze_patch.py, with the
-campaign environment active (numpy + matplotlib; no brian2, no compilation):
+Run inside the LindaColloDUP folder, after apply_freeze_patch.py and
+apply_box_patch.py, with the campaign environment active (numpy + matplotlib;
+no brian2, no compilation):
 
     conda activate brian_final
     python smoke_test_freeze.py                 # ~10 s
@@ -21,7 +23,11 @@ Checks
   T6  build_axis_declaration: 13 run_args axes + conn_prob swept, frozen axes
       fixed at the right values, no gliotransmission axis swept
   T7  main() end to end with --n_topologies 0: job_args.json records the
-      13 free axes, the freeze list and the frozen values (no simulation)
+      13 free axes, the freeze list, the frozen values and the g boxes
+      (no simulation)
+  T8  the g box patch (decided 2026-10-30): g_ampa and g_nmda span
+      [0.01, 10] nS, both log-uniform, theta box [ln 0.01, ln 10]; the file
+      carries both markers
 """
 import argparse
 import json
@@ -33,8 +39,11 @@ import tempfile
 import numpy as np
 
 # The campaign's freeze list (keep identical to FREEZE in launch_LCDUP.sh).
-CAMPAIGN_FREEZE = ('Cm,I_inj,VA=-50,DeltaA,VR=-55,EC50_ampa,EC50_nmda,'
+CAMPAIGN_FREEZE = ('Cm,I_inj,VA=-48,DeltaA,VR=-58.2,EC50_ampa,EC50_nmda,'
                    'alpha_syn,O_G,Omega_G')
+# The g boxes after apply_box_patch.py (keep identical to BOXES there).
+CAMPAIGN_G_BOX = (0.01, 10.0)
+BOX_MARK = '[LindaColloDUP box 2026-10-30]'
 EXPECTED_FREE = {'Sigma', 'gbarA', 'delta_gA', 'tauA',
                  'U_0_ar', 'U_max', 'U_0_sr', 'Omega_f_sr', 'Omega_f_ar', 'Omega_d',
                  'g_ampa', 'g_nmda', 'x0'}
@@ -126,6 +135,16 @@ def main():
     untouched = [i for i in range(S.N_DIMS) if S.PARAM_NAMES[i] not in vals]
     check(np.array_equal(S.NOMINAL_PARAMS[untouched], nominal0[untouched]),
           'no other nominal value changed')
+    # The campaign's VA/VR values equal the registry nominals, so the checks
+    # above cannot see a broken NAME=VALUE path; test it with a value that is not.
+    reset()
+    kva = S.PARAM_NAMES.index('VA')
+    probe = float(nominal0[kva]) - 2.0
+    S._apply_freeze('VA=%g' % probe, group)
+    check(abs(S.NOMINAL_PARAMS[kva] - probe) < 1e-12 and abs(probe - nominal0[kva]) > 1.0,
+          'NAME=VALUE overrides a nominal (VA=%g, nominal %g)' % (probe, nominal0[kva]))
+    reset()
+    S._apply_freeze(a.freeze, group)
 
     print('\n[T5] bad freeze lists are refused')
     for bad, why in (('NoSuchAxis', 'unknown name'),
@@ -182,9 +201,26 @@ def main():
             if v is not None:
                 check(abs(fx.get(name, float('nan')) - v) < 1e-12,
                       'job_args fixed_axes %s == %g' % (name, v))
+        sw = ja.get('_axis_declaration', {}).get('swept_axes', {})
+        check(all(abs(sw.get(g, {}).get('low', -1) - CAMPAIGN_G_BOX[0]) < 1e-12
+                  and abs(sw.get(g, {}).get('high', -1) - CAMPAIGN_G_BOX[1]) < 1e-12
+                  and sw.get(g, {}).get('log') is True for g in ('g_ampa', 'g_nmda')),
+              'job_args swept_axes g_ampa, g_nmda == [%g, %g] nS, log' % CAMPAIGN_G_BOX)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
         reset()
+
+    print('\n[T8] g box patch')
+    src = open(os.path.join(here, 'HPC_main_sweep.py'), encoding='utf-8').read()
+    check(src.count(BOX_MARK) == 2, 'HPC_main_sweep.py carries both box markers (got %d)' % src.count(BOX_MARK))
+    for g in ('g_ampa', 'g_nmda'):
+        k = S.PARAM_NAMES.index(g)
+        lo, hi = (float(x) for x in S.PARAM_BOUNDS[k])
+        tlo, thi = (float(x) for x in S.PARAM_BOUNDS_THETA[k])
+        check(abs(lo - CAMPAIGN_G_BOX[0]) < 1e-12 and abs(hi - CAMPAIGN_G_BOX[1]) < 1e-12
+              and k in S.LOG_PARAMS
+              and abs(tlo - np.log(CAMPAIGN_G_BOX[0])) < 1e-12 and abs(thi - np.log(CAMPAIGN_G_BOX[1])) < 1e-12,
+              '%s box [%g, %g] nS, log, theta [%.4f, %.4f]' % (g, lo, hi, tlo, thi))
 
     print('\n' + '=' * 72)
     print('RESULT: %d passed, %d failed' % (_n_pass, _n_fail))

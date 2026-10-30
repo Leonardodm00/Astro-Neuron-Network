@@ -41,6 +41,10 @@ if ! grep -q "def _apply_freeze(" "${REPO_DIR}/HPC_main_sweep.py"; then
     echo "ERROR: ${REPO_DIR}/HPC_main_sweep.py lacks the --freeze patch." >&2
     exit 2
 fi
+if [ "$(grep -cF "[LindaColloDUP box 2026-10-30]" "${REPO_DIR}/HPC_main_sweep.py")" != "2" ]; then
+    echo "ERROR: ${REPO_DIR}/HPC_main_sweep.py lacks the g_ampa/g_nmda box patch (apply_box_patch.py)." >&2
+    exit 2
+fi
 if [ -n "${SEED_BASE:-}" ] && ! [ "$SEED_BASE" -ge 0 ] 2>/dev/null; then
     echo "ERROR: SEED_BASE=${SEED_BASE} is not a non-negative integer." >&2
     exit 2
@@ -59,8 +63,8 @@ MODE="${MODE:-Neuronal}"
 SWEEP_GROUP="${SWEEP_GROUP:-neuron_synapse}"
 CONN_RULE="${CONN_RULE:-flat}"
 CONN_PERIODIC="${CONN_PERIODIC:-0}"
-CONN_PROB_LO="${CONN_PROB_LO:-0.1}"
-CONN_PROB_HI="${CONN_PROB_HI:-0.6}"
+CONN_PROB_LO="${CONN_PROB_LO:-0.01}"
+CONN_PROB_HI="${CONN_PROB_HI:-0.5}"
 STOA_GATE_LO="${STOA_GATE_LO:-1.0}"
 STOA_GATE_HI="${STOA_GATE_HI:-1.0}"
 FREEZE="$(printf '%s' "$FREEZE_ENC" | tr ':@' ',=')"
