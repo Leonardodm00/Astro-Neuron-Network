@@ -1,43 +1,57 @@
 #!/usr/bin/env python3
 """
-smoke_test_range_check.py -- checks of hpc/range_check/ (specs/SPEC.md Block 6).
+smoke_test_range_check.py -- checks of hpc/range_check/ (specs/SPEC.md Block 6),
+the standard prior range calibration: the corners of a setup's prior box and
+random cells of its 7-bin grid.
 
-  R1  oat design on the repository's 36-D root pipeline: every free axis with
-      lo < hi gets K points, each point differs from the nominal theta on exactly
-      one axis, the end points lie on the theta box, padding to n_workers x k
-  R2  the same pipeline with the LindaColloDUP freeze patch and freeze list:
-      13 free axes, the frozen ones absent, VA/VR held at the freeze values;
-      a list with values off the nominal shows that NAME=VALUE is applied
+  R1  corner design on the repository's 36-D root pipeline (23 free axes +
+      conn_prob = 24 dimensions): a two-level fraction of 16,384 runs of
+      resolution >= 5, no main effect or two-axis interaction aliased with
+      another (Gram check), every column balanced; per conn level 8,192
+      corners in 8 topologies x 48 workers x k=22 slots with 256 centre
+      points; every design vector at the bounds its codes name, the inactive
+      axes at nominal; the two levels together are the design
+  R2  the same pipeline with the LindaColloDUP freeze (13 axes + conn_prob =
+      14): the full factorial, each level all 2^13 corners exactly once; VA,
+      VR held at -48, -58.2 mV in every vector, and at -50, -55 mV with a
+      list off the nominal
   R3  --rc-like: parsing the rebuilt argument list reproduces every job_args value
-  R4  37-D Giulia copy: the design builds for its synapse_astro group (22 axes)
-  R5  end to end (needs Brian2 and a C++ compiler): oat phase on a tiny
-      Neuronal network (Nn 12, 100 um, 0.3 s, 2 workers, K = 2, R = 1), every
-      design point found once in the sidecars; prior phase 2 runs; the analysis
-      labels every oat run; refuses an unclamped model and an occupied folder
-  R6  analysis on synthetic runs: Poisson trains at 5 Hz give a mean rate within
-      5 % (3 Poisson SD); a silent run gives active fraction 0 and is 'silent'
-  R7  bytes: pure ASCII, LF only, in every file of this folder
-  R8  submit_range_check.sh with module, conda and python replaced by stub
+  R4  37-D Giulia copy: the corner and interior designs build for synapse_astro
+  R5  interior design with the LindaColloDUP freeze: 2,352 cells per level (7
+      topologies x 48 workers x k=7), every value a bin midpoint, the bins of
+      every axis uniform (chi-square), conn_prob at the 7 bin midpoints of
+      [0.01, 0.5], the same seed giving the same cells
+  R6  end to end (needs Brian2 and a C++ compiler): corners level 0 and
+      interior level 0 on a tiny Neuronal network (--rc-subset 4, 2 workers);
+      every run labelled from its theta (the 4 corners with the design's
+      codes, the 4 cells with its bins); the analysis tables and the three
+      figures are written; refuses an occupied folder and an unclamped model
+  R7  analysis on synthetic runs with a known effect: Poisson trains at 2 Hz
+      with axis A at its lower bound and 8 Hz at its upper bound give
+      E_A = log10(8.01 / 2.01) within 0.05 and |E| < 0.05 for the inert B and
+      conn_prob; interior medians follow 0.5 x 2^bin for A and stay flat for
+      B; a run off the grid is 'unmatched' and the analysis exits 1
+  R8  bytes: pure ASCII, LF only, in every file of this folder
+  R9  submit_range_check.sh with module, conda and python replaced by stub
       shell functions, in an environment built from scratch (only PATH kept;
-      see the comment above STUB_FUNCS); a probe first confirms the stubs
-      are the functions the job's shell sees, else R8 stops. For SETUP=lcdup
-      it calls range_check.py 3 times (oat at 0.01 0.255 0.5) and once (prior),
-      then the analysis and the plots, with the LindaColloDUP settings;
-      SETUP=giulia finds LIKE in the hhgap_v5 campaign, uses conn_prob 0.1
-      0.35 0.6, passes EXTRA to every phase and OAT_EXTRA to the oat phases
-      only; FREEZE_ENC is decoded; PHASES=oat / prior / none and ANALYZE
-      select what runs; CHECK_ONLY=1 runs nothing; an lcdup folder without
-      the g box patch, a bad PHASES and an unknown SETUP exit 2
-  R9  launch_range_check.sh with a stub qsub, in the same sealed environment
-      (probed first like R8, so the real qsub is never reached and no job is
-      ever submitted): three jobs (oat on intel, prior x16 on cpu, the
-      analysis on cpu with 8 cores held by depend=afterany on the first two),
-      one OUT and the pass-through variables in all three; DRYRUN=1, a failed
+      see the comment above STUB_FUNCS); a probe first confirms the stubs are
+      the functions the job's shell sees, else R9 stops. For SETUP=lcdup:
+      corners at levels 0 1, interior at levels 0..6, the analysis and the
+      plots, with the LindaColloDUP settings; giulia finds LIKE in the
+      hhgap_v5 campaign; EXTRA reaches every call; FREEZE_ENC is decoded;
+      PHASES, ANALYZE and BINS select what runs; CHECK_ONLY=1 runs nothing; an
+      lcdup folder without the g box patch, a bad PHASES and an unknown SETUP
+      exit 2
+  R10 launch_range_check.sh with a stub qsub, in the same sealed environment
+      (probed first like R9, so the real qsub is never reached): the corners
+      job on intel and the interior job on cpu (48 cores, 24 h each), the
+      analysis on cpu with 8 cores held by depend=afterany on both, one OUT
+      and the pass-through variables in all three; DRYRUN=1, a failed
       precheck and a comma in a passed variable submit nothing; a failed
       second submission stops there and names the job to qdel
 
-Run:  python3 smoke_test_range_check.py | tail -1        (about 2 min with R5)
-      python3 smoke_test_range_check.py --no-sim          (skip R5)
+Run:  python3 smoke_test_range_check.py | tail -1        (about 2 min with R6)
+      python3 smoke_test_range_check.py --no-sim          (skip R6)
 """
 import json
 import os
@@ -82,10 +96,11 @@ def make_lib(dst, src=PIPE, freeze_patch=False):
 
 
 def in_subprocess(lib, body):
-    """Run `body` with range_check imported as RC and the setup module as S, in a
-    fresh interpreter (each pipeline copy defines its own HPC_main_sweep)."""
+    """Run `body` with range_check imported as RC, range_design as RD and the
+    setup module as S, in a fresh interpreter (each pipeline copy defines its
+    own HPC_main_sweep). The body prints one JSON line last."""
     code = ('import sys, json\nsys.path.insert(0, %r)\nimport numpy as np\nimport range_check as RC\n'
-            'S = RC.load_sweep_module(%r)\n' % (HERE, lib)) + body
+            'import range_design as RD\nS = RC.load_sweep_module(%r)\n' % (HERE, lib)) + body
     r = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
     if r.returncode != 0:
         print(r.stdout[-2000:], r.stderr[-3000:])
@@ -93,53 +108,88 @@ def in_subprocess(lib, body):
     return json.loads(r.stdout.strip().splitlines()[-1])
 
 
-DESIGN_BODY = '''
+CORNER_BODY = '''
 args = S.build_parser().parse_args(%r)
-free = RC.free_axes(S, args)
-nominal, pts, labels = RC.oat_design(S, free, 7)
-k, padded = RC.pad_design(nominal, pts, 48)
-B = S.PARAM_BOUNDS_THETA
-one_axis = all(set(np.flatnonzero(p != nominal).tolist()) <= {l['index']} for p, l in zip(pts, labels))
-n_at_nominal = sum(1 for p in pts if not np.any(p != nominal))
-ends = all(abs(p[l['index']] - B[l['index'], 0]) < 1e-12 or abs(p[l['index']] - B[l['index'], 1]) < 1e-12
-           for i, (p, l) in enumerate(zip(pts, labels)) if i %% 7 in (0, 6))
-lohi = [int(j) for j in free if B[j, 1] > B[j, 0]]
-nat = S.theta_to_natural(nominal)
-print(json.dumps(dict(free=[S.PARAM_NAMES[j] for j in free], n_lohi=len(lohi), n_pts=len(pts), k=k,
-                      n_at_nominal=n_at_nominal,
-                      n_pad=len(padded) - len(pts), one_axis=one_axis, ends=ends,
-                      va=float(nat[S.PARAM_NAMES.index('VA')]), vr=float(nat[S.PARAM_NAMES.index('VR')]))))
+space = RC.design_space(S, args)
+free = space['free']
+d = len(free) + (1 if space['has_conn'] else 0)
+X, info = RD.two_level_design(d, RC.CFG['corner_budget'], np.random.default_rng(RC.CFG['seed'] + 20000),
+                              RC.CFG['max_resolution'])
+res = dict(d=d, n_free=len(free), kind=info['kind'], n_runs=info['n_runs'], resolution=info['resolution'],
+           balanced=bool((X.sum(0) == 0).all()), distinct=len({tuple(r) for r in X}),
+           conn_box=list(space['conn_box']), levels=[])
+if %r:
+    res['aliased'] = len(RD.aliased_low_order_pairs(X))
+iva, ivr = S.PARAM_NAMES.index('VA'), S.PARAM_NAMES.index('VR')
+rebuilt = set()
+inactive = [j for j in range(S.N_DIMS) if j not in free]
+for L in (0, 1):
+    rc = RC.rc_parser().parse_args(['--rc-phase', 'corners', '--rc-level', str(L), '--rc-out', 'x'])
+    design, padded, conn = RC.build_level(S, args, rc, 48)
+    P = np.array(padded)
+    codes = np.array(design['codes'])
+    nd = design['n_design']
+    Pd = P[:nd][:, free]
+    at_bounds = bool(np.all(np.where(codes > 0, Pd == space['hi'], Pd == space['lo'])))
+    centre = bool(np.all(P[nd:][:, free] == 0.5 * (space['lo'] + space['hi'])))
+    nat = np.array([S.theta_to_natural(p) for p in P])
+    rebuilt |= {tuple(int(x) for x in c) + ((-1 if L == 0 else 1),) for c in codes}
+    res['levels'].append(dict(conn=conn, n_design=nd, n_padding=design['n_padding'], k=design['k'],
+                              n_topologies=design['n_topologies'], n_slots=design['n_slots'],
+                              at_bounds=at_bounds, centre=centre, codes_pm=bool(set(np.unique(codes)) <= {-1, 1}),
+                              distinct=len({tuple(c) for c in codes}),
+                              inactive_nominal=bool(np.all(P[:, inactive] == space['nominal'][inactive])),
+                              va=sorted(set(np.round(nat[:, iva], 9).tolist())),
+                              vr=sorted(set(np.round(nat[:, ivr], 9).tolist()))))
+res['union_is_design'] = rebuilt == {tuple(int(x) for x in r) for r in X}
+print(json.dumps(res))
 '''
 
 
 def r1(tmp):
-    print('\n[R1] oat design, 36-D root pipeline')
-    d = in_subprocess(make_lib(os.path.join(tmp, 'lib36')), DESIGN_BODY % (
-        ['--out_dir', 'x', '--mode', 'Neuronal', '--sweep_group', 'neuron_synapse'],))
+    print('\n[R1] corner design, 36-D root pipeline (24 dimensions: a fraction)')
+    d = in_subprocess(make_lib(os.path.join(tmp, 'lib36')), CORNER_BODY % (
+        ['--out_dir', 'x', '--mode', 'Neuronal', '--sweep_group', 'neuron_synapse'], True))
     check(d is not None, 'design built')
-    if d:
-        check(d['n_pts'] == 7 * d['n_lohi'] and d['n_lohi'] == len(d['free']) == 23,
-              '23 free axes x 7 points = %d' % d['n_pts'])
-        check(d['one_axis'] and d['ends'], 'each point moves only its own axis (%d coincide with nominal); '
-              'end points on the theta box' % d['n_at_nominal'])
-        check(d['k'] == 4 and d['n_pad'] == 48 * 4 - 161, 'padding to 48 x k (k=%d, %d nominal)' % (d['k'], d['n_pad']))
+    if not d:
+        return
+    check(d['n_free'] == 23 and d['d'] == 24 and d['kind'] == 'fraction' and d['n_runs'] == 16384
+          and d['resolution'] >= 5, '23 free axes + conn_prob: fraction of 16384 runs, resolution %s' % d['resolution'])
+    # quality floor: the seeded greedy search reaches 8 here; without its forbidden-region
+    # update it falls to 6 (still valid, as min_word_length verifies, but weaker)
+    check(d['resolution'] >= 7, 'the generator search keeps its quality (resolution %s >= 7)' % d['resolution'])
+    check(d['aliased'] == 0 and d['balanced'] and d['distinct'] == 16384,
+          'no main effect or two-axis interaction aliased (Gram check); columns balanced; 16384 distinct corners')
+    lv = d['levels']
+    check(all(x['n_design'] == 8192 and x['n_padding'] == 256 and x['k'] == 22 and x['n_topologies'] == 8
+              and x['n_slots'] == 8448 for x in lv),
+          'per conn level: 8192 corners + 256 centre points = 8 topologies x 48 workers x k=22')
+    check(all(x['at_bounds'] and x['centre'] and x['codes_pm'] and x['inactive_nominal'] for x in lv),
+          'every vector at the bounds its codes name; centre points at the box centre; inactive axes at nominal')
+    check(lv[0]['conn'] == d['conn_box'][0] and lv[1]['conn'] == d['conn_box'][1] and d['union_is_design'],
+          'conn_prob at its lower (level 0) and upper (level 1) bound; the two levels together are the design')
 
 
 def r2(tmp):
-    print('\n[R2] oat design with the LindaColloDUP freeze')
-    d = in_subprocess(make_lib(os.path.join(tmp, 'lib36f'), freeze_patch=True), DESIGN_BODY % (
-        ['--out_dir', 'x', '--mode', 'Neuronal', '--sweep_group', 'neuron_synapse', '--freeze', LCDUP_FREEZE],))
+    print('\n[R2] corner design with the LindaColloDUP freeze (14 dimensions: the full factorial)')
+    lib = make_lib(os.path.join(tmp, 'lib36f'), freeze_patch=True)
+    argv = ['--out_dir', 'x', '--mode', 'Neuronal', '--sweep_group', 'neuron_synapse', '--freeze', LCDUP_FREEZE,
+            '--conn_prob_lo', '0.01', '--conn_prob_hi', '0.5']
+    d = in_subprocess(lib, CORNER_BODY % (argv, False))
     check(d is not None, 'design built')
-    if d:
-        frozen = {x.split('=')[0] for x in LCDUP_FREEZE.split(',')}
-        check(len(d['free']) == 13 and not frozen & set(d['free']), '13 free axes, none frozen: %s' % d['free'])
-        check(abs(d['va'] + 48) < 1e-12 and abs(d['vr'] + 58.2) < 1e-12, 'VA, VR held at -48, -58.2 mV')
-        check(d['n_pts'] == 91 and d['k'] == 2 and d['n_pad'] == 5, '91 points, k=2, 5 nominal')
+    if not d:
+        return
+    lv = d['levels']
+    check(d['n_free'] == 13 and d['kind'] == 'full' and d['n_runs'] == 16384 and d['union_is_design'],
+          '13 free axes + conn_prob: the full factorial of 16384 corners')
+    check(all(x['distinct'] == 8192 for x in lv) and lv[0]['conn'] == 0.01 and lv[1]['conn'] == 0.5,
+          'each level holds all 2^13 corners once; conn_prob 0.01 and 0.5')
+    check(all(x['va'] == [-48.0] and x['vr'] == [-58.2] for x in lv), 'VA, VR held at -48, -58.2 mV in every vector')
     # -48 / -58.2 are also the registry nominals: a list off the nominal shows
     # that NAME=VALUE really reaches the design
-    d2 = in_subprocess(os.path.join(tmp, 'lib36f'), DESIGN_BODY % (
-        ['--out_dir', 'x', '--mode', 'Neuronal', '--sweep_group', 'neuron_synapse', '--freeze', OFF_NOMINAL_FREEZE],))
-    check(d2 is not None and abs(d2['va'] + 50) < 1e-12 and abs(d2['vr'] + 55) < 1e-12,
+    argv2 = [a if a != LCDUP_FREEZE else OFF_NOMINAL_FREEZE for a in argv]
+    d2 = in_subprocess(lib, CORNER_BODY % (argv2, False))
+    check(d2 is not None and all(x['va'] == [-50.0] and x['vr'] == [-55.0] for x in d2['levels']),
           'off-nominal list: VA, VR held at -50, -55 mV')
 
 
@@ -163,99 +213,198 @@ def r4(tmp):
     print('\n[R4] 37-D Giulia copy')
     if not os.path.isfile(os.path.join(GIULIA, 'HPC_main_sweep.py')):
         return skip('no Giulia copy')
-    d = in_subprocess(make_lib(os.path.join(tmp, 'lib37g'), src=GIULIA), DESIGN_BODY % (
-        ['--out_dir', 'x', '--mode', 'Full', '--sweep_group', 'synapse_astro'],))
-    check(d is not None and len(d['free']) == 22 and d['one_axis'],
-          'synapse_astro: 22 free axes, one-axis points (%s)' % (d or {}).get('n_pts'))
+    body = '''
+args = S.build_parser().parse_args(['--out_dir', 'x', '--mode', 'Full', '--sweep_group', 'synapse_astro'])
+out = {}
+for phase in ('corners', 'interior'):
+    rc = RC.rc_parser().parse_args(['--rc-phase', phase, '--rc-level', '0', '--rc-out', 'x'])
+    design, padded, conn = RC.build_level(S, args, rc, 48)
+    out[phase] = dict(n_free=len(design['free_axes']), n_design=design['n_design'], n_slots=design['n_slots'],
+                      info=design.get('corner_design'))
+print(json.dumps(out))
+'''
+    d = in_subprocess(make_lib(os.path.join(tmp, 'lib37g'), src=GIULIA), body)
+    ok = d is not None
+    check(ok and d['corners']['n_free'] == 22 and d['corners']['info']['kind'] == 'fraction'
+          and d['corners']['info']['resolution'] >= 5 and d['corners']['n_design'] == 8192,
+          'synapse_astro: 22 free axes; corners a fraction of resolution %s, 8192 per level'
+          % (d['corners']['info']['resolution'] if ok else '?'))
+    check(ok and d['interior']['n_design'] == d['interior']['n_slots'] == 2352,
+          'interior: 2352 cells per level')
 
 
 def r5(tmp):
-    print('\n[R5] end to end on a tiny network')
-    import importlib.util
-    if importlib.util.find_spec('brian2') is None:
-        return skip('brian2 not importable')
-    lib = os.path.join(tmp, 'lib36')
-    out = os.path.join(tmp, 'out')
-    common = ['--lib_dir', lib, '--mode', 'Neuronal', '--sweep_group', 'neuron_synapse', '--Nn', '12',
-              '--c_max', '100', '--n_workers', '2', '--rc-out', out, '--rc-simtime', '0.3']
-    tool = [sys.executable, os.path.join(HERE, 'range_check.py')]
-    r = subprocess.run(tool + ['--rc-phase', 'oat', '--rc-conn', '0.3', '--rc-points', '2',
-                               '--rc-topologies', '1'] + common, capture_output=True, text=True)
-    check(r.returncode == 0, 'oat phase exit 0')
-    if r.returncode:
-        print(r.stdout[-3000:], r.stderr[-3000:])
+    print('\n[R5] interior design with the LindaColloDUP freeze')
+    body = '''
+from scipy import stats
+args = S.build_parser().parse_args(%r)
+space = RC.design_space(S, args)
+free = space['free']
+res = dict(levels=[])
+for L in range(7):
+    rc = RC.rc_parser().parse_args(['--rc-phase', 'interior', '--rc-level', str(L), '--rc-out', 'x'])
+    design, padded, conn = RC.build_level(S, args, rc, 48)
+    P = np.array(padded)[:, free]
+    cells = np.array(design['cells'])
+    on_mid = all(RD.bin_of(P[r, a], space['lo'][a], space['hi'][a], 7) == cells[r, a]
+                 for r in range(len(P)) for a in range(len(free)))
+    pmin = min(stats.chisquare(np.bincount(cells[:, a], minlength=7)).pvalue for a in range(len(free)))
+    res['levels'].append(dict(conn=conn, n=design['n_design'], k=design['k'], n_topologies=design['n_topologies'],
+                              on_mid=on_mid, pmin=pmin, first=cells[0].tolist()))
+rc = RC.rc_parser().parse_args(['--rc-phase', 'interior', '--rc-level', '0', '--rc-out', 'x'])
+again = RC.build_level(S, args, rc, 48)[0]['cells']
+rc1 = RC.rc_parser().parse_args(['--rc-phase', 'interior', '--rc-level', '1', '--rc-out', 'x'])
+res['same_seed_same'] = again == RC.build_level(S, args, rc, 48)[0]['cells']
+res['levels_differ'] = again != RC.build_level(S, args, rc1, 48)[0]['cells']
+res['mids'] = RD.bin_midpoints(0.01, 0.5, 7).tolist()
+print(json.dumps(res))
+''' % (['--out_dir', 'x', '--mode', 'Neuronal', '--sweep_group', 'neuron_synapse', '--freeze', LCDUP_FREEZE,
+        '--conn_prob_lo', '0.01', '--conn_prob_hi', '0.5'],)
+    d = in_subprocess(os.path.join(tmp, 'lib36f'), body)
+    check(d is not None, 'design built')
+    if not d:
         return
-    pdir = os.path.join(out, 'oat_cp0.300')
-    design = json.load(open(os.path.join(pdir, 'design.json')))
-    sides = [json.load(open(os.path.join(dp, f))) for dp, _, fs in os.walk(pdir) for f in fs
-             if f.startswith('iter_') and f.endswith('.json')]
-    n_design = design['n_design']
-    pos_ok = all(np.array_equal(np.asarray(s['theta']), np.asarray(
-        design['points'][s['iter_idx']]['theta_vector'] if s['iter_idx'] < n_design else design['nominal_theta']))
-        for s in sides)
-    covered = sorted(s['iter_idx'] for s in sides if s['iter_idx'] < n_design)
-    check(len(sides) == design['k'] * 2 and pos_ok and covered == list(range(n_design)),
-          '%d runs; run i carries design vector i; all %d design points once' % (len(sides), n_design))
-    r = subprocess.run(tool + ['--rc-phase', 'prior', '--rc-topologies', '1'] + common, capture_output=True, text=True)
-    n_prior = sum(1 for dp, _, fs in os.walk(os.path.join(out, 'prior')) for f in fs
-                  if f.startswith('iter_') and f.endswith('.json'))
-    check(r.returncode == 0 and n_prior == 2, 'prior phase: %d runs' % n_prior)
-    r = subprocess.run(tool + ['--rc-phase', 'prior', '--rc-topologies', '1'] + common, capture_output=True, text=True)
-    check(r.returncode != 0 and 'already holds runs' in (r.stdout + r.stderr), 'refuses an occupied folder')
-    a = subprocess.run([sys.executable, os.path.join(HERE, 'range_analysis.py'), out, '--t-skip', '0.05',
-                        '--burst-lib', PIPE], capture_output=True, text=True)
-    import pandas as pd
-    ok = a.returncode == 0 and os.path.isfile(os.path.join(out, 'runs.csv'))
-    df = pd.read_csv(os.path.join(out, 'runs.csv')) if ok else None
-    check(ok and len(df) == len(sides) + 2 and not (df.axis == 'unmatched').any(),
-          'analysis: %s runs, none unmatched' % (None if df is None else len(df)))
-    if a.returncode:
-        print(a.stdout[-2000:], a.stderr[-2000:])
-    p = subprocess.run([sys.executable, os.path.join(HERE, 'range_plots.py'), out], capture_output=True, text=True)
-    check(p.returncode == 0 and os.path.isfile(os.path.join(out, 'oat_curves.png')), 'plots written')
-    unc = make_lib(os.path.join(tmp, 'lib_unclamped'))
-    path = os.path.join(unc, 'ASD_fun_BD_cpp.py')
-    open(path, 'w').write(open(path).read().replace(': volt (unless refractory)', ': volt'))
-    r = subprocess.run(tool + ['--rc-phase', 'prior', '--lib_dir', unc, '--rc-out', os.path.join(tmp, 'o2'),
-                               '--rc-design-only'], capture_output=True, text=True)
-    check(r.returncode != 0 and 'REFUSED' in (r.stdout + r.stderr), 'refuses an unclamped model')
+    lv = d['levels']
+    check(all(x['n'] == 2352 and x['k'] == 7 and x['n_topologies'] == 7 for x in lv),
+          '7 levels x 2352 cells (7 topologies x 48 workers x k=7)')
+    check(all(abs(x['conn'] - m) < 1e-12 for x, m in zip(lv, d['mids'])),
+          'conn_prob at the bin midpoints 0.045 ... 0.465')
+    check(all(x['on_mid'] for x in lv), 'every free-axis value is the midpoint of its drawn bin')
+    # 13 axes x 7 levels = 91 chi-square tests; 1e-4 keeps the chance of a false alarm below 1 %
+    check(min(x['pmin'] for x in lv) > 1e-4,
+          'bins uniform on every axis (smallest chi-square p over 91 tests: %.3g)' % min(x['pmin'] for x in lv))
+    check(d['same_seed_same'] and d['levels_differ'], 'the same seed gives the same cells; levels differ')
 
 
 def r6(tmp):
-    print('\n[R6] analysis on synthetic runs')
+    print('\n[R6] end to end on a tiny network')
+    import importlib.util
+    if importlib.util.find_spec('brian2') is None:
+        return skip('brian2 not importable')
+    import pandas as pd
+    lib = os.path.join(tmp, 'lib36f')
+    out = os.path.join(tmp, 'out')
+    common = ['--lib_dir', lib, '--mode', 'Neuronal', '--sweep_group', 'neuron_synapse', '--freeze', LCDUP_FREEZE,
+              '--Nn', '12', '--c_max', '100', '--conn_prob_lo', '0.2', '--conn_prob_hi', '0.4',
+              '--n_workers', '2', '--rc-out', out, '--rc-simtime', '0.3', '--rc-subset', '4']
+    tool = [sys.executable, os.path.join(HERE, 'range_check.py')]
+    rcs = [subprocess.run(tool + ['--rc-phase', ph, '--rc-level', '0'] + common, capture_output=True, text=True)
+           for ph in ('corners', 'interior')]
+    check(all(r.returncode == 0 for r in rcs), 'corners level 0 and interior level 0: exit 0')
+    if any(r.returncode for r in rcs):
+        for r in rcs:
+            print(r.stdout[-2500:], r.stderr[-2500:])
+        return
+    a = subprocess.run([sys.executable, os.path.join(HERE, 'range_analysis.py'), out, '--t-skip', '0.05',
+                        '--burst-lib', PIPE], capture_output=True, text=True)
+    ok = a.returncode == 0 and os.path.isfile(os.path.join(out, 'runs.csv'))
+    if not ok:
+        print(a.stdout[-2500:], a.stderr[-2500:])
+    df = pd.read_csv(os.path.join(out, 'runs.csv')) if ok else pd.DataFrame(columns=['kind'])
+    dc = json.load(open(os.path.join(out, 'corners_c0', 'design.json')))
+    di = json.load(open(os.path.join(out, 'interior_b0', 'design.json')))
+    c, it = df[df.kind == 'corner'], df[df.kind == 'interior']
+    names = dc['free_axes']
+    got_codes = {tuple(int(r['code_' + n]) for n in names) for _, r in c.iterrows()}
+    got_bins = {tuple(int(r['bin_' + n]) for n in names) for _, r in it.iterrows()}
+    check(ok and len(df) == 8 and len(c) == 4 and len(it) == 4 and not (df.kind == 'unmatched').any(),
+          'analysis: 8 runs labelled from their theta (4 corners, 4 interior), none unmatched')
+    check(got_codes == {tuple(x) for x in dc['codes']} and got_bins == {tuple(x) for x in di['cells']}
+          and set(c.code_conn_prob) == {-1} and set(it.bin_conn_prob) == {0},
+          "labels equal the design's codes and bins (conn_prob: code -1, bin 0)")
+    tables = ['corner_effects.csv', 'corner_interactions.csv', 'interior_bins.csv', 'interior_pairs.csv',
+              'interior_spearman.csv', 'calibration_summary.txt']
+    eff = pd.read_csv(os.path.join(out, 'corner_effects.csv')) if ok else pd.DataFrame()
+    check(ok and all(os.path.isfile(os.path.join(out, t)) for t in tables) and len(eff) == 14,
+          'tables written; corner_effects lists the 14 dimensions')
+    p = subprocess.run([sys.executable, os.path.join(HERE, 'range_plots.py'), out], capture_output=True, text=True)
+    check(p.returncode == 0 and all(os.path.isfile(os.path.join(out, f)) for f in
+                                    ('corner_effects.png', 'interior_bins.png', 'rate_distributions.png')),
+          'three figures written')
+    r = subprocess.run(tool + ['--rc-phase', 'corners', '--rc-level', '0'] + common, capture_output=True, text=True)
+    check(r.returncode != 0 and 'already holds runs' in (r.stdout + r.stderr), 'refuses an occupied folder')
+    unc = make_lib(os.path.join(tmp, 'lib_unclamped'))
+    path = os.path.join(unc, 'ASD_fun_BD_cpp.py')
+    open(path, 'w').write(open(path).read().replace(': volt (unless refractory)', ': volt'))
+    r = subprocess.run(tool + ['--rc-phase', 'corners', '--rc-level', '0', '--lib_dir', unc,
+                               '--rc-out', os.path.join(tmp, 'o2'), '--rc-design-only'], capture_output=True, text=True)
+    check(r.returncode != 0 and 'REFUSED' in (r.stdout + r.stderr), 'refuses an unclamped model')
+
+
+def _synthetic_run(pdir, topo, it, theta, names, rate, conn, rng, n_neurons=50, t_total=20.0):
+    tdir = os.path.join(pdir, 'topo_%05d' % topo)
+    os.makedirs(tdir, exist_ok=True)
+    n = rng.poisson(rate * t_total * n_neurons)
+    np.savez(os.path.join(tdir, 'iter_%05d.npz' % it),
+             spk_N_t=np.sort(rng.uniform(0, t_total, n)).astype(np.float32),
+             spk_N_i=rng.integers(0, n_neurons, n).astype(np.int32))
+    json.dump(dict(topo_idx=topo, iter_idx=it, conn_prob=conn, theta=list(theta), params=list(theta),
+                   param_names=names, npz_relpath='topo_%05d/iter_%05d.npz' % (topo, it)),
+              open(os.path.join(tdir, 'iter_%05d.json' % it), 'w'))
+
+
+def r7(tmp):
+    print('\n[R7] analysis on synthetic runs with a known effect')
     sys.path.insert(0, HERE)
+    import pandas as pd
     import range_analysis as RA
+    import range_design as RD
     root = os.path.join(tmp, 'synth')
-    pdir = os.path.join(root, 'oat_cp0.350')
-    os.makedirs(os.path.join(pdir, 'topo_00000'))
-    names = ['g_ampa', 'g_nmda']
-    nominal = [0.0, 0.0]
-    design = dict(phase='oat', conn_prob=0.35, free_axes=names, param_names=names, log_params=[0, 1],
-                  lib_dir=PIPE, nominal_theta=nominal, n_design=1, n_padding=1,
-                  points=[dict(axis='g_ampa', index=0, theta=1.0, natural=float(np.exp(1.0)),
-                               theta_vector=[1.0, 0.0])])
-    json.dump(design, open(os.path.join(pdir, 'design.json'), 'w'))
+    names, lo, hi = ['A', 'B'], [0.0, -1.0], [1.0, 1.0]
+    rng = np.random.default_rng(7)
+    common = dict(free_axes=names, theta_lo=lo, theta_hi=hi, conn_box=[0.1, 0.5], lib_dir=PIPE,
+                  param_names=names, log_params=[])
+    for L, conn in ((0, 0.1), (1, 0.5)):
+        pdir = os.path.join(root, 'corners_c%d' % L)
+        os.makedirs(pdir)
+        json.dump(dict(common, phase='corners', level=L, has_conn=True,
+                       corner_design=dict(kind='full', n_runs=8, d=3, resolution=None)),
+                  open(os.path.join(pdir, 'design.json'), 'w'))
+        json.dump(dict(Nn=50, simtime=20.0), open(os.path.join(pdir, 'job_args.json'), 'w'))
+        it = 0
+        for rep in range(6):
+            for ca in (-1, 1):
+                for cb in (-1, 1):
+                    theta = [hi[0] if ca > 0 else lo[0], hi[1] if cb > 0 else lo[1]]
+                    _synthetic_run(pdir, rep, it, theta, names, 8.0 if ca > 0 else 2.0, conn, rng)
+                    it += 1
+    pdir = os.path.join(root, 'interior_b0')
+    os.makedirs(pdir)
+    json.dump(dict(common, phase='interior', level=0, has_conn=False, bins=7), open(os.path.join(pdir, 'design.json'), 'w'))
     json.dump(dict(Nn=50, simtime=20.0), open(os.path.join(pdir, 'job_args.json'), 'w'))
-    rng = np.random.default_rng(3)
-    trains = {0: (1.0, 5.0), 1: (0.0, 0.0)}           # iter -> (theta of g_ampa, rate Hz)
-    for it, (th, rate) in trains.items():
-        n = rng.poisson(rate * 20.0 * 50)
-        t = np.sort(rng.uniform(0, 20.0, n)).astype(np.float32)
-        i = rng.integers(0, 50, n).astype(np.int32)
-        np.savez(os.path.join(pdir, 'topo_00000', 'iter_%05d.npz' % it), spk_N_t=t, spk_N_i=i)
-        json.dump(dict(topo_idx=0, iter_idx=it, conn_prob=0.35, theta=[th, 0.0], params=[np.exp(th), 1.0],
-                       param_names=names, npz_relpath='topo_00000/iter_%05d.npz' % it),
-                  open(os.path.join(pdir, 'topo_00000', 'iter_%05d.json' % it), 'w'))
-    df, _, _ = RA.build_table(root, workers=1, burst_lib=PIPE)
-    live, dead = df[df.iter_idx == 0].iloc[0], df[df.iter_idx == 1].iloc[0]
-    check(abs(live.mean_rate_hz - 5.0) < 0.25, 'Poisson 5 Hz -> %.3f Hz (tolerance 0.25 = 3.7 SD)' % live.mean_rate_hz)
-    check(live.axis == 'g_ampa' and abs(live.value - np.exp(1.0)) < 1e-12 and dead.axis == 'nominal',
-          'labels from design.json (g_ampa, nominal)')
-    check(dead.frac_active == 0.0 and dead.mean_rate_hz == 0.0, 'silent run: rate 0, active fraction 0')
+    mids = [RD.bin_midpoints(a, b, 7) for a, b in zip(lo, hi)]
+    it = 0
+    for rep in range(2):
+        for ia in range(7):
+            for ib in range(7):
+                _synthetic_run(pdir, rep, it, [mids[0][ia], mids[1][ib]], names, 0.5 * 2 ** ia, 0.3, rng)
+                it += 1
+    _synthetic_run(pdir, 9, 0, [0.33, mids[1][3]], names, 1.0, 0.3, rng)        # off the grid
+    rc = RA.main([root, '--burst-lib', PIPE, '--workers', '1'])
+    eff = pd.read_csv(os.path.join(root, 'corner_effects.csv')).set_index('dimension')
+    want = np.log10(8.01) - np.log10(2.01)
+    # SE of E_A is about 0.0023 (Poisson counts of 1,800 and 7,200 spikes, 24 runs per side)
+    check(abs(eff.loc['A', 'effect_y'] - want) < 0.05,
+          'E_A = %.4f (planted %.4f, tolerance 0.05)' % (eff.loc['A', 'effect_y'], want))
+    check(abs(eff.loc['B', 'effect_y']) < 0.05 and abs(eff.loc['conn_prob', 'effect_y']) < 0.05,
+          'inert B and conn_prob: |E| = %.4f, %.4f' % (abs(eff.loc['B', 'effect_y']),
+                                                      abs(eff.loc['conn_prob', 'effect_y'])))
+    bins_t = pd.read_csv(os.path.join(root, 'interior_bins.csv'))
+    a = bins_t[bins_t.dimension == 'A'].sort_values('bin')
+    b = bins_t[bins_t.dimension == 'B']
+    # 14 runs per bin; at 0.5 Hz a run's count is Poisson(450), so 15 % is > 3 SD of a median
+    a_ok = list(a.bin) == list(range(7)) and bool(
+        np.all(np.abs(a.rate_median.values / (0.5 * 2.0 ** np.arange(7)) - 1) < 0.15))
+    check(a_ok, 'interior: bins 0..6 of A only, medians following 0.5 x 2^bin within 15 %% (bins %s)' % list(a.bin))
+    check(list(b.bin) == list(range(7)) and b.rate_median.max() / b.rate_median.min() < 1.3,
+          'interior: medians of B flat (max/min %.2f)' % (b.rate_median.max() / b.rate_median.min()))
+    df = pd.read_csv(os.path.join(root, 'runs.csv'))
+    check(rc == 1 and int((df.kind == 'unmatched').sum()) == 1 and int((df.kind == 'corner').sum()) == 48,
+          'the off-grid run is unmatched and the analysis exits 1; 48 corners, 98 interior cells labelled')
 
 
-def r7():
-    print('\n[R7] bytes')
+def r8():
+    print('\n[R8] bytes')
     for f in sorted(os.listdir(HERE)):
         p = os.path.join(HERE, f)
         if os.path.isfile(p) and not f.endswith('.pyc'):
@@ -263,7 +412,7 @@ def r7():
             check(b.count(b'\r') == 0 and all(x < 128 for x in b), '%s: LF only, pure ASCII' % f)
 
 
-# R8 runs the job script with module, conda and python replaced by shell
+# R9 runs the job script with module, conda and python replaced by shell
 # functions, exported by a wrapper shell, in an environment built from scratch:
 # of the caller's environment only PATH is kept. Inherited, a login shell's own
 # module function (exported, or defined again in every child shell through
@@ -281,7 +430,7 @@ BASH = shutil.which('bash') or '/bin/bash'
 
 def stubs_loaded(funcs, names, env):
     """Whether every command in `names` is a shell function in the shell that
-    will run the script under test (same wrapper, same environment). R8 and R9
+    will run the script under test (same wrapper, same environment). R9 and R10
     stop when it is not: a stub that failed to load would leave the real
     python running range_check.py, or the real qsub submitting jobs."""
     probe = os.path.join(env['HOME'], 'stub_probe.sh')
@@ -309,89 +458,88 @@ def make_fake_setup(path, box=True):
     return path
 
 
-def r8(tmp):
-    print('\n[R8] the PBS job script with stub module, conda and python')
+def explain(ok, r, calls, what='job'):
+    """After a failed check, print what the script did, so a pasted run shows the cause."""
+    if ok:
+        return
+    print('    %s exit %d, %d stub calls; its last output lines:' % (what, r.returncode, len(calls)))
+    for tag, text in (('out', r.stdout), ('err', r.stderr)):
+        for line in text.strip().splitlines()[-8:]:
+            print('    %s| %s' % (tag, line))
+
+
+def r9(tmp):
+    print('\n[R9] the PBS job script with stub module, conda and python')
     base = os.path.join(tmp, 'stubbase')
     os.makedirs(os.path.join(base, 'etc', 'profile.d'))
     open(os.path.join(base, 'etc', 'profile.d', 'conda.sh'), 'w').write(
         'conda() { return 0; }\nmodule() { return 0; }\n')
-    home = os.path.join(tmp, 'r8_home')
+    home = os.path.join(tmp, 'r9_home')
     os.makedirs(home)
     lib = make_fake_setup(os.path.join(tmp, 'fake_setup'))
     nobox = make_fake_setup(os.path.join(tmp, 'fake_setup_nobox'), box=False)
     n_jobs = [0]
     if not stubs_loaded(STUB_FUNCS, ['python', 'conda', 'module'],
                         dict(PATH=os.environ.get('PATH', '/usr/bin:/bin'), HOME=home, LC_ALL='C',
-                             STUB_LOG=os.path.join(tmp, 'r8_probe.log'), STUB_BASE=base)):
+                             STUB_LOG=os.path.join(tmp, 'r9_probe.log'), STUB_BASE=base)):
         return
 
     def job(**env):
         n_jobs[0] += 1
-        log = os.path.join(tmp, 'r8_calls_%d.log' % n_jobs[0])
+        log = os.path.join(tmp, 'r9_calls_%d.log' % n_jobs[0])
         e = dict(PATH=os.environ.get('PATH', '/usr/bin:/bin'), HOME=home, LC_ALL='C',
                  STUB_LOG=log, STUB_BASE=base, PBS_O_WORKDIR=HERE, PBS_NCPUS='48',
                  LIB_DIR=lib, OUT=os.path.join(tmp, 'job_out_%d' % n_jobs[0]))
         e.update(env)
-        r = subprocess.run([BASH, '-c', STUB_FUNCS, 'r8', os.path.join(HERE, 'submit_range_check.sh')],
+        r = subprocess.run([BASH, '-c', STUB_FUNCS, 'r9', os.path.join(HERE, 'submit_range_check.sh')],
                            env=e, capture_output=True, text=True)
         raw = open(log).read().splitlines() if os.path.exists(log) else []
         return r, [c for c in raw if not c.startswith('-c ')], raw
 
-    def explain(ok, r, calls):
-        """After a failed check, print what the job did, so a pasted run shows the cause."""
-        if ok:
-            return
-        print('    job exit %d, %d stub calls; its last output lines:' % (r.returncode, len(calls)))
-        for tag, text in (('out', r.stdout), ('err', r.stderr)):
-            for line in text.strip().splitlines()[-8:]:
-                print('    %s| %s' % (tag, line))
-
-    def phase_calls(calls):
-        return ([c for c in calls if '--rc-phase oat' in c], [c for c in calls if '--rc-phase prior' in c])
+    def split(calls):
+        return ([c for c in calls if '--rc-phase corners' in c], [c for c in calls if '--rc-phase interior' in c])
 
     r, calls, _ = job(SETUP='lcdup')
-    oat, prior = phase_calls(calls)
-    ok = check(r.returncode == 0 and len(oat) == 3 and len(prior) == 1
-               and len(calls) >= 2 and calls[-2].startswith('range_analysis.py')
-               and calls[-1].startswith('range_plots.py'),
-               'lcdup: 3 oat + 1 prior + analysis + plots (%d calls)' % len(calls))
+    cor, inte = split(calls)
+    ok = check(r.returncode == 0 and len(cor) == 2 and len(inte) == 7 and len(calls) == 11
+               and calls[-2].startswith('range_analysis.py') and calls[-1].startswith('range_plots.py'),
+               'lcdup: 2 corner levels + 7 interior levels + analysis + plots (%d calls)' % len(calls))
     explain(ok, r, calls)
-    check(len(oat) == 3 and len(prior) == 1
+    check(len(cor) == 2 and len(inte) == 7
+          and all('--rc-phase corners --rc-level %d --rc-corner-topologies 8 --rc-corner-budget 16384 ' % L in c
+                  for L, c in enumerate(cor))
+          and all('--rc-phase interior --rc-level %d --rc-bins 7 --rc-interior-runs 16384 '
+                  '--rc-interior-topologies 7 ' % L in c for L, c in enumerate(inte)),
+          'levels in order with their design arguments (corners 0 1; interior 0..6)')
+    check(len(cor + inte) == 9
           and all('--freeze Cm,I_inj,VA=-48,DeltaA,VR=-58.2' in c and '--mode Neuronal' in c
-                  and '--n_workers 48' in c and '--conn_prob_lo 0.01 --conn_prob_hi 0.5' in c for c in oat + prior)
-          and ['--rc-conn 0.01 ' in oat[0], '--rc-conn 0.255 ' in oat[1], '--rc-conn 0.5 ' in oat[2]] == [True] * 3,
-          'lcdup: freeze VA=-48 VR=-58.2, conn_prob box 0.01-0.5, 48 workers, oat at 0.01 0.255 0.5')
-    r, calls, _ = job(SETUP='giulia', EXTRA='--stoa_gate_lo 0.2 --stoa_gate_hi 1.0',
-                      OAT_EXTRA='--stoa_gate_lo 0.6 --stoa_gate_hi 0.6')
-    oat, prior = phase_calls(calls)
-    ok = check(r.returncode == 0 and len(oat) == 3 and len(prior) == 1
-               and all('campaign_cadex_hhgap_v5/sweep_intel_task0000/job_args.json' in c for c in oat + prior),
-               'giulia: LIKE found in the hhgap_v5 campaign')
+                  and '--n_workers 48' in c and '--conn_prob_lo 0.01 --conn_prob_hi 0.5' in c for c in cor + inte),
+          'lcdup: freeze VA=-48 VR=-58.2, conn_prob box 0.01-0.5, 48 workers in every call')
+    r, calls, _ = job(SETUP='giulia', EXTRA='--stoa_gate_lo 0.2 --stoa_gate_hi 1.0')
+    cor, inte = split(calls)
+    ok = check(r.returncode == 0 and len(cor + inte) == 9
+               and all('campaign_cadex_hhgap_v5/sweep_intel_task0000/job_args.json' in c
+                       and c.endswith('--stoa_gate_lo 0.2 --stoa_gate_hi 1.0') for c in cor + inte),
+               'giulia: LIKE found in the hhgap_v5 campaign; EXTRA last in every call')
     explain(ok, r, calls)
-    check(len(oat) == 3
-          and ['--rc-conn 0.1 ' in oat[0], '--rc-conn 0.35 ' in oat[1], '--rc-conn 0.6 ' in oat[2]] == [True] * 3,
-          'giulia: oat at conn_prob 0.1 0.35 0.6')
-    check(len(oat) == 3 and len(prior) == 1
-          and all('--stoa_gate_lo 0.2 --stoa_gate_hi 1.0' in c for c in oat + prior)
-          and all(c.endswith('--stoa_gate_lo 0.6 --stoa_gate_hi 0.6') for c in oat)
-          and '0.6 --stoa_gate_hi 0.6' not in prior[0], 'giulia: EXTRA everywhere, OAT_EXTRA last in oat only')
     r, calls, _ = job(SETUP='lcdup', FREEZE_ENC='Cm:I_inj:VA@-50:DeltaA:VR@-55:EC50_ampa:EC50_nmda:alpha_syn:O_G:Omega_G')
-    phases = [c for c in calls if '--rc-phase' in c]
-    ok = check(r.returncode == 0 and len(phases) == 4
-               and all('--freeze Cm,I_inj,VA=-50,DeltaA,VR=-55,EC50_ampa' in c for c in phases),
+    cor, inte = split(calls)
+    ok = check(r.returncode == 0 and len(cor + inte) == 9
+               and all('--freeze Cm,I_inj,VA=-50,DeltaA,VR=-55,EC50_ampa' in c for c in cor + inte),
                'lcdup: FREEZE_ENC decoded (a list that differs from the default)')
     explain(ok, r, calls)
-    r, calls, _ = job(SETUP='lcdup', PHASES='oat', ANALYZE='0')
-    oat, prior = phase_calls(calls)
-    ok = check(r.returncode == 0 and len(oat) == 3 and len(calls) == 3, 'PHASES=oat ANALYZE=0: the 3 oat calls only')
+    r, calls, _ = job(SETUP='lcdup', PHASES='corners', ANALYZE='0')
+    ok = check(r.returncode == 0 and len(calls) == 2 and all('--rc-phase corners' in c for c in calls),
+               'PHASES=corners ANALYZE=0: the 2 corner levels only')
     explain(ok, r, calls)
-    r, calls, _ = job(SETUP='lcdup', PHASES='prior', ANALYZE='0', PRIOR_TOPOS='16')
-    ok = check(r.returncode == 0 and len(calls) == 1 and '--rc-phase prior --rc-topologies 16 ' in calls[0],
-               'PHASES=prior ANALYZE=0 PRIOR_TOPOS=16: one prior call with 16 topologies')
+    r, calls, _ = job(SETUP='lcdup', PHASES='interior', ANALYZE='0', BINS='5')
+    ok = check(r.returncode == 0 and len(calls) == 5
+               and all('--rc-phase interior --rc-level %d --rc-bins 5 ' % L in c for L, c in enumerate(calls)),
+               'PHASES=interior ANALYZE=0 BINS=5: interior levels 0..4 with 5 bins')
     explain(ok, r, calls)
     out_a = os.path.join(tmp, 'analysis_out')
-    os.makedirs(os.path.join(out_a, 'prior'))
-    open(os.path.join(out_a, 'prior', 'design.json'), 'w').write('{}')
+    os.makedirs(os.path.join(out_a, 'corners_c0'))
+    open(os.path.join(out_a, 'corners_c0', 'design.json'), 'w').write('{}')
     r, calls, _ = job(SETUP='lcdup', PHASES='none', ANALYZE='1', OUT=out_a, PBS_NCPUS='8')
     ok = check(r.returncode == 0 and len(calls) == 2 and calls[0].startswith('range_analysis.py %s --workers 8' % out_a)
                and calls[1].startswith('range_plots.py'), 'PHASES=none ANALYZE=1: analysis and plots only')
@@ -406,15 +554,15 @@ def r8(tmp):
     ok = check(r.returncode == 2 and not raw and 'box patch' in r.stderr,
                'lcdup folder without the g box patch: exit 2, nothing run')
     explain(ok, r, calls)
-    r, calls, raw = job(SETUP='lcdup', PHASES='everything')
-    ok = check(r.returncode == 2 and not raw, 'bad PHASES: exit 2, nothing run')
+    r, calls, raw = job(SETUP='lcdup', PHASES='oat')
+    ok = check(r.returncode == 2 and not raw, 'bad PHASES (the old oat): exit 2, nothing run')
     explain(ok, r, calls)
     r, calls, raw = job(SETUP='nonsense')
     ok = check(r.returncode == 2 and not raw, 'unknown SETUP: exit 2, nothing run')
     explain(ok, r, calls)
 
 
-# qsub stand-in for R9, a shell function like the stubs of R8: it logs each
+# qsub stand-in for R10, a shell function like the stubs of R9: it logs each
 # call on its own line and answers "10<n>.pbsserver"; call number QSUB_FAIL_AT
 # fails without output, as a refused submission does.
 QSUB_FUNCS = r'''qsub() {
@@ -428,15 +576,15 @@ exec "$BASH" "$1"
 '''
 
 
-def r9(tmp):
-    print('\n[R9] launch_range_check.sh with a stub qsub')
-    home = os.path.join(tmp, 'r9_home')
+def r10(tmp):
+    print('\n[R10] launch_range_check.sh with a stub qsub')
+    home = os.path.join(tmp, 'r10_home')
     os.makedirs(home)
-    lib = make_fake_setup(os.path.join(tmp, 'r9_setup'))
-    nobox = make_fake_setup(os.path.join(tmp, 'r9_setup_nobox'), box=False)
-    out = os.path.join(tmp, 'r9_out')
+    lib = make_fake_setup(os.path.join(tmp, 'r10_setup'))
+    nobox = make_fake_setup(os.path.join(tmp, 'r10_setup_nobox'), box=False)
+    out = os.path.join(tmp, 'r10_out')
     n_runs = [0]
-    probe_log = os.path.join(tmp, 'r9_probe.log')
+    probe_log = os.path.join(tmp, 'r10_probe.log')
     open(probe_log, 'w').close()
     if not stubs_loaded(QSUB_FUNCS, ['qsub'], dict(PATH=os.environ.get('PATH', '/usr/bin:/bin'),
                                                   HOME=home, LC_ALL='C', QSUB_LOG=probe_log)):
@@ -444,51 +592,48 @@ def r9(tmp):
 
     def launch(**env):
         n_runs[0] += 1
-        log = os.path.join(tmp, 'r9_qsub_%d.log' % n_runs[0])
+        log = os.path.join(tmp, 'r10_qsub_%d.log' % n_runs[0])
         open(log, 'w').close()
         e = dict(PATH=os.environ.get('PATH', '/usr/bin:/bin'), HOME=home, LC_ALL='C',
                  QSUB_LOG=log, SETUP='lcdup', LIB_DIR=lib, OUT=out)
         e.update(env)
-        r = subprocess.run([BASH, '-c', QSUB_FUNCS, 'r9', os.path.join(HERE, 'launch_range_check.sh')],
+        r = subprocess.run([BASH, '-c', QSUB_FUNCS, 'r10', os.path.join(HERE, 'launch_range_check.sh')],
                            env=e, capture_output=True, text=True)
         return r, open(log).read().splitlines()
-
-    def explain(ok, r, calls):
-        if ok:
-            return
-        print('    launcher exit %d, %d qsub calls; its last output lines:' % (r.returncode, len(calls)))
-        for tag, text in (('out', r.stdout), ('err', r.stderr)):
-            for line in text.strip().splitlines()[-8:]:
-                print('    %s| %s' % (tag, line))
 
     r, calls = launch()
     common = 'SETUP=lcdup,OUT=%s,LIB_DIR=%s' % (out, lib)
     ok = check(r.returncode == 0 and len(calls) == 3
-               and '-q intel -N rc_oat -l select=1:ncpus=48 -l walltime=12:00:00' in calls[0]
-               and (common + ',PHASES=oat,ANALYZE=0') in calls[0]
-               and '-q cpu -N rc_prior -l select=1:ncpus=48' in calls[1]
-               and (common + ',PHASES=prior,ANALYZE=0,PRIOR_TOPOS=16') in calls[1]
+               and '-q intel -N rc_corners -l select=1:ncpus=48 -l walltime=24:00:00' in calls[0]
+               and (common + ',PHASES=corners,ANALYZE=0') in calls[0]
+               and '-q cpu -N rc_interior -l select=1:ncpus=48 -l walltime=24:00:00' in calls[1]
+               and (common + ',PHASES=interior,ANALYZE=0') in calls[1]
                and calls[0].endswith('submit_range_check.sh') and calls[1].endswith('submit_range_check.sh'),
-               'oat job on intel and prior job (16 topologies) on cpu, 48 cores each, one OUT')
-    explain(ok, r, calls)
+               'corners job on intel, interior job on cpu, 48 cores and 24 h each, one OUT')
+    explain(ok, r, calls, 'launcher')
     ok = check(len(calls) == 3 and '-q cpu -N rc_analysis -l select=1:ncpus=8 -l walltime=02:00:00' in calls[2]
                and '-W depend=afterany:101.pbsserver:102.pbsserver' in calls[2]
                and (common + ',PHASES=none,ANALYZE=1') in calls[2],
                'analysis job on cpu, 8 cores, held by depend=afterany on both, same OUT')
-    explain(ok, r, calls)
+    explain(ok, r, calls, 'launcher')
+    r, calls = launch(BINS='5', INTERIOR_RUNS='8000')
+    ok = check(r.returncode == 0 and len(calls) == 3
+               and all(',BINS=5' in c and ',INTERIOR_RUNS=8000' in c for c in calls),
+               'pass-through variables (BINS, INTERIOR_RUNS) reach all three jobs')
+    explain(ok, r, calls, 'launcher')
     r, calls = launch(DRYRUN='1')
     ok = check(r.returncode == 0 and not calls and r.stdout.count('[dry run] qsub') == 3,
                'DRYRUN=1: three qsub lines printed, nothing submitted')
-    explain(ok, r, calls)
+    explain(ok, r, calls, 'launcher')
     r, calls = launch(LIB_DIR=nobox)
     r2, calls2 = launch(EXTRA='--a 1,--b 2')
     ok = check(r.returncode == 2 and not calls and r2.returncode == 2 and not calls2,
                'failed precheck, or a comma in a passed variable: exit 2, nothing submitted')
-    explain(ok, r, calls)
+    explain(ok, r, calls, 'launcher')
     r, calls = launch(QSUB_FAIL_AT='2')
     ok = check(r.returncode == 3 and len(calls) == 2 and 'qdel 101.pbsserver' in r.stderr,
                'second submission refused: exit 3, no third job, the first job named for qdel')
-    explain(ok, r, calls)
+    explain(ok, r, calls, 'launcher')
 
 
 def main():
@@ -498,14 +643,15 @@ def main():
         r2(tmp)
         r3(tmp)
         r4(tmp)
+        r5(tmp)
         if '--no-sim' in sys.argv:
-            skip('R5 (--no-sim)')
+            skip('R6 (--no-sim)')
         else:
-            r5(tmp)
-        r6(tmp)
-        r7()
-        r8(tmp)
+            r6(tmp)
+        r7(tmp)
+        r8()
         r9(tmp)
+        r10(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print('\nRESULT: %d passed, %d failed%s' % (RESULTS['passed'], RESULTS['failed'],

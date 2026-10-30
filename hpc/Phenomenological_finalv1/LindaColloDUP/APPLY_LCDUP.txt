@@ -73,10 +73,12 @@ mkdir -p artifacts && LCDUP_NO_ENV=1 NODETAG=probe CAMPAIGN_TAG=probe_check SEED
    "[dry run] qsub ... -J 0-651%2" lines and "[dry run] nothing submitted."):
 SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes DRYRUN=1 bash launch_LCDUP.sh
 
-   BEFORE STEP 8 (decided 2026-10-30): the range check on two nodes, from the
-   range_check folder of the clone (README_RANGE_CHECK.txt there). First the
-   dry run (expect "precheck OK", three "[dry run] qsub" lines: rc_oat on
-   intel, rc_prior on cpu, rc_analysis on cpu; nothing submitted), then the
+   BEFORE STEP 8 (decided 2026-10-30): the prior range calibration on two
+   nodes, from the range_check folder of the clone (README_RANGE_CHECK.txt
+   there): the 16,384 corners of the prior box on one node, 16,464 random
+   cells of its 7-bin grid on the other. First the dry run (expect
+   "precheck OK", three "[dry run] qsub" lines: rc_corners on intel,
+   rc_interior on cpu, rc_analysis on cpu; nothing submitted), then the
    submission (keep its "stop all: qdel ..." line):
 cd ~/ANN/Astro-Neuron-Network/hpc/range_check && DRYRUN=1 SETUP=lcdup bash launch_range_check.sh
 cd ~/ANN/Astro-Neuron-Network/hpc/range_check && SETUP=lcdup bash launch_range_check.sh

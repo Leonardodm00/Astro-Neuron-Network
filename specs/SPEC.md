@@ -21,13 +21,14 @@ Block 5's REFUSED rule for an unrecognised CAdEx line added on top of 4aa3fdb;
 its GIT CLONE status and queued-job hold added on top of 4e12a40; Block 4's
 g box patch, conn_prob box, VA/VR values and clone folder, and Block 6's
 two-node split, added on top of 15f82c9; Block 7 and Block 1's GitHub-wide
-check added on top of a811543)
+check added on top of a811543; Block 6 rewritten as the standard prior range
+calibration on top of dcb52ab)
 
 ## 0. Coverage
 
 - `hpc/refractory_audit/` (the audit and its `checks/`)
 - `hpc/Phenomenological_finalv1/LindaColloDUP/` (launch package and its `checks/`)
-- `hpc/range_check/` (20 s runs over a setup's prior boxes, Block 6)
+- `hpc/range_check/` (the standard prior range calibration, Block 6)
 - the seed guard (Block 7): `hpc/Phenomenological_finalv1/seed_alloc.py`, its
   identical copies in `MEAMA/` and `LindaColloDUP/`, its smoke test
   `smoke_test_seed_allocation.py`, and the seed-allocation blocks of
@@ -182,7 +183,15 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   - 2026-10-30 [author]: the range check of a setup runs on two 48-core
     nodes, split as proposed by Claude: the one-axis sweeps on one node, the
     prior sample (16 topologies) on the other, and the analysis as a short
-    job once both have ended (Block 6).
+    job once both have ended (Block 6). [corrected 2026-10-30] Superseded by
+    the next entry.
+  - 2026-10-30 [author]: the standard prior range calibration, for every
+    setup: the corners of the prior box (every free axis and conn_prob at
+    their minimum or maximum, all combinations; a two-level fraction keeping
+    every main effect and two-axis interaction when the 2^d corners exceed
+    16,384) and as many random cells of the 7-bin grid (bin midpoints), as
+    two 48-core jobs with a 24 h walltime, then the analysis job (Block 6).
+    It replaces the one-axis sweeps and the prior sample.
   - 2026-10-30 [author]: the seed guard covers every launch folder under the
     cluster's ANN folder, not only the launching one (Block 7): the reruns
     start in fresh folders of the git clone, which hold no seed history.
@@ -440,183 +449,202 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   `qstat -f` layout on davinci has not been read).
 - Status: smoke-tested 2026-10-30 in the sandbox (skipped: davinci).
 
-### Block 6: range_check, 20 s runs over a setup's prior boxes
+### Block 6: range_check, the standard prior range calibration
 
-- Purpose: before a campaign is relaunched with the refractory hold, measure
-  the network activity its prior produces, through the setup's own sweep
-  code: one-axis sweeps around the nominal vector at three wiring densities,
-  and a sample of the joint prior; 20 s per run.
-- Modules (`hpc/range_check/`): `range_check.py` (driver), `range_analysis.py`
-  (per-run metrics and summaries), `range_plots.py` (figures only),
-  `submit_range_check.sh` (the PBS job; PHASES and ANALYZE choose its part),
-  `launch_range_check.sh` (login node: one setup as three PBS jobs on two
-  48-core nodes, decided 2026-10-30), `smoke_test_range_check.py`,
-  `README_RANGE_CHECK.txt`.
-- Driver: `python3 range_check.py --rc-phase {oat,prior} --rc-out DIR
-  [--rc-like JOB_ARGS] [--rc-conn P] [--rc-points K] [--rc-topologies R]
-  [--rc-k-prior k] [--rc-simtime T] [--rc-seed S] <HPC_main_sweep.py
-  arguments>`. It imports `HPC_main_sweep` from the `--lib_dir` among the
-  pass-through arguments (the setup's own folder: 36-D or 37-D, with or
-  without the freeze patch) and calls its `main()` with the pass-through
-  arguments followed by `--out_dir`, `--simtime T` (default 20 s),
-  `--n_topologies`, `--n_params_per_worker`, `--seed_master`, and for `oat`
-  also `--conn_prob_lo P --conn_prob_hi P`. Later arguments win.
-  - `oat`: free axes = `resolve_sweep_group(--sweep_group)` minus the axes of
-    `--freeze` (through the module's own `_apply_freeze` when present). For
-    each free axis j with lo_j < hi_j, K values (default 7) of theta_j =
-    linspace(lo_j, hi_j, K) in the sweep's theta coordinate
-    (`PARAM_BOUNDS_THETA`: ln on `LOG_PARAMS` axes, natural units otherwise),
-    every other axis at the nominal theta, `natural_to_theta(NOMINAL_PARAMS)`
-    taken after the freeze. The list is padded with nominal vectors to
-    n_workers x k, k = ceil(len / n_workers), n_workers from the module's
-    `_resolve_n_workers`. In the parent process only, the module's
-    `sample_theta` is replaced by a function that returns that list in
-    order for every topology; this is the only change to the production
-    path. R topologies (default 2) at conn_prob = P. `design.json` records
-    the nominal theta, each point's axis and value, K, k, n_workers.
-  - `prior`: unchanged production sampling: T topologies (default 8) x
-    n_workers x k (default 1) draws with the setup's own conn_prob box.
-  - `--rc-like`: rebuilds the base argument list from a campaign's
-    `job_args.json` through the module's own parser (each key that is a
-    parser destination; store_true options as flags when true; None values
-    skipped; never out_dir, scratch_root, lib_dir, seed_master, n_workers,
-    n_topologies, n_params_per_worker, simtime, rebuild_manifest_only);
-    explicit arguments after it override.
-  - Refuses (exit non-zero, nothing run) when the setup's model does not end
-    its CAdEx dV/dt line with `(unless refractory)`, unless
-    `--rc-allow-unclamped`; refuses an output folder that already holds runs.
-- Output: `DIR/oat_cp<P>/` and `DIR/prior/` in the standard task layout
-  (`job_args.json`, `topo_*/iter_*.npz` + `.json`, `manifest.json`), plus
-  `design.json`.
+- Purpose (decided by the author on 2026-10-30, the standard for every
+  setup): before a campaign is launched, measure the activity its prior box
+  produces, through the setup's own sweep code, at the corners of the box and
+  at random cells of its B-bin grid; 20 s per run.
+- Modules (`hpc/range_check/`): `range_design.py` (the designs; pure
+  functions, numpy only), `range_check.py` (driver), `range_analysis.py`
+  (metrics, labels, summaries), `range_plots.py` (figures only),
+  `submit_range_check.sh` (the PBS job), `launch_range_check.sh` (login node:
+  one setup as three PBS jobs on two 48-core nodes),
+  `smoke_test_range_check.py`, `README_RANGE_CHECK.txt`.
+- Notation. For a setup with sweep group G and freeze list Phi:
+  F = (j_1, ..., j_dr), the indices of G minus Phi (`resolve_sweep_group`,
+  the module's `_apply_freeze`) whose theta box has lo_j < hi_j, is the set of
+  free axes; theta_j is the sweep's coordinate of axis j (`PARAM_BOUNDS_THETA`:
+  ln on `LOG_PARAMS` axes, natural units otherwise), box [lo_j, hi_j].
+  conn_prob is a design dimension when the setup's conn_rule is flat and its
+  box [c_lo, c_hi] (`--conn_prob_lo/hi`) has c_lo < c_hi, in natural units.
+  d = dr + 1 with conn_prob, d = dr without. theta0 =
+  natural_to_theta(NOMINAL_PARAMS) after the freeze. N_w = n_workers (the
+  module's `_resolve_n_workers`). seed = `--rc-seed` (default 20261030).
+- Corners: X in {-1, +1}^(N_c x d), columns F then conn_prob.
+  - If 2^d <= N_max (`--rc-corner-budget`, default 16,384): the full
+    factorial, N_c = 2^d, row r column k = +1 if bit k of r is 0, else -1.
+  - Else a regular 2^(d-p) fraction: b = floor(log2 N_max), N_c = 2^b,
+    p = d - b; columns 0..b-1 the full factorial of b; column b+i the product
+    of the base columns set in the generator mask g_i. The masks come from the
+    greedy search `range_design.fraction_generators` (random orders from
+    `default_rng(seed + 20000)`), trying the resolution R = 8, 7, 6, 5 in turn
+    (8 orders each) and keeping the first found; `min_word_length` verifies
+    that every word of the defining relation, |G| + popcount(xor of the masks
+    in G) for a nonempty generator set G, is >= R. R >= 5: no main effect or
+    two-axis interaction is aliased with another. None found: error.
+  - A run with codes x: theta_j = lo_j where x_j = -1, hi_j where +1 (j in
+    F), every other axis at theta0; conn_prob = c_lo where x_conn = -1, c_hi
+    where +1.
+  - Level L in {0, 1} (conn_prob at c_lo, c_hi; level 0 only when conn_prob
+    is not a dimension): the n_L rows with x_conn = 2L - 1, permuted by
+    `default_rng(seed + 20100 + L)`, split over T_c topologies
+    (`--rc-corner-topologies`, default 8) of N_w k_c consecutive slots,
+    k_c = ceil(n_L / (T_c N_w)); the T_c N_w k_c - n_L last slots hold the box
+    centre, theta_j = (lo_j + hi_j) / 2 for j in F (centre points).
+- Interior: B bins per dimension (`--rc-bins`, default 7) of equal width in
+  the dimension's own coordinate, so equal prior mass under a uniform or
+  log-uniform prior; midpoints m_(j,i) = lo_j + (i + 1/2)(hi_j - lo_j)/B,
+  i = 0..B-1, and the same over [c_lo, c_hi] for conn_prob. Level L = the
+  conn_prob bin, L = 0..B-1 (level 0 only when conn_prob is not a
+  dimension): conn_prob = m_(conn,L); n = T_i N_w k_i cells,
+  k_i = ceil(ceil(N_i / n_levels) / (T_i N_w)), N_i = `--rc-interior-runs`
+  (default 16,384), T_i = `--rc-interior-topologies` (default 7); for each
+  cell and each j in F independently, i_j ~ U{0, ..., B-1}
+  (`default_rng(seed + 30000 + L)`), theta_j = m_(j,i_j); every other axis
+  at theta0.
+- Driver: `python3 range_check.py --rc-phase {corners,interior} --rc-level L
+  --rc-out DIR [--rc-like JOB_ARGS] [--rc-bins B] [--rc-corner-budget N]
+  [--rc-corner-topologies T] [--rc-interior-runs N] [--rc-interior-topologies
+  T] [--rc-simtime T] [--rc-seed S] [--rc-subset N] [--rc-design-only]
+  [--rc-allow-unclamped] <HPC_main_sweep.py arguments>`. It imports
+  `HPC_main_sweep` from the `--lib_dir` among the pass-through arguments and
+  calls its `main()` with them followed by `--out_dir DIR/corners_c<L>` or
+  `DIR/interior_b<L>`, `--simtime` (default 20 s), `--n_topologies T`,
+  `--n_params_per_worker k`, `--seed_master` (seed + 2000 + L for corners,
+  seed + 3000 + L for the interior) and `--conn_prob_lo P --conn_prob_hi P`
+  with P the level's conn_prob. Later arguments win. In the parent process
+  only, `sample_theta` is replaced by a function that returns the padded
+  design in order, so successive topologies take successive chunks of N_w k
+  slots: the only change to the production path. `--rc-subset N`: the first
+  N design points of the level, on one topology (tests). `--rc-like` rebuilds
+  the base argument list from a campaign's `job_args.json` through the
+  module's own parser (each key that is a parser destination; store_true
+  options as flags when true; None values skipped; never out_dir,
+  scratch_root, lib_dir, seed_master, n_workers, n_topologies,
+  n_params_per_worker, simtime, rebuild_manifest_only); explicit arguments
+  after it override. Refuses (exit non-zero, nothing run) an unclamped model
+  unless `--rc-allow-unclamped`, an output folder that already holds runs,
+  and a level outside the phase's range. Exit 1 when not every slot was drawn
+  (a topology failed to build); the runs made stay usable.
+- `design.json` (one per level folder): phase, level, free_axes, theta_lo,
+  theta_hi, has_conn, conn_box, conn_prob, nominal_theta, n_workers,
+  n_topologies, k, n_slots, n_design, n_padding; corners: corner_design (kind,
+  n_runs, resolution, base, generators, d, n_levels, n_level_corners), codes
+  (n_design x dr), centre_theta; interior: bins, n_levels, midpoints, cells
+  (n x dr); and simtime, seed_master, lib_dir, module, model_line,
+  param_names, log_params, argv.
 - Analysis (`range_analysis.py DIR`): per run, the neuron spikes in the
   window [t_skip, T] (t_skip default 2 s, shifted to start at 0) go through
-  `burst_metrics.compute_all` (the repository's network-burst panel) for
-  the burst rate (log-ISI detector, `li_burst_rate_per_min`), CV of ISI and
-  adaptation index; mean rate = spikes in the window / (Nn (T - t_skip));
-  active fraction = neurons with rate > 0.1 Hz in the window; astrocyte
-  event rate from the sidecar. Each `oat` run is labelled by its position:
-  iter_idx < n_design is design point iter_idx, the rest is the nominal
-  padding, and the stored theta must equal that vector exactly, otherwise
-  the run is `unmatched` (position keeps a design point that coincides with
-  the nominal vector apart from the nominal runs). Writes `runs.csv`;
-  `oat_summary.csv` (per conn level, axis and value: number of runs, median,
-  min and max of the mean rate, medians of the burst rate and of the active
-  fraction); `prior_summary.txt` (quantiles of the mean rate; shares
-  of runs that are silent, active fraction < 0.1; bursting, burst rate > 0;
-  above 20 Hz; these cut-offs are reporting conventions, set in the config,
-  not targets); `prior_spearman.csv` (Spearman rank correlation, with
-  p-value, of each free theta axis and of conn_prob with log10(mean rate +
-  0.01 Hz) and with the burst rate; `scipy.stats.spearmanr`).
-- Plots (`range_plots.py DIR`): `oat_curves.png` (one panel per free axis:
-  median mean rate against the axis value, one line per conn level, min-max
-  band; log x on `LOG_PARAMS` axes; the legend gives each level with `%g`,
-  so 0.255 reads 0.255), `prior_rates.png`, `prior_spearman.png`.
-- Job script (`submit_range_check.sh`, `#PBS -l select=1:ncpus=48`,
-  walltime 12 h, `-k eo`): SETUP = lcdup | giulia (anything else: exit 2).
-  - lcdup: LIB_DIR default
-    `/davinci-1/home/ldellamea/ANN/Astro-Neuron-Network/hpc/Phenomenological_finalv1/LindaColloDUP`
-    (the clone's folder, Block 4); the settings of `launch_LCDUP.sh`
-    written out (`--mode Neuronal --sweep_group neuron_synapse --freeze
-    <FREEZE> --density 1300 --density_astro 0 --c_max 350 --Na 0
-    --conn_rule flat --conn_prob_lo 0.01 --conn_prob_hi 0.5` and the fixed
-    block; `--Nn 115` is passed as in `submit_LCDUP.sh` and overridden by the
-    density, so Nn = 159); FREEZE default
-    `Cm,I_inj,VA=-48,DeltaA,VR=-58.2,EC50_ampa,EC50_nmda,alpha_syn,O_G,Omega_G`,
-    or FREEZE_ENC decoded (`:` for `,`, `@` for `=`); oat levels CONN_LEVELS
-    default `0.01 0.255 0.5`, the ends and the middle of the box; refuses
-    (exit 2) a LIB_DIR whose `HPC_main_sweep.py` lacks either box marker.
-  - giulia: LIB_DIR default `Phenomenological/Main/Giulia_Astro`; LIKE =
-    the first `campaign_cadex_hhgap_v5/sweep_*/job_args.json` there (none:
-    exit 2); CONN_LEVELS default `0.1 0.35 0.6`; EXTRA to every phase,
-    OAT_EXTRA last, to the oat phases only.
-  - PHASES = all (default) | oat | prior | none: the oat phase runs for all
-    or oat, the prior phase for all or prior; ANALYZE = 1 (default) | 0:
-    `range_analysis.py OUT --workers <ncpus>` then `range_plots.py OUT`.
-    PRIOR_TOPOS default 8 (16 from the launcher); POINTS 7; OAT_TOPOS 2;
-    RC_SIMTIME 20 s. Exit 2, before conda: PHASES or ANALYZE invalid,
-    PHASES=none with ANALYZE=0, `range_check.py` not in the submission
-    folder, a LIB_DIR without `HPC_main_sweep.py`, the lcdup box guard,
-    PHASES=none with no `OUT/*/design.json`. CHECK_ONLY=1 runs those guards
-    (all but the last), prints `[range_check] precheck OK: ...` and exits 0
-    without conda or python. Exit 2 also when `conda activate` or the
-    environment check (brian2, numpy, scipy, pandas importable from the
-    activated environment) fails. Exit status otherwise 1 if any phase,
-    analysis or plot call failed, else 0.
-- Launcher (`launch_range_check.sh SETUP=...`, login node): checks SETUP;
-  refuses (exit 2) a comma in OUT or in any variable it passes on (LIB_DIR,
-  LIKE, CONN_LEVELS, POINTS, OAT_TOPOS, RC_SIMTIME, EXTRA, OAT_EXTRA,
-  FREEZE_ENC, CONDA_ENV; `qsub -v` splits on commas); runs the job script
-  once with CHECK_ONLY=1 (failure: exit 2, nothing submitted); then submits,
-  all with one OUT (default `~/ANN/range_check/<setup>_<UTC>`):
-  - job 1 `rc_oat`: queue Q_OAT (intel), `select=1:ncpus=NCPUS` (48),
-    walltime WALLTIME (12 h), PHASES=oat ANALYZE=0;
-  - job 2 `rc_prior`: queue Q_PRIOR (cpu), same resources, PHASES=prior
-    ANALYZE=0 PRIOR_TOPOS (16);
-  - job 3 `rc_analysis`: queue Q_ANALYSIS (cpu), ANALYSIS_NCPUS (8),
-    ANALYSIS_WALLTIME (2 h), `-W depend=afterany:<job 1>:<job 2>`,
-    PHASES=none ANALYZE=1 (afterany: it also runs when a phase job failed).
-  Job 1 refused: exit 3, nothing else submitted; job 2 refused: exit 3 and
-  the `qdel` line for job 1; job 3 refused: exit 3 and the manual command.
-  DRYRUN=1 prints the three qsub lines and submits nothing. For
-  LindaColloDUP this is 576 oat runs (13 axes x 7 values = 91 points + 5
-  nominal = 96 per topology, x 2 topologies x 3 levels; 12 rounds of 48)
-  and 768 prior runs (16 x 48; 16 rounds).
-- Test oracles (`smoke_test_range_check.py`): the oat design (|free| x K
-  points, each differing from nominal on exactly one axis, endpoints on the
-  theta box, frozen axes absent, padding count); `--rc-like` (parsing the
-  rebuilt list reproduces every job_args value); end to end on a tiny
-  network with the repository pipeline (each design point found in the
-  sidecars exactly R times; the prior phase writes T x n_workers x k runs);
-  the analysis on synthetic Poisson trains of known rate (rate recovered
-  within the Poisson tolerance; a silent run flagged); bytes; the PBS job
-  with stub `module`, `conda` and `python` (R8, 15 checks: the stub probe,
-  call sequence and
-  arguments per setup, the lcdup freeze with VA -48 and VR -58.2, the
-  conn_prob box and the levels in order, the giulia levels, FREEZE_ENC with
-  values that differ from the default, PHASES and ANALYZE, CHECK_ONLY, the
-  refusals); the launcher with a stub `qsub` (R9, 6 checks: the stub probe,
-  queues, cores,
-  wall times, `depend=afterany` on both phase jobs, one OUT and the passed
-  variables in all three jobs, DRYRUN, a failed precheck, a comma, a refused
-  second submission). R2 also sets VA and VR off the nominal, since the
-  campaign's values equal the nominals. The stubs are shell functions and
-  the job's environment is built from scratch (only PATH kept), so nothing
-  from the caller's login shell reaches the job, and a noexec /tmp does not
-  stop the stubs. R8 and R9 first check, in that same environment, that each
-  stub resolves to a shell function, and stop otherwise, so the real python
-  or the real qsub is never reached from the test.
-- Confirmed: yes 2026-10-30 for the goal, the two setups, the design (axis
-  sweeps and a prior sample), 20 s, a reduced run here; a 48-core job per
-  setup on the cluster [corrected 2026-10-30: two 48-core nodes per setup,
-  oat and prior apart, the analysis after both], LindaColloDUP's conn_prob
-  box U[0.01, 0.5] and the clone folder; inferred for K = 7, R = 2, the
-  three conn levels (the box's ends and middle), t_skip = 2 s, PRIOR_TOPOS =
-  16 on two nodes (8 on one), k = 1, the queue assignment (oat on intel,
-  prior and analysis on cpu), the 12 h and 2 h wall times and the reporting
-  cut-offs.
+  `burst_metrics.compute_all` for the burst rate (log-ISI detector,
+  `li_burst_rate_per_min`), CV of ISI and adaptation index; mean rate =
+  spikes in the window / (Nn (T - t_skip)); active fraction = neurons with a
+  window rate > 0.1 Hz. Labels come from the run's stored theta and its
+  folder's design.json, independent of the draw order: corners, per free
+  axis, code -1 or +1 where theta equals lo or hi and 0 at the box centre
+  (tolerance 1e-9 of the box width), 'corner' when every code is +-1,
+  'centre' when every code is 0; interior, per free axis the bin whose
+  midpoint theta equals, 'interior' when every axis has one; else
+  'unmatched' (exit 1). conn_prob: code 2L - 1 (corners), bin L (interior).
+  Outcomes: y = log10(rate + 0.01 Hz); silent = 1[active fraction < 0.1];
+  high = 1[rate > 20 Hz]; bursting = 1[burst rate > 0] (reporting
+  conventions, not targets). Writes `runs.csv`; `corner_effects.csv`: for
+  every dimension j, over the corner runs, E_j(f) = mean(f | x_j = +1) -
+  mean(f | x_j = -1) for f = y, silent, high, bursting, with n(+) and n(-);
+  `corner_interactions.csv`: for every pair (j, k), E_jk(y) =
+  mean(y | x_j x_k = +1) - mean(y | x_j x_k = -1), the two-level interaction
+  contrast; `interior_bins.csv`: per dimension and bin, n, rate quartiles,
+  shares silent / high / bursting, median burst rate; `interior_pairs.csv`:
+  per pair of dimensions and pair of bins, n, share silent, share high,
+  median y; `interior_spearman.csv`: Spearman rho (`scipy.stats.spearmanr`)
+  of each dimension (theta; the run's conn_prob) with y and with the burst
+  rate; `calibration_summary.txt`: corner runs and the distinct corners of
+  the design they cover, centre points, shares, the curvature mean y(centre)
+  - mean y(corners), the main effects, the 20 largest interactions, the five
+  lowest- and highest-rate corners, the interior bins where more than half
+  the runs are silent or above 20 Hz, the Spearman list.
+- Plots (`range_plots.py DIR`): `corner_effects.png` (main effects on y and
+  on the shares), `interior_bins.png` (one panel per dimension: median rate
+  per bin with the interquartile band on one shared scale, shares per bin),
+  `rate_distributions.png` (log rate of corners, centre points, interior).
+- Job script (`submit_range_check.sh`, 48 cores, walltime 24 h, `-k eo`):
+  SETUP = lcdup | giulia (else exit 2). lcdup: LIB_DIR default
+  `/davinci-1/home/ldellamea/ANN/Astro-Neuron-Network/hpc/Phenomenological_finalv1/LindaColloDUP`
+  (Block 4's folder); the settings of `launch_LCDUP.sh` written out (FREEZE
+  default `Cm,I_inj,VA=-48,DeltaA,VR=-58.2,EC50_ampa,EC50_nmda,alpha_syn,O_G,Omega_G`
+  or FREEZE_ENC decoded, `:` for `,` and `@` for `=`; `--conn_prob_lo 0.01
+  --conn_prob_hi 0.5`; `--Nn 115` overridden by the density, so Nn = 159);
+  refuses a LIB_DIR without both box markers. giulia: LIB_DIR default
+  `Phenomenological/Main/Giulia_Astro`, LIKE = the first
+  `campaign_cadex_hhgap_v5/sweep_*/job_args.json` there (none: exit 2).
+  EXTRA (space-separated) ends every call. PHASES = all (default) | corners |
+  interior | none: corners at levels CORNER_LEVELS (default `0 1`) with
+  `--rc-corner-topologies CORNER_TOPOS` (8) `--rc-corner-budget
+  CORNER_BUDGET` (16384); interior at levels INTERIOR_LEVELS (default
+  0..BINS-1, BINS 7) with `--rc-bins BINS --rc-interior-runs INTERIOR_RUNS`
+  (16384) `--rc-interior-topologies INTERIOR_TOPOS` (7); ANALYZE = 1
+  (default) | 0: `range_analysis.py OUT --workers <ncpus>` then
+  `range_plots.py OUT`. Exit 2 before conda: PHASES or ANALYZE invalid,
+  PHASES=none with ANALYZE=0, `range_check.py` or `range_design.py` missing
+  from the submission folder, a LIB_DIR without `HPC_main_sweep.py`, the
+  lcdup box guard, PHASES=none with no `OUT/*/design.json`. CHECK_ONLY=1
+  runs those guards (all but the last), prints `[range_check] precheck OK:
+  ...` and exits 0. Exit 2 also when `conda activate` or the environment
+  check fails; otherwise 1 if any call failed, else 0.
+- Launcher (`launch_range_check.sh`, login node): refuses (exit 2) an
+  unknown SETUP and a comma in OUT or in a passed variable (`qsub -v` splits
+  on commas); runs the job script once with CHECK_ONLY=1 (failure: exit 2,
+  nothing submitted); then submits into one OUT (default
+  `~/ANN/range_check/<setup>_<UTC>`): job 1 `rc_corners` (Q_CORNERS, default
+  intel, PHASES=corners ANALYZE=0), job 2 `rc_interior` (Q_INTERIOR, default
+  cpu, PHASES=interior ANALYZE=0), both `select=1:ncpus=NCPUS` (48) and
+  WALLTIME (24 h); job 3 `rc_analysis` (Q_ANALYSIS cpu, ANALYSIS_NCPUS 8,
+  ANALYSIS_WALLTIME 2 h, `-W depend=afterany:<job 1>:<job 2>`, PHASES=none
+  ANALYZE=1). Passed on when set: LIB_DIR, LIKE, BINS, CORNER_LEVELS,
+  CORNER_TOPOS, CORNER_BUDGET, INTERIOR_LEVELS, INTERIOR_TOPOS,
+  INTERIOR_RUNS, RC_SIMTIME, EXTRA, FREEZE_ENC, CONDA_ENV. A refused job 1:
+  exit 3, nothing else submitted; job 2: exit 3 and the `qdel` line for job
+  1; job 3: exit 3 and the manual command. DRYRUN=1 prints the three qsub
+  lines and submits nothing.
+- LindaColloDUP sizes: dr = 13, d = 14, so the full factorial: per conn
+  level 8,192 corners + 256 centre points = 8 x 48 x 22 = 8,448 runs (16,896
+  in all, conn_prob 0.01 and 0.5); interior 7 levels of 2,352 cells
+  (7 x 48 x 7), 16,464 runs, conn_prob = 0.045 + 0.07 L.
+- Custom code: the fraction's generator search (`range_design.py`
+  docstring: pyDOE3 1.6.2's `fracfact_by_res(n, 5)` is not resolution V for
+  n = 14 or 23, checked 2026-10-30), the labels and the effect contrasts.
+- Test oracles (`smoke_test_range_check.py`, R1-R10; 63 checks with Brian2,
+  56 and 1 skipped with `--no-sim`): R1 the fraction for the 36-D root
+  pipeline (resolution 8 here, floor 7; no aliased main/two-axis pair in a
+  Gram check; balanced; the two levels together are the design; every vector
+  at the bounds its codes name; centre points; inactive axes at nominal); R2
+  the full factorial with the LindaColloDUP freeze (each level all 2^13
+  corners once; VA, VR held, also off the nominal); R3 `--rc-like`; R4 the
+  37-D Giulia copy; R5 the interior (sizes, conn midpoints, every value a bin
+  midpoint, chi-square uniformity over 91 tests, seed determinism); R6 end to
+  end on a tiny network (labels equal the design's codes and bins, tables,
+  figures, refusals); R7 a planted effect recovered (E_A = 0.5985 for a
+  planted 0.6004; inert axes |E| < 0.003; interior medians doubling per bin;
+  an off-grid run unmatched, exit 1); R8 bytes; R9 the job script and R10
+  the launcher with stubs in a sealed environment, each probed first. Ten
+  planted faults (2026-10-30) were each caught by a named check.
+- Confirmed: yes 2026-10-30 for the design (corners at every free axis's
+  bounds in all combinations, the same number of random cells of the 7-bin
+  grid, a fraction keeping every main effect and two-axis interaction when
+  2^d > 16,384, two 48-core jobs with a 24 h walltime then the analysis job,
+  the standard for every setup), the two setups and the 20 s runs; inferred
+  for T_c = 8, T_i = 7, the centre points, the seeds, t_skip = 2 s, the
+  reporting cut-offs and the queue assignment.
 - Status: smoke-tested 2026-10-30 in the sandbox (36-D root pipeline,
-  freeze-patched copy, 37-D `Giulia/` copy; skipped: davinci, the cluster's
-  gate version). davinci 2026-10-30, clone at 1a0932a, `--no-sim`: R8 found
-  0 stub calls and then crashed on an unguarded index. The cause is the
-  caller's environment reaching the job (an inherited `module` function, or
-  BASH_ENV) or a noexec /tmp: each reproduced the failure here. On davinci
-  it was the inherited function: there `env` lists an exported `module`
-  function, BASH_ENV is unset, and neither /tmp nor home is mounted noexec.
-  R8 rebuilt as above, with guarded checks and the job's output printed
-  after a failed check; passes here under both causes, and on davinci
-  (clone at 1757d3e, `--no-sim`: 26 passed, 1 skipped). With a noexec /tmp,
-  R5 here and S4 of `smoke_test_clamp_cadex_copies.py` also fail (they run
-  programs from the temporary folder); not changed, since davinci's /tmp
-  allows programs. Two-node split, sandbox 2026-10-30: 50 passed with
-  Brian2 (43 passed, 1 skipped with `--no-sim`), also with an exported
-  `module` function and a BASH_ENV redefining python, conda, module and
-  qsub in the caller's environment; 12 deliberate faults in the two scripts
-  (wrong levels, wrong box, guard removed, CHECK_ONLY ignored, a phase run
-  twice, FREEZE_ENC not decoded, the analysis waiting on one job, PRIOR_TOPOS
-  dropped, precheck ignored, comma accepted, a refused submission ignored,
-  DRYRUN submitting) were each caught; the stub probe stops R8 and R9 when
-  a stub is not exported. `DRYRUN=1 SETUP=lcdup bash launch_range_check.sh`
-  on the Block 4 test folder printed the three jobs. Skipped: davinci.
+  freeze-patched copy, 37-D `Giulia/` copy; both phases with the exact
+  LindaColloDUP settings on 159 neurons: corners at conn_prob 0.5, interior
+  at 0.465, labels and analysis correct). Skipped: davinci, the cluster's
+  gate version. History: until 2026-10-30 (a3878d2) this block specified
+  one-axis sweeps at three conn_prob levels and a prior sample, replaced by
+  this design at the author's request. The R8 failure on davinci of
+  2026-10-30 (an exported `module` function reaching the job) was fixed by
+  the sealed environment, now used by R9 and R10; it passed on davinci at
+  1757d3e.
 
 ### Block 7: the seed guard across ~/ANN
 
@@ -716,7 +744,8 @@ campaign's `job_args.json` `lib_dir`).
 | `python3 seed_alloc.py --root . --ledger artifacts/seed_ledger.tsv --scan-tree /davinci-1/home/ldellamea/ANN --report` | Block 7 on davinci: what the guard sees | a launch folder | seconds (not timed on davinci) |
 | `python3 smoke_test_range_check.py` | Block 6 | the repository pipeline, Brian2 and a C++ compiler | minutes |
 | `qsub -v SETUP=...,LIB_DIR=...,OUT=... submit_range_check.sh` | Block 6 on a setup, one node | the setup's folder on davinci | hours (not timed on davinci) |
-| `SETUP=lcdup bash launch_range_check.sh` (first with `DRYRUN=1`) | Block 6 on a setup, two nodes and the analysis job | the setup's folder on davinci; `qsub` | seconds to submit; the jobs: hours (not timed on davinci) |
+| `SETUP=lcdup bash launch_range_check.sh` (first with `DRYRUN=1`) | Block 6 on a setup: corners and interior on two nodes, then the analysis job | the setup's folder on davinci; `qsub` | seconds to submit; the jobs: about 350 rounds of 48 runs each (not timed on davinci) |
+| `python3 range_check.py --rc-phase corners --rc-level 0 --rc-out X --rc-design-only <settings>` | Block 6: a level's design, nothing run | the setup's folder | seconds |
 
 ## 7. Not executable in the sandbox
 
@@ -774,9 +803,13 @@ campaign's `job_args.json` `lib_dir`).
   the probability that a synapse is contacted by an astrocyte (the contact
   gate), which today exists only in the cluster's `Giulia_Astro/` (decided
   2026-10-30; files to come from the cluster).
+- Topology-level axes other than conn_prob (the contact gate of the new
+  Giulia setup) are not design dimensions of Block 6 yet: with a gate box in
+  EXTRA each topology draws its gate from the prior (raised 2026-10-30).
 - Block 6 for the 37-D setups: the driver uses only `main`, `sample_theta`,
   `resolve_sweep_group`, `_apply_freeze`, `_resolve_n_workers`,
   `NOMINAL_PARAMS`, `PARAM_BOUNDS_THETA`, `natural_to_theta`,
-  `build_parser`, `PARAM_NAMES` and `LOG_PARAMS` of the setup's module;
+  `theta_to_natural`, `build_parser` (and its `conn_prob_lo`, `conn_prob_hi`,
+  `conn_rule`), `PARAM_NAMES`, `LOG_PARAMS` and `N_DIMS` of the setup's module;
   checked on the 36-D root pipeline and the 37-D `Giulia/` copy, not on the
   cluster's gate version (raised 2026-10-30).
