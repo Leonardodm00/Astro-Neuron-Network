@@ -97,6 +97,9 @@ OUTPUT: ~/ANN/range_check/<setup>_<UTC>/ (outside every project folder)
 Send back calibration_summary.txt and the three png files.
 Logs (#PBS -k eo, in $HOME): rc_corners.o<id>, rc_interior.o<id>,
 rc_analysis.o<id> and their .e<id>; a job submitted alone logs to
-range_check.o<id>. Runtime not measured on davinci (sandbox: one 20 s run of
-159 neurons at nominal took 132 s on one core; runs at conn_prob 0.5 are
-slower than at 0.01): each node runs about 350 rounds of 48 runs.
+range_check.o<id>. Runtime not measured on davinci. Sandbox, one core, 159
+neurons: one 20 s run at nominal parameters and conn_prob 0.35 took 132 s plus
+12 s of compilation, and the cost grows linearly with the synapse count (about
+24 s per run at conn_prob 0.01, 198 s at 0.5, compilation included). Each
+worker runs 352 runs (corners) or 343 (interior) one after another: about 11 h
+per node at the sandbox's speed, against the 24 h walltime.

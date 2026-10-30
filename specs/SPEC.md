@@ -744,7 +744,7 @@ campaign's `job_args.json` `lib_dir`).
 | `python3 seed_alloc.py --root . --ledger artifacts/seed_ledger.tsv --scan-tree /davinci-1/home/ldellamea/ANN --report` | Block 7 on davinci: what the guard sees | a launch folder | seconds (not timed on davinci) |
 | `python3 smoke_test_range_check.py` | Block 6 | the repository pipeline, Brian2 and a C++ compiler | minutes |
 | `qsub -v SETUP=...,LIB_DIR=...,OUT=... submit_range_check.sh` | Block 6 on a setup, one node | the setup's folder on davinci | hours (not timed on davinci) |
-| `SETUP=lcdup bash launch_range_check.sh` (first with `DRYRUN=1`) | Block 6 on a setup: corners and interior on two nodes, then the analysis job | the setup's folder on davinci; `qsub` | seconds to submit; the jobs: about 350 rounds of 48 runs each (not timed on davinci) |
+| `SETUP=lcdup bash launch_range_check.sh` (first with `DRYRUN=1`) | Block 6 on a setup: corners and interior on two nodes, then the analysis job | the setup's folder on davinci; `qsub` | seconds to submit; the jobs: 352 (corners) and 343 (interior) runs per worker, about 11 h per node at the sandbox core's speed (not timed on davinci; `claude/Prior_Range_Calibration_Standard.md` section 6) |
 | `python3 range_check.py --rc-phase corners --rc-level 0 --rc-out X --rc-design-only <settings>` | Block 6: a level's design, nothing run | the setup's folder | seconds |
 
 ## 7. Not executable in the sandbox
