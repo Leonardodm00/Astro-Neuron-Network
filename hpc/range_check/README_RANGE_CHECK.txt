@@ -11,7 +11,7 @@ THIS FOLDER (repository path hpc/range_check/)
   range_analysis.py         per-run metrics (window after 2 s) and summaries
   range_plots.py            figures from the summaries
   submit_range_check.sh     PBS job: one setup, 48 cores, all phases + analysis
-  smoke_test_range_check.py the checks (24 with Brian2; R8 tests the job script)
+  smoke_test_range_check.py the checks (33 with Brian2; R8 tests the job script)
   README_RANGE_CHECK.txt    this file
 range_analysis.py imports burst_metrics.py from ../Phenomenological_finalv1/
 (so run it from a clone, or give --burst-lib DIR).
@@ -32,12 +32,14 @@ BEFORE SUBMITTING (davinci)
 
 ON DAVINCI, from <clone>/hpc/range_check after git pull:
   conda activate brian_final && python smoke_test_range_check.py --no-sim | tail -1
-      (expect "RESULT: 23 passed, 0 failed, 1 skipped"; without --no-sim it
-       also simulates a tiny network, about 2 min: 24 passed)
+      (expect "RESULT: 26 passed, 0 failed, 1 skipped"; without --no-sim it
+       also simulates a tiny network, about 2 min: 33 passed)
   qsub -q cpu -v SETUP=lcdup submit_range_check.sh
   qsub -q cpu -v SETUP=giulia,EXTRA="--stoa_gate_lo 0.2 --stoa_gate_hi 1.0",OAT_EXTRA="--stoa_gate_lo 0.6 --stoa_gate_hi 0.6" submit_range_check.sh
   (the gate values above are an example: put the new setup's box in EXTRA and
-   one fixed value inside it in OAT_EXTRA)
+   one fixed value inside it in OAT_EXTRA. qsub -v splits on commas: a freeze
+   list other than LindaColloDUP's goes in as FREEZE_ENC, ':' for ',' and '@'
+   for '=', as for submit_LCDUP.sh)
 
 OUTPUT: ~/ANN/range_check/<setup>_<UTC>/ (outside every project folder)
   oat_cp0.100/ oat_cp0.350/ oat_cp0.600/ prior/   standard task layout

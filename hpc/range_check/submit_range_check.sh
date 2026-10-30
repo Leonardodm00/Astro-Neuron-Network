@@ -20,7 +20,10 @@
 #         (the gate box of the new setup, if its code has --stoa_gate_lo/hi).
 # Any variable below can be overridden with qsub -v NAME=value (EXTRA and
 # OAT_EXTRA are space-separated HPC_main_sweep.py arguments; OAT_EXTRA only
-# for the oat phase). Output: OUT=~/ANN/range_check/<setup>_<UTC>, outside
+# for the oat phase). qsub -v splits on commas, so a different freeze list
+# goes in as FREEZE_ENC with ':' for ',' and '@' for '=' (as submit_LCDUP.sh),
+# e.g. FREEZE_ENC=Cm:I_inj:VA@-48:DeltaA:VR@-58.2:EC50_ampa:EC50_nmda:alpha_syn:O_G:Omega_G
+# Output: OUT=~/ANN/range_check/<setup>_<UTC>, outside
 # every project folder. Reads the setup folder, writes only under OUT and
 # node scratch. Logs: ~/range_check.o<id> / .e<id>.
 ##########################################################################
@@ -38,13 +41,16 @@ PRIOR_TOPOS="${PRIOR_TOPOS:-8}"
 RC_SIMTIME="${RC_SIMTIME:-20}"
 EXTRA="${EXTRA:-}"
 OAT_EXTRA="${OAT_EXTRA:-}"
+FREEZE_ENC="${FREEZE_ENC:-}"
+FREEZE="Cm,I_inj,VA=-50,DeltaA,VR=-55,EC50_ampa,EC50_nmda,alpha_syn,O_G,Omega_G"
+[ -n "$FREEZE_ENC" ] && FREEZE="$(printf '%s' "$FREEZE_ENC" | tr ':@' ',=')"
 
 case "$SETUP" in
     lcdup)
         LIB_DIR="${LIB_DIR:-$ANN/Phenomenological/LindaColloDUP}"
         LIKE="${LIKE:-}"
         SETTINGS=(--mode Neuronal --sweep_group neuron_synapse
-                  --freeze "${FREEZE:-Cm,I_inj,VA=-50,DeltaA,VR=-55,EC50_ampa,EC50_nmda,alpha_syn,O_G,Omega_G}"
+                  --freeze "$FREEZE"
                   --density 1300 --density_astro 0 --c_max 350 --Nn 115 --Na 0
                   --conn_rule flat --conn_prob_lo 0.1 --conn_prob_hi 0.6
                   --displ_bias 20 --topology_mode wallach --gj_dist 200 --gj_max_dist 150

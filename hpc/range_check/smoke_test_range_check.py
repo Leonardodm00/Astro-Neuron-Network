@@ -20,7 +20,8 @@ smoke_test_range_check.py -- checks of hpc/range_check/ (specs/SPEC.md Block 6).
       calls range_check.py 3 times (oat at 0.1 0.35 0.6) and once (prior), then
       the analysis and the plots, with the LindaColloDUP settings; SETUP=giulia
       finds LIKE in the hhgap_v5 campaign and passes EXTRA to every phase and
-      OAT_EXTRA to the oat phases only; an unknown SETUP exits 2
+      OAT_EXTRA to the oat phases only; FREEZE_ENC is decoded; an unknown
+      SETUP exits 2
 
 Run:  python3 smoke_test_range_check.py | tail -1        (about 2 min with R5)
       python3 smoke_test_range_check.py --no-sim          (skip R5)
@@ -295,6 +296,9 @@ def r8(tmp):
     check(all('--stoa_gate_lo 0.2 --stoa_gate_hi 1.0' in c for c in oat + prior)
           and all(c.endswith('--stoa_gate_lo 0.6 --stoa_gate_hi 0.6') for c in oat)
           and '0.6 --stoa_gate_hi 0.6' not in prior[0], 'giulia: EXTRA everywhere, OAT_EXTRA last in oat only')
+    r, calls = job(SETUP='lcdup', FREEZE_ENC='Cm:I_inj:VA@-48:DeltaA:VR@-58.2:EC50_ampa:EC50_nmda:alpha_syn:O_G:Omega_G')
+    check(r.returncode == 0 and all('--freeze Cm,I_inj,VA=-48,DeltaA,VR=-58.2,EC50_ampa' in c
+                                    for c in calls if '--rc-phase' in c), 'lcdup: FREEZE_ENC decoded')
     r, calls = job(SETUP='nonsense')
     check(r.returncode == 2 and not calls, 'unknown SETUP: exit 2, nothing run')
 
