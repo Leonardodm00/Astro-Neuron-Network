@@ -24,6 +24,7 @@ its GIT CLONE status and queued-job hold added on top of 4e12a40)
 
 - `hpc/refractory_audit/` (the audit and its `checks/`)
 - `hpc/Phenomenological_finalv1/LindaColloDUP/` (launch package and its `checks/`)
+- `hpc/range_check/` (20 s runs over a setup's prior boxes, Block 6)
 - the refractory handling of every CAdEx neuron model in the repository
   (today `hpc/Phenomenological_finalv1/ASD_fun_BD_cpp.py` and
   `hpc/Phenomenological_finalv1/Giulia/ASD_fun_BD_cpp.py`): in
@@ -143,6 +144,12 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
     campaigns at once is given the clamped campaigns explicitly (for
     `multi_campaign_report.py`, `--glob` with the clamped stem; its default
     `campaign_*` takes every campaign in the folder).
+  - 2026-10-30 [author]: the rho1300 rerun is Neuronal, as the eight
+    `campaign_cadex_rho1300v*` (637 neurons, no astrocytes).
+  - 2026-10-30 [author]: before relaunching, the activity produced over the
+    prior boxes is measured with 20 s runs (Block 6) -- now for Giulia's
+    setup and LindaColloDUP's, each as an independent 48-core job; the boxes
+    of MEAMA and of the rho1300 family are retuned later (section 8).
   - 2026-10-29 [author]: LindaColloDUP runs MODE Neuronal; freezes Cm,
     I_inj, VR, VA, DeltaA, EC50_ampa, EC50_nmda (and the inert alpha_syn,
     O_G, Omega_G); SIMTIME 180 s; RHO_TOTAL 1300 cells/mm^2; everything else
@@ -333,6 +340,93 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   `qstat -f` layout on davinci has not been read).
 - Status: smoke-tested 2026-10-30 in the sandbox (skipped: davinci).
 
+### Block 6: range_check, 20 s runs over a setup's prior boxes
+
+- Purpose: before a campaign is relaunched with the refractory hold, measure
+  the network activity its prior produces, through the setup's own sweep
+  code: one-axis sweeps around the nominal vector at three wiring densities,
+  and a sample of the joint prior; 20 s per run.
+- Modules (`hpc/range_check/`): `range_check.py` (driver), `range_analysis.py`
+  (per-run metrics and summaries), `range_plots.py` (figures only),
+  `submit_range_check.sh` (PBS job, one node, 48 cores, one setup per job),
+  `smoke_test_range_check.py`, `README_RANGE_CHECK.txt`.
+- Driver: `python3 range_check.py --rc-phase {oat,prior} --rc-out DIR
+  [--rc-like JOB_ARGS] [--rc-conn P] [--rc-points K] [--rc-topologies R]
+  [--rc-k-prior k] [--rc-simtime T] [--rc-seed S] <HPC_main_sweep.py
+  arguments>`. It imports `HPC_main_sweep` from the `--lib_dir` among the
+  pass-through arguments (the setup's own folder: 36-D or 37-D, with or
+  without the freeze patch) and calls its `main()` with the pass-through
+  arguments followed by `--out_dir`, `--simtime T` (default 20 s),
+  `--n_topologies`, `--n_params_per_worker`, `--seed_master`, and for `oat`
+  also `--conn_prob_lo P --conn_prob_hi P`. Later arguments win.
+  - `oat`: free axes = `resolve_sweep_group(--sweep_group)` minus the axes of
+    `--freeze` (through the module's own `_apply_freeze` when present). For
+    each free axis j with lo_j < hi_j, K values (default 7) of theta_j =
+    linspace(lo_j, hi_j, K) in the sweep's theta coordinate
+    (`PARAM_BOUNDS_THETA`: ln on `LOG_PARAMS` axes, natural units otherwise),
+    every other axis at the nominal theta, `natural_to_theta(NOMINAL_PARAMS)`
+    taken after the freeze. The list is padded with nominal vectors to
+    n_workers x k, k = ceil(len / n_workers), n_workers from the module's
+    `_resolve_n_workers`. In the parent process only, the module's
+    `sample_theta` is replaced by a function that returns that list in
+    order for every topology; this is the only change to the production
+    path. R topologies (default 2) at conn_prob = P. `design.json` records
+    the nominal theta, each point's axis and value, K, k, n_workers.
+  - `prior`: unchanged production sampling: T topologies (default 8) x
+    n_workers x k (default 1) draws with the setup's own conn_prob box.
+  - `--rc-like`: rebuilds the base argument list from a campaign's
+    `job_args.json` through the module's own parser (each key that is a
+    parser destination; store_true options as flags when true; None values
+    skipped; never out_dir, scratch_root, lib_dir, seed_master, n_workers,
+    n_topologies, n_params_per_worker, simtime, rebuild_manifest_only);
+    explicit arguments after it override.
+  - Refuses (exit non-zero, nothing run) when the setup's model does not end
+    its CAdEx dV/dt line with `(unless refractory)`, unless
+    `--rc-allow-unclamped`; refuses an output folder that already holds runs.
+- Output: `DIR/oat_cp<P>/` and `DIR/prior/` in the standard task layout
+  (`job_args.json`, `topo_*/iter_*.npz` + `.json`, `manifest.json`), plus
+  `design.json`.
+- Analysis (`range_analysis.py DIR`): per run, the neuron spikes in the
+  window [t_skip, T] (t_skip default 2 s, shifted to start at 0) go through
+  `burst_metrics.compute_all` (the repository's network-burst panel) for
+  the burst rate (log-ISI detector, `li_burst_rate_per_min`), CV of ISI and
+  adaptation index; mean rate = spikes in the window / (Nn (T - t_skip));
+  active fraction = neurons with rate > 0.1 Hz in the window; astrocyte
+  event rate from the sidecar. Each `oat` run is labelled by its position:
+  iter_idx < n_design is design point iter_idx, the rest is the nominal
+  padding, and the stored theta must equal that vector exactly, otherwise
+  the run is `unmatched` (position keeps a design point that coincides with
+  the nominal vector apart from the nominal runs). Writes `runs.csv`;
+  `oat_summary.csv` (per conn level, axis and value: number of runs, median,
+  min and max of the mean rate, medians of the burst rate and of the active
+  fraction); `prior_summary.txt` (quantiles of the mean rate; shares
+  of runs that are silent, active fraction < 0.1; bursting, burst rate > 0;
+  above 20 Hz; these cut-offs are reporting conventions, set in the config,
+  not targets); `prior_spearman.csv` (Spearman rank correlation, with
+  p-value, of each free theta axis and of conn_prob with log10(mean rate +
+  0.01 Hz) and with the burst rate; `scipy.stats.spearmanr`).
+- Plots (`range_plots.py DIR`): `oat_curves.png` (one panel per free axis:
+  median mean rate against the axis value, one line per conn level, min-max
+  band; log x on `LOG_PARAMS` axes), `prior_rates.png`, `prior_spearman.png`.
+- Test oracles (`smoke_test_range_check.py`): the oat design (|free| x K
+  points, each differing from nominal on exactly one axis, endpoints on the
+  theta box, frozen axes absent, padding count); `--rc-like` (parsing the
+  rebuilt list reproduces every job_args value); end to end on a tiny
+  network with the repository pipeline (each design point found in the
+  sidecars exactly R times; the prior phase writes T x n_workers x k runs);
+  the analysis on synthetic Poisson trains of known rate (rate recovered
+  within the Poisson tolerance; a silent run flagged); bytes; the PBS job
+  with stub `module`, `conda` and `python` (call sequence and arguments per
+  setup, an unknown setup refused).
+- Confirmed: yes 2026-10-30 for the goal, the two setups, the design (axis
+  sweeps and a prior sample), 20 s, a reduced run here and a 48-core job per
+  setup on the cluster; inferred for K = 7, R = 2, the three conn levels (the
+  box's ends and middle), t_skip = 2 s, T = 8, k = 1 and the reporting
+  cut-offs.
+- Status: smoke-tested 2026-10-30 in the sandbox (36-D root pipeline,
+  freeze-patched copy, 37-D `Giulia/` copy; skipped: davinci, the cluster's
+  gate version).
+
 ### 5.1 Projects and where their model runs
 
 The tester can check only what is in the repository. The cluster folders
@@ -363,6 +457,8 @@ campaign's `job_args.json` `lib_dir`).
 | `SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes DRYRUN=1 bash launch_LCDUP.sh` | Block 4 dry run | the LindaColloDUP folder on davinci | seconds |
 | `python3 clamp_cadex_copies.py --self-test` and `python3 smoke_test_clamp_cadex_copies.py` | Block 5 | embedded fixtures; a repository clone for the mock tree | seconds |
 | `python3 clamp_cadex_copies.py <repository root>` | the repository invariant of Block 1 | the repository | seconds |
+| `python3 smoke_test_range_check.py` | Block 6 | the repository pipeline, Brian2 and a C++ compiler | minutes |
+| `qsub -v SETUP=...,LIB_DIR=...,OUT=... submit_range_check.sh` | Block 6 on a setup | the setup's folder on davinci | hours (not timed on davinci) |
 
 ## 7. Not executable in the sandbox
 
@@ -386,3 +482,15 @@ campaign's `job_args.json` `lib_dir`).
   them under this spec (raised 2026-10-29, still open).
 - Astrocyte variables ending NaN in Full runs at nominal parameters: a
   separate failure, not investigated (raised 2026-10-29).
+- Retune the prior boxes of MEAMA and of the rho1300 family for the clamped
+  model, after Block 6 has run on them (decided 2026-10-30, not started).
+- Bring the Giulia setup onto GitHub: its 37-D pipeline with the new axis,
+  the probability that a synapse is contacted by an astrocyte (the contact
+  gate), which today exists only in the cluster's `Giulia_Astro/` (decided
+  2026-10-30; files to come from the cluster).
+- Block 6 for the 37-D setups: the driver uses only `main`, `sample_theta`,
+  `resolve_sweep_group`, `_apply_freeze`, `_resolve_n_workers`,
+  `NOMINAL_PARAMS`, `PARAM_BOUNDS_THETA`, `natural_to_theta`,
+  `build_parser`, `PARAM_NAMES` and `LOG_PARAMS` of the setup's module;
+  checked on the 36-D root pipeline and the 37-D `Giulia/` copy, not on the
+  cluster's gate version (raised 2026-10-30).
