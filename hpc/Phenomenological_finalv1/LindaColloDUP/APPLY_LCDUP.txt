@@ -68,7 +68,11 @@ mkdir -p artifacts && LCDUP_NO_ENV=1 NODETAG=probe CAMPAIGN_TAG=probe_check SEED
 SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes DRYRUN=1 bash launch_LCDUP.sh
 
    BEFORE STEP 8 (decided 2026-10-30): the range check on two nodes, from the
-   range_check folder of the clone (README_RANGE_CHECK.txt there):
+   range_check folder of the clone (README_RANGE_CHECK.txt there). First the
+   dry run (expect "precheck OK", three "[dry run] qsub" lines: rc_oat on
+   intel, rc_prior on cpu, rc_analysis on cpu; nothing submitted), then the
+   submission (keep its "stop all: qdel ..." line):
+cd ~/ANN/Astro-Neuron-Network/hpc/range_check && DRYRUN=1 SETUP=lcdup bash launch_range_check.sh
 cd ~/ANN/Astro-Neuron-Network/hpc/range_check && SETUP=lcdup bash launch_range_check.sh
    Launch the campaign once its results have been discussed.
 
