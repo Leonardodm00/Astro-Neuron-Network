@@ -1,0 +1,75 @@
+LindaColloDUP -- neurons-only campaign (MODE=Neuronal), set up from MEAMA
+==========================================================================
+Target folder: /davinci-1/home/ldellamea/ANN/Phenomenological/LindaColloDUP/
+Full procedure and the reasons behind each setting:
+project doc claude/LindaColloDUP_Campaign_Operations.md
+
+THIS ARCHIVE (unpack inside the target folder)
+  launch_LCDUP.sh            launcher, login node; single source of truth for all settings
+  submit_LCDUP.sh            PBS worker; never qsub it directly
+  apply_freeze_patch.py      adds --freeze to the folder's own HPC_main_sweep.py copy
+  smoke_test_freeze.py       checks the freeze patch and the 13 free axes (no simulation)
+  apply_refractory_clamp.py  holds V at VR during t_ref (step 5a; decided 2026-10-30)
+  APPLY_LCDUP.txt            this file
+
+NOT IN THE ARCHIVE: the pipeline. It is copied from the cluster's MEAMA/
+folder (the 37-D version, which is not on GitHub) in step 0.
+
+DECIDED 2026-10-30: clamp (step 5a, then REFRACTORY_CLAMP=yes in steps 7-8).
+Without the clamp, a neuron driven above VT during its refractory period runs
+away to NaN and never spikes again; in the LindaColloDUP prior this silences
+most or all of the network in most runs (operations doc, section 3).
+
+ORDER OF OPERATIONS (paste one line at a time)
+
+0. create the folder and copy the 37-D pipeline from MEAMA/ (expect 8 files):
+cd /davinci-1/home/ldellamea/ANN/Phenomenological && mkdir LindaColloDUP && cp MEAMA/{HPC_main_sweep.py,HPC_single_run.py,ASD_fun_BD_cpp.py,aggregate_sweep.py,burst_metrics.py,burst_plots.py,seed_alloc.py,synapse_pdist.csv} LindaColloDUP/ && ls LindaColloDUP
+
+1. copy LindaColloDUP_pkg.tar.gz into that folder with the MobaXterm file
+   browser (binary transfer, not paste), then unpack:
+cd /davinci-1/home/ldellamea/ANN/Phenomenological/LindaColloDUP && tar -xzf LindaColloDUP_pkg.tar.gz && ls
+
+2. byte check of the delivered files (expect "0 CR 0 non-ASCII" five times):
+python3 -c "import sys;[print(p, open(p,'rb').read().count(b'\r'), 'CR', sum(b>127 for b in open(p,'rb').read()), 'non-ASCII') for p in sys.argv[1:]]" launch_LCDUP.sh submit_LCDUP.sh apply_freeze_patch.py smoke_test_freeze.py apply_refractory_clamp.py
+
+3. environment and registry (expect "37"):
+conda activate brian_final && python -c "import HPC_main_sweep as S; print(S.N_DIMS)"
+
+4. freeze patch, then its smoke test (expect "CHECK OK", "PATCHED", then
+   "RESULT: 35 passed, 0 failed"):
+python apply_freeze_patch.py --check && python apply_freeze_patch.py && python smoke_test_freeze.py | tail -3
+
+5a. CLAMP (decided 2026-10-30; expect "SELF-TEST: PASS", "CHECK OK", "CLAMPED"):
+python apply_refractory_clamp.py --self-test | tail -1 && python apply_refractory_clamp.py --check && python apply_refractory_clamp.py
+5b. (not used since 2026-10-30) without the clamp: skip 5a and use REFRACTORY_CLAMP=no in steps 7-8.
+
+6. probe, about 1-2 min on the login node: 2 tiny runs through the real worker
+   (expect the dV/dt line ending in "(unless refractory)" if you clamped,
+   "topo_00000 done: 2 ok", and NaN count 0 if you clamped), then clean up:
+mkdir -p artifacts && LCDUP_NO_ENV=1 NODETAG=probe CAMPAIGN_TAG=probe_check SEED_BASE=1000 N_TOPOLOGIES=1 C_MAX=120 SIMTIME=2 PBS_NCPUS=2 FREEZE_ENC=Cm:I_inj:VA@-50:DeltaA:VR@-55:EC50_ampa:EC50_nmda:alpha_syn:O_G:Omega_G bash submit_LCDUP.sh > artifacts/probe_check.log 2>&1; grep -E "dV/dt \(model|topo_00000 done" artifacts/probe_check.log; echo "NaN warnings: $(grep -c 'has NaN' artifacts/probe_check.log)"; rm -rf campaign_probe_check
+
+7. dry run (expect Nn=159, the freeze list, "V clamp (t_ref): yes", two
+   "[dry run] qsub ... -J 0-651%2" lines and "[dry run] nothing submitted."):
+SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes DRYRUN=1 bash launch_LCDUP.sh
+
+8. launch (keep the "stop all: qdel ..." line; the launch also writes
+   campaign_<tag>/PROVENANCE_<launch id>.txt):
+mkdir -p artifacts && SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes bash launch_LCDUP.sh 2>&1 | tee artifacts/launch_lcdup15_rho1300_neur_n01_$(date -u +%Y%m%dT%H%M%SZ).log
+
+9. once the first task has started: free axes, freeze list, population
+   (expect "free 13", the freeze list, "Nn 159 Na 0 mode Neuronal simtime 180.0"):
+python -c "import json,glob; f=sorted(glob.glob('campaign_lcdup15_rho1300_neur_n01/sweep_*/job_args.json'))[0]; d=json.load(open(f)); print(f); print('free', len(d['_active_param_names']), d['_active_param_names']); print('freeze', d['freeze']); print('Nn', d['Nn'], 'Na', d['Na'], 'mode', d['mode'], 'simtime', d['simtime'])"
+
+10. after 2-3 h, the real wall time per topology (sizing check, operations
+    doc section 5): 32 topologies fit 20 h below ~2,250 s each and 24 h below
+    ~2,700 s; a walltime kill loses only the topology in progress. Then the
+    number of job error logs carrying Brian2's NaN warning (Brian2 writes to
+    stderr, so the .e files; expect 0 if you clamped):
+grep -h "topo_.* done:" ~/lcdup_campaign.o* | tail -5
+grep -l "variable 'V' has NaN" ~/lcdup_campaign.e* 2>/dev/null | wc -l
+
+11. progress:
+python aggregate_sweep.py campaign_lcdup15_rho1300_neur_n01 --target 1000000 | tail -3
+
+If step 4 or 5a prints REFUSED, nothing was written: send the printed lines
+(and, if asked, the file named in them) back in the chat.
