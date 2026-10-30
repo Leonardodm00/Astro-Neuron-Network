@@ -923,7 +923,11 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
     # SCALE I_inj x build-frozen unit draw bias_unit _ [-0.5, 0.5]), and the
     # synaptic current `I_syn` enter the membrane balance. E[bias_unit]=0 => the
     # bias adds across-cell DISPERSION only, never net drive (anchored by E_L).
-    dV/dt  = noise + (gl*(El-V) + gl*DeltaT*exp((V-VT)/DeltaT) + gA*(EA-V) + I_inj*bias_unit - I_syn)/Cm : volt
+    # V is held at VR during t_ref, as in Gorski et al. 2021 (Sec. 2). Without
+    # '(unless refractory)' V keeps integrating while Brian2 skips the threshold
+    # test, so a neuron pushed past the unstable point runs away to inf/NaN and
+    # never spikes again (refractory audit, 2026-10-30).
+    dV/dt  = noise + (gl*(El-V) + gl*DeltaT*exp((V-VT)/DeltaT) + gA*(EA-V) + I_inj*bias_unit - I_syn)/Cm : volt (unless refractory)
     dgA/dt = (gbarA/(1 + exp((VA-V)/DeltaA)) - gA)/tauA                                     : siemens
 
     # Diffusion (current-noise) term -- amplitude pinned to a FIXED leak ref

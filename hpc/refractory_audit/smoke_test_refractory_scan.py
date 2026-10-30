@@ -17,7 +17,8 @@ Checks
   T3  check_refractory_nan.sh end to end with a fake HOME: CODE section
       (clamped / not clamped / missing), LOGS table, DATA, VERDICT; an
       unknown option refused
-  T4  every file of the package is pure ASCII with LF line endings
+  T4  the six package files (fixed list PKG_FILES) are present, pure ASCII
+      and LF-only; other files in the folder, e.g. the archive, are ignored
 """
 import csv
 import json
@@ -214,11 +215,16 @@ def t3(tmp):
     check(r2.returncode == 2 and 'unknown option' in r2.stderr, 'unknown option refused (exit 2)')
 
 
+PKG_FILES = ('.gitignore', 'README_REFRACTORY_AUDIT.txt', 'check_refractory_nan.sh',
+             'refractory_scan.py', 'smoke_test_refractory_scan.py', 'submit_refractory_scan.sh')
+
+
 def t4():
-    print('\n[T4] bytes of the package files')
-    for n in sorted(os.listdir(HERE)):
+    print('\n[T4] bytes of the package files (only these; other files in the folder are ignored)')
+    for n in PKG_FILES:
         p = os.path.join(HERE, n)
-        if not os.path.isfile(p) or n.endswith('.pyc'):
+        if not os.path.isfile(p):
+            check(False, '%s: present' % n)
             continue
         b = open(p, 'rb').read()
         check(b.count(b'\r') == 0 and all(x < 128 for x in b), '%s: 0 CR, pure ASCII' % n)
