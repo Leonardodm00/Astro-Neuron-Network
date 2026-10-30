@@ -43,6 +43,15 @@ independent sources define "already used":
 Because the check is against recorded facts rather than a hash, allocation is
 collision-free by construction, not merely improbable.
 
+With --scan-tree DIR (added 2026-10-30) the same two sources are also read in
+every launch folder under DIR: a pruned walk, at most --scan-depth folders deep,
+reads every campaign_*/sweep_*/job_args.json and every artifacts/seed_ledger.tsv
+it meets, without entering campaign, hidden, scratch*, mea_out* or topo_*
+folders. The launchers pass the cluster's ANN folder, so a launch avoids the
+seeds of every campaign under it, not only those of its own folder. A scan tree
+that does not exist is refused (exit 2): a mistyped path must not silently
+shrink the guard back to one folder. Only the launch's own --ledger is written.
+
 REPLAYABILITY
 -------------
 A launch is reproducible AFTER the fact, which is what actually matters:
@@ -70,6 +79,10 @@ USAGE
 
     # inspect what is already used, allocate nothing
     python3 seed_alloc.py --report
+
+    # the guard over every launch folder of a tree, not only this one
+    python3 seed_alloc.py --span 200000 --root . --ledger artifacts/seed_ledger.tsv \\
+        --scan-tree /davinci-1/home/ldellamea/ANN
 
 EXIT CODES
 ----------
@@ -155,6 +168,67 @@ def reserved_spans_from_ledger(ledger_path):
     return spans
 
 
+# Folders the tree scan never enters: no launch folder lives inside them, and
+# some are very large (campaign output, MEA output, scratch, git internals).
+SCAN_SKIP_PREFIXES = ('campaign_', 'scratch', 'mea_out', 'topo_')
+SCAN_SKIP_NAMES = ('__pycache__', 'artifacts')
+SCAN_DEPTH_DEFAULT = 6
+
+
+def scan_tree(tree, max_depth=SCAN_DEPTH_DEFAULT):
+    """
+    Every recorded seed and every reserved span in the launch folders under
+    `tree`, so that the guard covers a whole project tree.
+
+    A launch folder is any folder at most `max_depth` levels below `tree`
+    (`tree` itself is level 0). In each, every child campaign_* folder is read
+    as used_seeds_from_job_args reads one launch folder (its
+    sweep_*/job_args.json) and is not entered, and artifacts/seed_ledger.tsv,
+    if present, is read as a ledger. Hidden folders and the SCAN_SKIP_* names
+    are not entered; symbolic links to folders are not followed.
+
+    Returns a dict: seeds (set), spans (list of (lo, hi, tag)), campaigns,
+    json_ok, json_bad, ledgers (list of (path, n_spans)), ledgers_bad,
+    dirs_unreadable. Raises ValueError if `tree` is not a directory.
+    """
+    if not os.path.isdir(tree):
+        raise ValueError('scan tree %r is not a directory' % tree)
+    out = dict(seeds=set(), spans=[], campaigns=0, json_ok=0, json_bad=0,
+               ledgers=[], ledgers_bad=0, dirs_unreadable=0)
+
+    def _unreadable(_err):
+        out['dirs_unreadable'] += 1
+
+    base_depth = os.path.abspath(tree).rstrip(os.sep).count(os.sep)
+    for dirpath, dirnames, _files in os.walk(tree, topdown=True,
+                                             onerror=_unreadable,
+                                             followlinks=False):
+        depth = os.path.abspath(dirpath).rstrip(os.sep).count(os.sep) - base_depth
+        n_campaigns = sum(1 for d in dirnames if d.startswith('campaign_'))
+        if n_campaigns:
+            seeds, n_ok, n_bad = used_seeds_from_job_args(dirpath)
+            out['seeds'] |= seeds
+            out['campaigns'] += n_campaigns
+            out['json_ok'] += n_ok
+            out['json_bad'] += n_bad
+        ledger = os.path.join(dirpath, 'artifacts', 'seed_ledger.tsv')
+        if os.path.isfile(ledger):
+            if os.access(ledger, os.R_OK):
+                spans = reserved_spans_from_ledger(ledger)
+                out['spans'].extend(spans)
+                out['ledgers'].append((ledger, len(spans)))
+            else:
+                out['ledgers_bad'] += 1
+        if depth >= max_depth:
+            dirnames[:] = []
+        else:
+            dirnames[:] = [d for d in dirnames
+                           if not d.startswith('.')
+                           and not d.startswith(SCAN_SKIP_PREFIXES)
+                           and d not in SCAN_SKIP_NAMES]
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Allocation
 # ---------------------------------------------------------------------------
@@ -174,8 +248,23 @@ def range_is_free(lo, span, used_seeds, reserved):
     return True
 
 
+def collect_scans(scan_trees, scan_depth=SCAN_DEPTH_DEFAULT):
+    """scan_tree over each tree; returns [(tree, result), ...] in order."""
+    return [(t, scan_tree(t, scan_depth)) for t in (scan_trees or ())]
+
+
+def describe_scan(tree, s):
+    return ('scan of %s: %d campaign folder(s), %d job_args.json (%d unreadable), '
+            '%d distinct seeds, %d ledger(s) with %d span(s)%s%s'
+            % (tree, s['campaigns'], s['json_ok'], s['json_bad'], len(s['seeds']),
+               len(s['ledgers']), len(s['spans']),
+               (', %d ledger(s) unreadable' % s['ledgers_bad']) if s['ledgers_bad'] else '',
+               (', %d folder(s) unreadable' % s['dirs_unreadable']) if s['dirs_unreadable'] else ''))
+
+
 def allocate(span, seed_max=SEED_MAX_DEFAULT, root='.', ledger_path=None,
-             attempts=256, verbose=True):
+             attempts=256, verbose=True, scan_trees=(),
+             scan_depth=SCAN_DEPTH_DEFAULT):
     """
     Draw a uniformly random base in [1, seed_max - span) whose whole span is
     free. Raises RuntimeError if no free range is found in `attempts` tries.
@@ -183,6 +272,9 @@ def allocate(span, seed_max=SEED_MAX_DEFAULT, root='.', ledger_path=None,
     The draw uses os.urandom, so two launches a second apart -- or two launches
     on different login nodes -- get unrelated bases. This is the property the
     old hardcoded base lacked.
+
+    `scan_trees`: folders whose launch folders are also checked (scan_tree);
+    a tree that is not a directory raises ValueError before anything is drawn.
     """
     if span <= 0:
         raise ValueError('span must be positive')
@@ -190,6 +282,7 @@ def allocate(span, seed_max=SEED_MAX_DEFAULT, root='.', ledger_path=None,
         raise ValueError('span %d does not fit below seed_max %d'
                          % (span, seed_max))
 
+    scans = collect_scans(scan_trees, scan_depth)
     used, n_ok, n_bad = used_seeds_from_job_args(root)
     reserved = reserved_spans_from_ledger(ledger_path)
     if verbose:
@@ -199,6 +292,15 @@ def allocate(span, seed_max=SEED_MAX_DEFAULT, root='.', ledger_path=None,
               % len(used), file=sys.stderr)
         print('[seed_alloc] %d span(s) reserved in the ledger' % len(reserved),
               file=sys.stderr)
+    for tree, s in scans:
+        used |= s['seeds']
+        # the own folder lies inside the tree, so drop spans read twice
+        reserved = list(dict.fromkeys(reserved + s['spans']))
+        if verbose:
+            print('[seed_alloc] %s' % describe_scan(tree, s), file=sys.stderr)
+    if verbose and scans:
+        print('[seed_alloc] in total: %d distinct seeds, %d reserved span(s)'
+              % (len(used), len(reserved)), file=sys.stderr)
 
     hi_bound = seed_max - span - 1
     for attempt in range(1, attempts + 1):
@@ -257,6 +359,13 @@ def build_parser():
                    help='skip allocation and use this base verbatim. For '
                         'DELIBERATE exact replay of a past campaign; it will '
                         'reproduce that campaign\'s draws.')
+    p.add_argument('--scan-tree', action='append', default=None, metavar='DIR',
+                   help='also avoid the seeds and ledger spans of every launch '
+                        'folder under DIR (repeatable; refused if DIR does not '
+                        'exist); only --ledger is written')
+    p.add_argument('--scan-depth', type=int, default=SCAN_DEPTH_DEFAULT,
+                   help='how many folder levels below each scan tree hold '
+                        'launch folders (default: %d)' % SCAN_DEPTH_DEFAULT)
     p.add_argument('--report', action='store_true',
                    help='print what is already used and exit without allocating')
     p.add_argument('--quiet', action='store_true',
@@ -269,6 +378,11 @@ def main(argv=None):
     verbose = not args.quiet
 
     if args.report:
+        try:
+            scans = collect_scans(args.scan_tree, args.scan_depth)
+        except ValueError as e:
+            print('[seed_alloc] ERROR: %s' % e, file=sys.stderr)
+            return 2
         used, n_ok, n_bad = used_seeds_from_job_args(args.root)
         reserved = reserved_spans_from_ledger(args.ledger)
         print('job_args.json read      : %d (%d unreadable)' % (n_ok, n_bad))
@@ -278,6 +392,15 @@ def main(argv=None):
         print('ledger spans reserved   : %d' % len(reserved))
         for lo, hi, tag in sorted(reserved):
             print('    [%d, %d)  %s' % (lo, hi, tag))
+        for tree, s in scans:
+            print(describe_scan(tree, s))
+            for path, n in s['ledgers']:
+                print('    ledger %s: %d span(s)' % (path, n))
+            used |= s['seeds']
+            reserved = list(dict.fromkeys(reserved + s['spans']))
+        if scans:
+            print('in total                : %d distinct seeds, %d reserved span(s)'
+                  % (len(used), len(reserved)))
         return 0
 
     if args.override is not None:
@@ -297,7 +420,8 @@ def main(argv=None):
     try:
         base = allocate(args.span, seed_max=args.seed_max, root=args.root,
                         ledger_path=args.ledger, attempts=args.attempts,
-                        verbose=verbose)
+                        verbose=verbose, scan_trees=args.scan_tree,
+                        scan_depth=args.scan_depth)
     except RuntimeError as e:
         print('[seed_alloc] ERROR: %s' % e, file=sys.stderr)
         return 3

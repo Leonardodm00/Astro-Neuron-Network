@@ -34,6 +34,13 @@ WHAT THIS PROVES
   T6  BOUNDS. Every allocated seed stays inside [1, 2**31-1), the ceiling
       _resolve_seed_master respects on both of its fallback paths.
 
+  T7  THE GUARD ACROSS A TREE (--scan-tree, 2026-10-30). The scan reads the
+      campaigns and ledgers of every launch folder under the tree, and skips
+      hidden, scratch*, topo_* folders, folders inside a campaign and folders
+      deeper than --scan-depth; a missing tree is refused. Allocations from one
+      folder that ignore a neighbouring folder overlap its reserved span; with
+      the scan, none do. Only the launch's own ledger is written.
+
 HOW TO RUN
 ----------
     cd <repo>/hpc/Phenomenological_finalv1
@@ -46,7 +53,7 @@ is seeding and bookkeeping. Runs on a login node in a few seconds.
 
 Expected final line on success:
 
-    ALL 6 TEST GROUPS PASSED
+    ALL 7 TEST GROUPS PASSED
 """
 import argparse
 import json
@@ -339,6 +346,101 @@ def t6_bounds():
               'an allocated base is a valid numpy seed')
 
 
+# ---------------------------------------------------------------------------
+# T7 -- the guard across a tree
+# ---------------------------------------------------------------------------
+def _job_args(path, seed):
+    os.makedirs(path, exist_ok=True)
+    with open(os.path.join(path, 'job_args.json'), 'w') as fh:
+        json.dump({'_resolved_seed_master': seed}, fh)
+
+
+def _ledger(folder, lo, hi, tag):
+    os.makedirs(os.path.join(folder, 'artifacts'), exist_ok=True)
+    p = os.path.join(folder, 'artifacts', 'seed_ledger.tsv')
+    with open(p, 'w') as fh:
+        fh.write(seed_alloc.LEDGER_HEADER)
+        fh.write('2026-01-01T00:00:00Z\tL\t%s\t%d\t%d\t%d\t%d\t-\n' % (tag, lo, hi - lo, lo, hi))
+    return p
+
+
+def t7_tree_scan():
+    print('\n[T7] the guard across a tree (--scan-tree)')
+    with tempfile.TemporaryDirectory() as tree:
+        a = os.path.join(tree, 'A')                       # launch folder, depth 1
+        b = os.path.join(tree, 'B', 'sub')                # launch folder, depth 2
+        _job_args(os.path.join(a, 'campaign_a', 'sweep_x_task0'), 500000)
+        os.makedirs(os.path.join(a, 'campaign_a', 'sweep_x_task1'))
+        with open(os.path.join(a, 'campaign_a', 'sweep_x_task1', 'job_args.json'), 'w') as fh:
+            fh.write('{"_resolved_seed_master": 12')     # truncated: counted, skipped
+        _ledger(a, 1000, 2000, 'A1')
+        _job_args(os.path.join(b, 'campaign_b', 'sweep_y_task3'), 777777)
+        b_ledger = _ledger(b, 5000, 6000, 'B1')
+        # never read: hidden, scratch, inside a campaign, under topo_, too deep
+        _job_args(os.path.join(tree, '.hidden', 'campaign_h', 'sweep_z_task0'), 111)
+        _job_args(os.path.join(tree, 'scratch_x', 'campaign_s', 'sweep_s_task0'), 222)
+        _job_args(os.path.join(a, 'campaign_a', 'sweep_x_task0', 'campaign_in', 'sweep_i_task0'), 333)
+        _job_args(os.path.join(tree, 'C', 'topo_00000', 'campaign_t', 'sweep_t_task0'), 444)
+        deep = os.path.join(tree, 'D', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7')   # depth 7
+        _job_args(os.path.join(deep, 'campaign_deep', 'sweep_q_task0'), 555)
+
+        s = seed_alloc.scan_tree(tree)
+        check(s['seeds'] == {500000, 777777},
+              'scan reads the campaigns of every launch folder, and only those (%s)'
+              % sorted(s['seeds']))
+        check(sorted((lo, hi) for lo, hi, _ in s['spans']) == [(1000, 2000), (5000, 6000)]
+              and len(s['ledgers']) == 2, 'scan reads both ledgers')
+        check((s['campaigns'], s['json_ok'], s['json_bad']) == (2, 2, 1),
+              'counts: 2 campaign folders, 2 readable job_args.json, 1 truncated')
+        check(not s['seeds'] & {111, 222, 333, 444, 555},
+              'hidden, scratch*, inside-campaign, topo_* and too-deep folders skipped')
+        check(555 in seed_alloc.scan_tree(tree, max_depth=7)['seeds'],
+              '--scan-depth 7 reaches the folder at depth 7')
+        try:
+            seed_alloc.scan_tree(os.path.join(tree, 'no_such_dir'))
+            refused = False
+        except ValueError:
+            refused = True
+        r = subprocess.run([sys.executable, SEED_ALLOC_PY, '--span', '100', '--root', a,
+                            '--scan-tree', os.path.join(tree, 'no_such_dir'), '--quiet'],
+                           capture_output=True, text=True)
+        check(refused and r.returncode == 2 and r.stdout.strip() == '',
+              'a missing scan tree is refused (exit 2, no base printed)')
+
+        # The oracle: from folder A, with seed_max 7000 and span 900, B's span
+        # [5000, 6000) is hit often unless the scan is on.
+        a_ledger = os.path.join(a, 'artifacts', 'seed_ledger.tsv')
+        def hits_b(base):
+            return base < 6000 and 5000 < base + 900
+        def hits_a(base):
+            return base < 2000 and 1000 < base + 900
+        without = [seed_alloc.allocate(900, seed_max=7000, root=a, ledger_path=a_ledger,
+                                       verbose=False) for _ in range(40)]
+        with_scan = [seed_alloc.allocate(900, seed_max=7000, root=a, ledger_path=a_ledger,
+                                         verbose=False, scan_trees=[tree]) for _ in range(40)]
+        check(sum(map(hits_b, without)) > 0 and not any(map(hits_a, without)),
+              'without the scan, %d of 40 allocations overlap the neighbouring '
+              "folder's span" % sum(map(hits_b, without)))
+        check(not any(map(hits_b, with_scan)) and not any(map(hits_a, with_scan)),
+              'with the scan, none of 40 overlaps either span')
+
+        before = open(b_ledger).read()
+        r = subprocess.run([sys.executable, SEED_ALLOC_PY, '--span', '900', '--seed-max', '7000',
+                            '--root', a, '--ledger', a_ledger, '--scan-tree', tree, '--tag', 'cli',
+                            '--quiet'], capture_output=True, text=True)
+        base = int(r.stdout.strip()) if r.returncode == 0 else -1
+        a_rows = seed_alloc.reserved_spans_from_ledger(a_ledger)
+        check(r.returncode == 0 and not hits_b(base) and not hits_a(base)
+              and len(a_rows) == 2 and open(b_ledger).read() == before,
+              'CLI with --scan-tree: base clear of both spans, written to the own ledger only')
+        r = subprocess.run([sys.executable, SEED_ALLOC_PY, '--root', a, '--ledger', a_ledger,
+                            '--scan-tree', tree, '--report'], capture_output=True, text=True)
+        check(r.returncode == 0 and '2 campaign folder(s)' in r.stdout
+              and '2 ledger(s) with 3 span(s)' in r.stdout
+              and 'in total                : 2 distinct seeds, 3 reserved span(s)' in r.stdout,
+              '--report --scan-tree lists the scanned campaigns and ledgers')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('-v', '--verbose', action='store_true')
@@ -358,6 +460,7 @@ def main():
     t4_guard_fires()
     t5_replay()
     t6_bounds()
+    t7_tree_scan()
 
     print('\n' + '=' * 70)
     if _FAILS:
@@ -366,7 +469,7 @@ def main():
             print('  - ' + f)
         print('=' * 70)
         return 1
-    print(f'ALL 6 TEST GROUPS PASSED  ({_CHECKS[0]} checks)')
+    print(f'ALL 7 TEST GROUPS PASSED  ({_CHECKS[0]} checks)')
     print('=' * 70)
     return 0
 

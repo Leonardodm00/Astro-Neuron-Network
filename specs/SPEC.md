@@ -20,13 +20,19 @@ invariant of Block 1 and section 5.1 added on 2026-10-30 on top of 5f21a3d;
 Block 5's REFUSED rule for an unrecognised CAdEx line added on top of 4aa3fdb;
 its GIT CLONE status and queued-job hold added on top of 4e12a40; Block 4's
 g box patch, conn_prob box, VA/VR values and clone folder, and Block 6's
-two-node split, added on top of 15f82c9)
+two-node split, added on top of 15f82c9; Block 7 and Block 1's GitHub-wide
+check added on top of a811543)
 
 ## 0. Coverage
 
 - `hpc/refractory_audit/` (the audit and its `checks/`)
 - `hpc/Phenomenological_finalv1/LindaColloDUP/` (launch package and its `checks/`)
 - `hpc/range_check/` (20 s runs over a setup's prior boxes, Block 6)
+- the seed guard (Block 7): `hpc/Phenomenological_finalv1/seed_alloc.py`, its
+  identical copies in `MEAMA/` and `LindaColloDUP/`, its smoke test
+  `smoke_test_seed_allocation.py`, and the seed-allocation blocks of
+  `launch_campaign.sh`, `MEAMA/launch_MEAMA.sh` and
+  `LindaColloDUP/launch_LCDUP.sh` -- not the rest of those launchers
 - the refractory handling of every CAdEx neuron model in the repository
   (today `hpc/Phenomenological_finalv1/ASD_fun_BD_cpp.py` and
   `hpc/Phenomenological_finalv1/Giulia/ASD_fun_BD_cpp.py`): in
@@ -177,6 +183,14 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
     nodes, split as proposed by Claude: the one-axis sweeps on one node, the
     prior sample (16 topologies) on the other, and the analysis as a short
     job once both have ended (Block 6).
+  - 2026-10-30 [author]: the seed guard covers every launch folder under the
+    cluster's ANN folder, not only the launching one (Block 7): the reruns
+    start in fresh folders of the git clone, which hold no seed history.
+    Asked by the author ("double check the seed guard") under the standing
+    rule of 2026-08 that every campaign launch gets seeds no other launch has
+    used.
+  - 2026-10-30 [author]: every CAdEx model on GitHub carries the refractory
+    hold, the second branch `Inverse-Transform-Sampling` included (Block 1).
   - 2026-10-29 [author]: LindaColloDUP runs MODE Neuronal; freezes Cm,
     I_inj, VR, VA, DeltaA, EC50_ampa, EC50_nmda (and the inert alpha_syn,
     O_G, Omega_G); SIMTIME 180 s; RHO_TOTAL 1300 cells/mm^2; everything else
@@ -215,6 +229,23 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   `python3 hpc/refractory_audit/clamp_cadex_copies.py <repository root>` exits
   0 and lists exactly the two files above as CLAMPED and
   `hpc/ASD_fun_BD_cpp.py` as SKIP.
+- GitHub-wide check (2026-10-30, asked by the author): every voltage
+  equation in every tracked file of both branches was read (`git grep` for
+  `d v.../dt =` and for the exponential term in any spelling). `main`
+  a811543: the two files above are the only runnable CAdEx models, both
+  clamped; the other hits are Hodgkin-Huxley models (top-level legacy
+  scripts, `hpc/ASD_fun_BD_cpp.py`), a toy LIF in `MEAMA/env_check.py`, test
+  fixtures, detection code and documentation. Branch
+  `Inverse-Transform-Sampling`: its CAdEx copy
+  `hpc/Phenomenological main/ASD_fun_BD_cpp.py` (an older model, `I` in place
+  of `I_inj*bias_unit`) got the same flag and comment lines in 2f5b260;
+  Brian2 parses it, `clamp_cadex_copies.py` rates it CLAMPED, and its own
+  sweep pipeline on identical draws (60 neurons, 3 s, 6 runs, seed 1000)
+  logged 4 NaN warnings unclamped and 0 clamped. (That commit's message says
+  the branch no longer holds its sweep pipeline; it does.) Not CAdEx and not
+  changed: the Izhikevich model of the top-level `ASN_fun_pheno.py` (used
+  only by `Main_code_pheno.py`) has `refractory=2*ms` and no hold, the same
+  failure class (section 8).
 - Data flow: every campaign launched from a copy of these files.
 - Confirmed: yes 2026-10-30 (decision in section 4).
 - Status: smoke-tested 2026-10-30 (skipped: the cluster's 37-D copies, which
@@ -271,10 +302,11 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
 - Module: `hpc/Phenomenological_finalv1/LindaColloDUP/`: `launch_LCDUP.sh`,
   `submit_LCDUP.sh`, `apply_freeze_patch.py`, `apply_box_patch.py`,
   `smoke_test_freeze.py`, `apply_refractory_clamp.py`, `APPLY_LCDUP.txt`
-  (procedure), `.gitignore`. Deployed on davinci in this same folder of the
-  git clone (decided 2026-10-30, section 4), with the 8 pipeline files
-  copied in from the cluster's 37-D `MEAMA/`, which is not in the
-  repository. `.gitignore` (anchored patterns) keeps the copies, their
+  (procedure), `.gitignore`, `seed_alloc.py` (Block 7; tracked here since
+  2026-10-30, not copied from `MEAMA/`, whose copy cannot scan other
+  folders). Deployed on davinci in this same folder of the git clone
+  (decided 2026-10-30, section 4), with the 7 pipeline files copied in from
+  the cluster's 37-D `MEAMA/`, which is not in the repository. `.gitignore` (anchored patterns) keeps the copies, their
   backups (`*.bak-*`, `*.crlf_bak`), `campaign_*/` and `artifacts/` out of
   git; `git clean -x` would delete them.
 - `launch_LCDUP.sh` settings (environment variable = default): MODE =
@@ -294,8 +326,9 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   markers; exit 3 SIZING_CONFIRMED not set, or REFRACTORY_CLAMP unset or not
   yes/no; exit 4 REFRACTORY_CLAMP disagreeing with the file, MODE,
   ASTRO_FRAC, gate, conn_prob bounds, FREEZE syntax, existing campaign tag;
-  exit 5 seed allocator missing. `submit_LCDUP.sh` repeats the freeze and
-  box guards on the compute node (exit 2).
+  exit 5 seed allocator missing, an allocator without `--scan-tree`, a
+  missing SEED_SCAN_TREE, or no free seed range (Block 7). `submit_LCDUP.sh`
+  repeats the freeze and box guards on the compute node (exit 2).
 - `apply_freeze_patch.py`: adds `--freeze` to the folder's own
   `HPC_main_sweep.py` (3 insertions, marker `[LindaColloDUP patch 2026-10-29]`);
   `--check`, `--self-test`; refuses CR bytes, partial or foreign patches,
@@ -585,6 +618,68 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   a stub is not exported. `DRYRUN=1 SETUP=lcdup bash launch_range_check.sh`
   on the Block 4 test folder printed the three jobs. Skipped: davinci.
 
+### Block 7: the seed guard across ~/ANN
+
+- Module: `hpc/Phenomenological_finalv1/seed_alloc.py` (standard library
+  only), byte-identical copies in `MEAMA/` and `LindaColloDUP/`; callers: the
+  seed blocks of `launch_campaign.sh` (rho1300 family), `MEAMA/launch_MEAMA.sh`
+  and `LindaColloDUP/launch_LCDUP.sh`.
+- Invariant (author, 2026-08, extended 2026-10-30): a launch's seed span
+  [base, base + span) contains no `_resolved_seed_master` recorded by any
+  campaign and overlaps no span reserved by any launch, in its own folder and
+  in every launch folder under SEED_SCAN_TREE (default
+  `/davinci-1/home/ldellamea/ANN`).
+- `scan_tree(tree, max_depth=6)`: `os.walk` of `tree`, symbolic links to
+  folders not followed. In every folder at most `max_depth` levels below
+  `tree` (`tree` is level 0): the child `campaign_*` folders are read as one
+  launch folder (`used_seeds_from_job_args`: `campaign_*/sweep_*/job_args.json`,
+  truncated files counted and skipped) and not entered; `artifacts/seed_ledger.tsv`,
+  if present, is read as a ledger. Not entered: hidden folders, names starting
+  `campaign_`, `scratch`, `mea_out`, `topo_`, and `__pycache__`, `artifacts`.
+  Returns the seeds, the spans and counts (campaign folders, readable and
+  unreadable job_args.json, ledgers, unreadable ledgers and folders). A tree
+  that is not a directory raises ValueError.
+- `allocate(..., scan_trees, scan_depth)`: the own folder's seeds and ledger
+  (unchanged) plus every scan; spans read twice (the own ledger lies inside
+  the tree) are de-duplicated; a random base is redrawn until the span is
+  free (256 attempts, else RuntimeError, exit 3). Only the own `--ledger` is
+  written.
+- CLI: `--scan-tree DIR` (repeatable), `--scan-depth N` (default 6); a
+  missing tree exits 2 with no base on stdout; `--report` prints each scan
+  (campaign folders, job_args.json, seeds, ledgers with their span counts)
+  and the totals. Without `--scan-tree` the behaviour is unchanged.
+- Launchers: `SEED_SCAN_TREE` (default the ANN folder) passed as
+  `--scan-tree`; refuse (exit 5) an allocator without `--scan-tree`, a
+  missing tree and a failed allocation, with nothing submitted; the header
+  prints `Seed guard : this folder and every launch folder under ...`;
+  `launch_LCDUP.sh` also writes it, and the sha256 of `seed_alloc.py`, into
+  the PROVENANCE file. A dry run still reserves its span (note
+  `DRYRUN-not-submitted`). `launch_campaign.sh` and `launch_MEAMA.sh` keep
+  their existing fallback when no allocator is found (raw OS entropy with a
+  warning); the LindaColloDUP launcher refuses.
+- Not covered by the scan, by design: the range check's runs (fixed seeds,
+  outside any `campaign_*` folder, never training data); launchers outside
+  the three above (`Burst Tests/`, `Multiple Sweeps/` with its hard-coded
+  bases, the MEAMA benchmark's fixed seed).
+- Test oracles: `smoke_test_seed_allocation.py` T7 (10 checks): the scan
+  reads the campaigns and ledgers of launch folders at depths 1 and 2 and
+  skips hidden, `scratch*`, `topo_*`, inside-campaign and too-deep folders;
+  `--scan-depth 7` reaches depth 7; a missing tree is refused; from one
+  folder, 40 allocations in a small seed space overlap a neighbouring
+  folder's span without the scan (16 of 40 in the run of 2026-10-30) and
+  never with it; only the own ledger is written; `--report` lists the scan.
+  Groups T1-T6 unchanged (47 checks in all).
+- Confirmed: yes 2026-10-30 for the scope (all of ANN) and the refusal of a
+  missing tree; inferred for the depth 6, the skipped folder names and the
+  default path.
+- Status: smoke-tested 2026-10-30 in the sandbox; the three launchers run
+  against a mock ANN tree (an old MEAMA-like campaign and ledger beside the
+  clone): each allocated clear of it and refused (exit 5, no qsub call) an
+  old allocator; `launch_LCDUP.sh` also refused a missing tree and a tree
+  whose ledgers reserve the whole seed space. A git pull replaces an ignored
+  copy of MEAMA's allocator left by an earlier step 0 (git 2.43). Skipped:
+  davinci (the real ANN tree, its size and its git 2.31).
+
 ### 5.1 Projects and where their model runs
 
 The tester can check only what is in the repository. The cluster folders
@@ -617,6 +712,8 @@ campaign's `job_args.json` `lib_dir`).
 | `SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes DRYRUN=1 bash launch_LCDUP.sh` | Block 4 dry run | the LindaColloDUP folder on davinci | seconds |
 | `python3 clamp_cadex_copies.py --self-test` and `python3 smoke_test_clamp_cadex_copies.py` | Block 5 | embedded fixtures; a repository clone for the mock tree | seconds |
 | `python3 clamp_cadex_copies.py <repository root>` | the repository invariant of Block 1 | the repository | seconds |
+| `python3 smoke_test_seed_allocation.py` | Block 7 (and the allocator's older groups) | numpy, the root 36-D pipeline | seconds |
+| `python3 seed_alloc.py --root . --ledger artifacts/seed_ledger.tsv --scan-tree /davinci-1/home/ldellamea/ANN --report` | Block 7 on davinci: what the guard sees | a launch folder | seconds (not timed on davinci) |
 | `python3 smoke_test_range_check.py` | Block 6 | the repository pipeline, Brian2 and a C++ compiler | minutes |
 | `qsub -v SETUP=...,LIB_DIR=...,OUT=... submit_range_check.sh` | Block 6 on a setup, one node | the setup's folder on davinci | hours (not timed on davinci) |
 | `SETUP=lcdup bash launch_range_check.sh` (first with `DRYRUN=1`) | Block 6 on a setup, two nodes and the analysis job | the setup's folder on davinci; `qsub` | seconds to submit; the jobs: hours (not timed on davinci) |
@@ -662,6 +759,15 @@ campaign's `job_args.json` `lib_dir`).
   them under this spec (raised 2026-10-29, still open).
 - Astrocyte variables ending NaN in Full runs at nominal parameters: a
   separate failure, not investigated (raised 2026-10-29).
+- The legacy Izhikevich model in the top-level `ASN_fun_pheno.py` has a 2 ms
+  refractory period and no hold: during it the quadratic term can carry v
+  past the threshold with no reset, as in the CAdEx runaway. Not used by any
+  campaign; fix only if that code is revived (hold v at c, or drop the
+  refractory period, as Izhikevich 2003 has none) (raised 2026-10-30).
+- `launch_campaign.sh` and `launch_MEAMA.sh` still fall back to raw OS
+  entropy, with a warning, when no seed allocator is found; the
+  LindaColloDUP launcher refuses instead. Make them refuse too when their
+  reruns are prepared (raised 2026-10-30).
 - Retune the prior boxes of MEAMA and of the rho1300 family for the clamped
   model, after Block 6 has run on them (decided 2026-10-30, not started).
 - Bring the Giulia setup onto GitHub: its 37-D pipeline with the new axis,

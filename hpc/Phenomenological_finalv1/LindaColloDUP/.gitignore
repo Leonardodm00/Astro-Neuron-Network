@@ -11,7 +11,6 @@
 /aggregate_sweep.py
 /burst_metrics.py
 /burst_plots.py
-/seed_alloc.py
 /synapse_pdist.csv
 # Backups written by the patchers and by the line-ending fix:
 *.bak-*

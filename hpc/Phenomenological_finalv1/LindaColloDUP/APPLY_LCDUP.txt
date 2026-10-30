@@ -10,6 +10,7 @@ project doc claude/LindaColloDUP_Campaign_Operations.md
 
 THIS FOLDER (repository path hpc/Phenomenological_finalv1/LindaColloDUP/)
   launch_LCDUP.sh            launcher, login node; single source of truth for all settings
+  seed_alloc.py              seed allocator; its guard covers every launch folder under ~/ANN
   submit_LCDUP.sh            PBS worker; never qsub it directly
   apply_freeze_patch.py      adds --freeze to the folder's own HPC_main_sweep.py copy
   apply_box_patch.py         widens the g_ampa and g_nmda boxes to [0.01, 10] nS
@@ -20,7 +21,9 @@ THIS FOLDER (repository path hpc/Phenomenological_finalv1/LindaColloDUP/)
   checks/                    sandbox checks behind the settings (not needed on davinci)
 
 NOT IN GIT: the pipeline. It is copied from the cluster's MEAMA/ folder (the
-37-D version, which is not on GitHub) in step 0.
+37-D version, which is not on GitHub) in step 0. Not seed_alloc.py: since
+2026-10-30 the package's own copy comes with git (MEAMA's cannot check other
+folders; a git pull replaces a copy taken from MEAMA/ by an earlier step 0).
 
 DECIDED 2026-10-30 (operations doc, section 2): VA -48 mV and VR -58.2 mV (the
 registry values), I_inj 4.0 pA, conn_prob U[0.01, 0.5], g_ampa and g_nmda
@@ -32,14 +35,15 @@ The launch (step 8) waits for the range check, which needs steps 0-5a done
 
 ORDER OF OPERATIONS (paste one line at a time)
 
-0. update the clone and copy the 37-D pipeline from MEAMA/ (expect the 8
-   files in the listing and NO output from git status: the copies are ignored):
-cd ~/ANN/Astro-Neuron-Network && git pull && cd hpc/Phenomenological_finalv1/LindaColloDUP && cp ~/ANN/Phenomenological/MEAMA/{HPC_main_sweep.py,HPC_single_run.py,ASD_fun_BD_cpp.py,aggregate_sweep.py,burst_metrics.py,burst_plots.py,seed_alloc.py,synapse_pdist.csv} . && ls && git status --short .
+0. update the clone and copy the 37-D pipeline from MEAMA/ (expect the 7
+   copied files in the listing next to the package files, and NO output from
+   git status: the copies are ignored):
+cd ~/ANN/Astro-Neuron-Network && git pull && cd hpc/Phenomenological_finalv1/LindaColloDUP && cp ~/ANN/Phenomenological/MEAMA/{HPC_main_sweep.py,HPC_single_run.py,ASD_fun_BD_cpp.py,aggregate_sweep.py,burst_metrics.py,burst_plots.py,synapse_pdist.csv} . && ls && git status --short .
 
 1. nothing to unpack: the package files arrived with git pull in step 0.
 
-2. byte check of the package files (expect "0 CR 0 non-ASCII" six times):
-python3 -c "import sys;[print(p, open(p,'rb').read().count(b'\r'), 'CR', sum(b>127 for b in open(p,'rb').read()), 'non-ASCII') for p in sys.argv[1:]]" launch_LCDUP.sh submit_LCDUP.sh apply_freeze_patch.py apply_box_patch.py smoke_test_freeze.py apply_refractory_clamp.py
+2. byte check of the package files (expect "0 CR 0 non-ASCII" seven times):
+python3 -c "import sys;[print(p, open(p,'rb').read().count(b'\r'), 'CR', sum(b>127 for b in open(p,'rb').read()), 'non-ASCII') for p in sys.argv[1:]]" launch_LCDUP.sh submit_LCDUP.sh apply_freeze_patch.py apply_box_patch.py smoke_test_freeze.py apply_refractory_clamp.py seed_alloc.py
 
 3. environment and registry (expect "37"):
 conda activate brian_final && python -c "import HPC_main_sweep as S; print(S.N_DIMS)"
@@ -63,8 +67,10 @@ mkdir -p artifacts && LCDUP_NO_ENV=1 NODETAG=probe CAMPAIGN_TAG=probe_check SEED
 7. dry run (expect Nn=159, the freeze list with VA=-48 and VR=-58.2,
    "conn_prob      : U[0.01, 0.5] per topology",
    "g boxes        : g_ampa [0.01, 10.0] nS; g_nmda [0.01, 10.0] nS",
-   "V clamp (t_ref): yes", two "[dry run] qsub ... -J 0-651%2" lines and
-   "[dry run] nothing submitted."):
+   "V clamp (t_ref): yes", a "[seed_alloc] scan of /davinci-1/home/ldellamea/ANN:
+   ..." line counting the campaign folders and ledgers found under ANN,
+   "Seed guard     : this folder and every launch folder under ...", two
+   "[dry run] qsub ... -J 0-651%2" lines and "[dry run] nothing submitted."):
 SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes DRYRUN=1 bash launch_LCDUP.sh
 
    BEFORE STEP 8 (decided 2026-10-30): the range check on two nodes, from the

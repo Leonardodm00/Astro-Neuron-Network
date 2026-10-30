@@ -128,6 +128,10 @@ SEED_MAX=2147483647
 SEED_SPACING=100000
 SEED_LEDGER="${REPO_DIR}/artifacts/seed_ledger.tsv"
 SEED_ALLOC="${REPO_DIR}/seed_alloc.py"
+# The guard also covers every launch folder under SEED_SCAN_TREE (decided
+# 2026-10-30): campaigns now start in fresh folders of the git clone,
+# which hold no seed history of their own. A missing tree refuses (exit 5).
+SEED_SCAN_TREE="${SEED_SCAN_TREE:-/davinci-1/home/ldellamea/ANN}"
 LAUNCH_SPAN=$(( ${#QUEUES[@]} * SEED_SPACING ))
 LAUNCH_ID="$(date -u +%Y%m%dT%H%M%SZ)-$(head -c4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 
@@ -135,16 +139,22 @@ if [ -n "${SEED_BASE_OVERRIDE:-}" ]; then
     echo "!! SEED_BASE_OVERRIDE=${SEED_BASE_OVERRIDE} -- REPLAY MODE."
 fi
 
+if [ -f "$SEED_ALLOC" ] && ! grep -q -- "--scan-tree" "$SEED_ALLOC"; then
+    echo "ERROR: ${SEED_ALLOC} cannot check other launch folders (no --scan-tree):" >&2
+    echo "       an old copy; take seed_alloc.py from the repository." >&2
+    exit 5
+fi
 if [ -f "$SEED_ALLOC" ] && command -v python3 >/dev/null 2>&1; then
     LAUNCH_BASE=$(python3 "$SEED_ALLOC" \
         --span "$LAUNCH_SPAN" --seed-max "$SEED_MAX" \
         --root "$REPO_DIR" --ledger "$SEED_LEDGER" \
+        --scan-tree "$SEED_SCAN_TREE" \
         --launch-id "$LAUNCH_ID" --tag "$CAMPAIGN_TAG" \
         ${DRYRUN:+--note "DRYRUN-not-submitted"} \
         ${SEED_BASE_OVERRIDE:+--override "$SEED_BASE_OVERRIDE"})
     if [ -z "$LAUNCH_BASE" ]; then
         echo "ERROR: seed_alloc.py failed to allocate a seed range." >&2
-        echo "       Inspect with: python3 $SEED_ALLOC --root $REPO_DIR --report" >&2
+        echo "       Inspect with: python3 $SEED_ALLOC --root $REPO_DIR --scan-tree $SEED_SCAN_TREE --report" >&2
         exit 5
     fi
 else
@@ -161,6 +171,7 @@ echo "REPO_DIR       : ${REPO_DIR}"
 echo "Launch ID      : ${LAUNCH_ID}"
 echo "Seed range     : [${LAUNCH_BASE}, $((LAUNCH_BASE + LAUNCH_SPAN)))"
 echo "Ledger         : ${SEED_LEDGER}"
+echo "Seed guard     : this folder and every launch folder under ${SEED_SCAN_TREE}"
 echo "------------------------------------------------------------"
 echo "mode/group/rule: ${MODE} / ${SWEEP_GROUP} / ${CONN_RULE} (periodic=${CONN_PERIODIC})"
 echo "stoa gate      : p ~ U[${STOA_GATE_LO}, ${STOA_GATE_HI}] per topology"

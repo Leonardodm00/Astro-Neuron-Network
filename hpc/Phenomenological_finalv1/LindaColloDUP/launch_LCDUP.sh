@@ -24,7 +24,9 @@
 # campaign output all live in the folder that holds this script. Since
 # 2026-10-30 that folder is hpc/Phenomenological_finalv1/LindaColloDUP/ of the
 # git clone on davinci; .gitignore keeps the pipeline copies and the output
-# out of git (never run "git clean -x" there).
+# out of git (never run "git clean -x" there). seed_alloc.py comes with git,
+# not from MEAMA/: its seed guard also covers every launch folder under
+# SEED_SCAN_TREE (default the cluster's ANN folder).
 # =============================================================================
 set -u
 
@@ -173,8 +175,12 @@ done
 
 # ===========================================================================
 # SEED ALLOCATION -- one verified-disjoint range per launch, against this
-# folder's campaigns and its own ledger (artifacts/seed_ledger.tsv).
+# folder's campaigns and its own ledger (artifacts/seed_ledger.tsv), and,
+# since 2026-10-30, against every campaign and ledger of every launch folder
+# under SEED_SCAN_TREE: a fresh folder in the git clone has no history of its
+# own. A scan tree that does not exist refuses the launch (exit 5).
 # ===========================================================================
+SEED_SCAN_TREE="${SEED_SCAN_TREE:-/davinci-1/home/ldellamea/ANN}"
 SEED_MAX=2147483647
 SEED_SPACING=100000
 SEED_LEDGER="${REPO_DIR}/artifacts/seed_ledger.tsv"
@@ -187,21 +193,28 @@ if [ -n "${SEED_BASE_OVERRIDE:-}" ]; then
 fi
 DRYNOTE=""
 [ "$DRYRUN" = "1" ] && DRYNOTE="DRYRUN-not-submitted"
+if [ -f "$SEED_ALLOC" ] && ! grep -q -- "--scan-tree" "$SEED_ALLOC"; then
+    echo "ERROR: ${SEED_ALLOC} cannot check other launch folders (no --scan-tree):" >&2
+    echo "       an old copy, e.g. MEAMA's. Restore the package's own with" >&2
+    echo "       git checkout -- seed_alloc.py   (in ${REPO_DIR})" >&2
+    exit 5
+fi
 if [ -f "$SEED_ALLOC" ] && command -v python3 >/dev/null 2>&1; then
     LAUNCH_BASE=$(python3 "$SEED_ALLOC" \
         --span "$LAUNCH_SPAN" --seed-max "$SEED_MAX" \
         --root "$REPO_DIR" --ledger "$SEED_LEDGER" \
+        --scan-tree "$SEED_SCAN_TREE" \
         --launch-id "$LAUNCH_ID" --tag "$CAMPAIGN_TAG" \
         ${DRYNOTE:+--note "$DRYNOTE"} \
         ${SEED_BASE_OVERRIDE:+--override "$SEED_BASE_OVERRIDE"})
     if [ -z "$LAUNCH_BASE" ]; then
         echo "ERROR: seed_alloc.py failed to allocate a seed range." >&2
-        echo "       Inspect with: python3 $SEED_ALLOC --root $REPO_DIR --ledger $SEED_LEDGER --report" >&2
+        echo "       Inspect with: python3 $SEED_ALLOC --root $REPO_DIR --ledger $SEED_LEDGER --scan-tree $SEED_SCAN_TREE --report" >&2
         exit 5
     fi
 else
     echo "ERROR: seed_alloc.py or python3 unavailable -- refusing to launch without" >&2
-    echo "       a disjointness check (copy seed_alloc.py into ${REPO_DIR})." >&2
+    echo "       a disjointness check (git checkout -- seed_alloc.py in ${REPO_DIR})." >&2
     exit 5
 fi
 
@@ -211,6 +224,7 @@ echo "REPO_DIR       : ${REPO_DIR}"
 echo "Launch ID      : ${LAUNCH_ID}"
 echo "Seed range     : [${LAUNCH_BASE}, $((LAUNCH_BASE + LAUNCH_SPAN)))"
 echo "Ledger         : ${SEED_LEDGER}"
+echo "Seed guard     : this folder and every launch folder under ${SEED_SCAN_TREE}"
 echo "------------------------------------------------------------"
 echo "mode/group/rule: ${MODE} / ${SWEEP_GROUP} / ${CONN_RULE} (periodic=${CONN_PERIODIC})"
 echo "freeze         : ${FREEZE}"
@@ -294,6 +308,7 @@ mkdir -p "${REPO_DIR}/campaign_${CAMPAIGN_TAG}"
     echo "launch_id      : ${LAUNCH_ID}"
     echo "repo_dir       : ${REPO_DIR}"
     echo "seed_range     : [${LAUNCH_BASE}, $((LAUNCH_BASE + LAUNCH_SPAN)))"
+    echo "seed guard     : this folder and every launch folder under ${SEED_SCAN_TREE}"
     echo "mode / group   : ${MODE} / ${SWEEP_GROUP}"
     echo "freeze         : ${FREEZE}"
     echo "v_clamp_tref   : ${CLAMP_STATE}"
@@ -306,7 +321,7 @@ mkdir -p "${REPO_DIR}/campaign_${CAMPAIGN_TAG}"
     echo "jobs           :${QDEL_IDS}"
     echo "sha256         :"
     ( cd "$REPO_DIR" && sha256sum HPC_main_sweep.py HPC_single_run.py ASD_fun_BD_cpp.py \
-        synapse_pdist.csv launch_LCDUP.sh submit_LCDUP.sh )
+        synapse_pdist.csv launch_LCDUP.sh submit_LCDUP.sh seed_alloc.py )
 } > "$PROV" 2>&1 || echo "WARNING: could not write ${PROV}" >&2
 echo "provenance: ${PROV}"
 echo "maximum yield if every task runs to completion: ${GRAND_MAX} sims"

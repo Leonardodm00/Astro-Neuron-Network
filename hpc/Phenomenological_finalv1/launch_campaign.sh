@@ -188,6 +188,10 @@ SEED_ALLOC=""
 for _cand in "$_HERE/seed_alloc.py" "$_HERE/../seed_alloc.py"; do
     [ -f "$_cand" ] && { SEED_ALLOC="$_cand"; break; }
 done
+# The guard also covers every launch folder under SEED_SCAN_TREE (decided
+# 2026-10-30): campaigns now start in fresh folders of the git clone,
+# which hold no seed history of their own. A missing tree refuses (exit 5).
+SEED_SCAN_TREE="${SEED_SCAN_TREE:-/davinci-1/home/ldellamea/ANN}"
 
 if [ -n "${SEED_BASE_OVERRIDE:-}" ]; then
     echo "!! SEED_BASE_OVERRIDE=${SEED_BASE_OVERRIDE} -- REPLAY MODE."
@@ -195,16 +199,22 @@ if [ -n "${SEED_BASE_OVERRIDE:-}" ]; then
     echo "!! Unset it for a normal campaign."
 fi
 
+if [ -f "$SEED_ALLOC" ] && ! grep -q -- "--scan-tree" "$SEED_ALLOC"; then
+    echo "ERROR: ${SEED_ALLOC} cannot check other launch folders (no --scan-tree):" >&2
+    echo "       an old copy; take seed_alloc.py from the repository." >&2
+    exit 5
+fi
 if [ -n "$SEED_ALLOC" ] && command -v python3 >/dev/null 2>&1; then
     LAUNCH_BASE=$(python3 "$SEED_ALLOC" \
         --span "$LAUNCH_SPAN" --seed-max "$SEED_MAX" \
         --ledger "$SEED_LEDGER" --launch-id "$LAUNCH_ID" \
+        --scan-tree "$SEED_SCAN_TREE" \
         --tag "${CAMPAIGN_TAG:-unknown}" \
         ${SEED_BASE_OVERRIDE:+--override "$SEED_BASE_OVERRIDE"})
     if [ -z "$LAUNCH_BASE" ]; then
         echo "ERROR: seed_alloc.py failed to allocate a seed range. Refusing" >&2
         echo "       to launch: an unverified base is how v1..v9 collided." >&2
-        echo "       Inspect with: python3 $SEED_ALLOC --report" >&2
+        echo "       Inspect with: python3 $SEED_ALLOC --ledger $SEED_LEDGER --scan-tree $SEED_SCAN_TREE --report" >&2
         exit 5
     fi
 else
@@ -223,6 +233,7 @@ echo "Launch ID   : ${LAUNCH_ID}"
 echo "Seed range  : [${LAUNCH_BASE}, $((LAUNCH_BASE + LAUNCH_SPAN))) "\
      "(${#QUEUES[@]} queues x ${SEED_SPACING})"
 echo "Ledger      : ${SEED_LEDGER}"
+echo "Seed guard  : this folder and every launch folder under ${SEED_SCAN_TREE}"
 echo
 
 echo "Spreading ${TARGET} sims across ${#QUEUES[@]} queues"
