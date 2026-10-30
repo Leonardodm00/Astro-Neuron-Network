@@ -1,0 +1,3 @@
+# outputs of check_refractory_nan.sh and submit_refractory_scan.sh
+refractory_audit_*/
+__pycache__/
