@@ -417,7 +417,10 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   the analysis on synthetic Poisson trains of known rate (rate recovered
   within the Poisson tolerance; a silent run flagged); bytes; the PBS job
   with stub `module`, `conda` and `python` (call sequence and arguments per
-  setup, an unknown setup refused).
+  setup, an unknown setup refused). The stubs are shell functions and the
+  job's environment is built from scratch (only PATH kept), so nothing from
+  the caller's login shell reaches the job, and a noexec /tmp does not stop
+  the stubs.
 - Confirmed: yes 2026-10-30 for the goal, the two setups, the design (axis
   sweeps and a prior sample), 20 s, a reduced run here and a 48-core job per
   setup on the cluster; inferred for K = 7, R = 2, the three conn levels (the
@@ -425,7 +428,15 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   cut-offs.
 - Status: smoke-tested 2026-10-30 in the sandbox (36-D root pipeline,
   freeze-patched copy, 37-D `Giulia/` copy; skipped: davinci, the cluster's
-  gate version).
+  gate version). davinci 2026-10-30, clone at 1a0932a, `--no-sim`: R8 found
+  0 stub calls and then crashed on an unguarded index. The cause is the
+  caller's environment reaching the job (an inherited `module` function, or
+  BASH_ENV) or a noexec /tmp: each reproduced the failure here; which one
+  applied on davinci is not known. R8 rebuilt as above, with guarded checks
+  and the job's output printed after a failed check; passes here under
+  both causes; rerun on davinci pending. With a noexec /tmp, R5 here and
+  S4 of `smoke_test_clamp_cadex_copies.py` also fail (they run programs
+  from the temporary folder); not changed.
 
 ### 5.1 Projects and where their model runs
 

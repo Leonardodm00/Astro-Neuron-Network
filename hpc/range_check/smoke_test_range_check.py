@@ -16,7 +16,9 @@ smoke_test_range_check.py -- checks of hpc/range_check/ (specs/SPEC.md Block 6).
   R6  analysis on synthetic runs: Poisson trains at 5 Hz give a mean rate within
       5 % (3 Poisson SD); a silent run gives active fraction 0 and is 'silent'
   R7  bytes: pure ASCII, LF only, in every file of this folder
-  R8  submit_range_check.sh with stub module/conda/python: for SETUP=lcdup it
+  R8  submit_range_check.sh with module, conda and python replaced by stub
+      shell functions, in an environment built from scratch (only PATH kept;
+      see the comment above STUB_FUNCS): for SETUP=lcdup it
       calls range_check.py 3 times (oat at 0.1 0.35 0.6) and once (prior), then
       the analysis and the plots, with the LindaColloDUP settings; SETUP=giulia
       finds LIKE in the hhgap_v5 campaign and passes EXTRA to every phase and
@@ -46,6 +48,7 @@ RESULTS = {'passed': 0, 'failed': 0, 'skipped': 0}
 def check(cond, label):
     RESULTS['passed' if cond else 'failed'] += 1
     print('  %s %s' % ('ok  ' if cond else 'FAIL', label))
+    return cond
 
 
 def skip(label):
@@ -241,14 +244,20 @@ def r7():
             check(b.count(b'\r') == 0 and all(x < 128 for x in b), '%s: LF only, pure ASCII' % f)
 
 
-STUB_PY = '''#!/bin/bash
-printf '%s\\n' "$*" >> "$STUB_LOG"
-exit 0
+# R8 runs the job script with module, conda and python replaced by shell
+# functions, exported by a wrapper shell, in an environment built from scratch:
+# of the caller's environment only PATH is kept. Inherited, a login shell's own
+# module function (exported, or defined again in every child shell through
+# BASH_ENV) replaced the stubs, so the real module, conda and python ran and
+# the stubs logged no call (davinci, 2026-10-30). Functions also need no exec
+# permission, so a noexec /tmp cannot stop them either.
+STUB_FUNCS = r'''python() { printf '%s\n' "$*" >> "$STUB_LOG"; return 0; }
+conda() { if [ "${1:-}" = info ]; then printf '%s\n' "$STUB_BASE"; fi; return 0; }
+module() { return 0; }
+export -f python conda module
+exec "$BASH" "$1"
 '''
-STUB_CONDA = '''#!/bin/bash
-if [ "$1" = "info" ]; then echo "$STUB_BASE"; fi
-exit 0
-'''
+BASH = shutil.which('bash') or '/bin/bash'
 
 
 def r8(tmp):
@@ -257,50 +266,68 @@ def r8(tmp):
     os.makedirs(os.path.join(base, 'etc', 'profile.d'))
     open(os.path.join(base, 'etc', 'profile.d', 'conda.sh'), 'w').write(
         'conda() { return 0; }\nmodule() { return 0; }\n')
-    stub = os.path.join(tmp, 'stubbin')
-    os.makedirs(stub)
-    for name, text in (('python', STUB_PY), ('conda', STUB_CONDA), ('module', '#!/bin/bash\nexit 0\n')):
-        open(os.path.join(stub, name), 'w').write(text)
-        os.chmod(os.path.join(stub, name), 0o755)
+    home = os.path.join(tmp, 'r8_home')
+    os.makedirs(home)
     lib = os.path.join(tmp, 'fake_setup')
     os.makedirs(os.path.join(lib, 'campaign_cadex_hhgap_v5', 'sweep_intel_task0000'))
     for f in ('HPC_main_sweep.py', 'ASD_fun_BD_cpp.py'):
         open(os.path.join(lib, f), 'w').write('# stub\n')
     open(os.path.join(lib, 'campaign_cadex_hhgap_v5', 'sweep_intel_task0000', 'job_args.json'), 'w').write('{}')
+    n_jobs = [0]
 
     def job(**env):
-        log = os.path.join(tmp, 'stub_%d.log' % len(os.listdir(tmp)))
-        e = dict(os.environ, PATH=stub + os.pathsep + os.environ['PATH'], STUB_LOG=log, STUB_BASE=base,
-                 PBS_O_WORKDIR=HERE, PBS_NCPUS='48', LIB_DIR=lib, OUT=os.path.join(tmp, 'job_out'), **env)
-        r = subprocess.run(['bash', os.path.join(HERE, 'submit_range_check.sh')], env=e,
-                           capture_output=True, text=True)
+        n_jobs[0] += 1
+        log = os.path.join(tmp, 'r8_calls_%d.log' % n_jobs[0])
+        e = dict(PATH=os.environ.get('PATH', '/usr/bin:/bin'), HOME=home, LC_ALL='C',
+                 STUB_LOG=log, STUB_BASE=base, PBS_O_WORKDIR=HERE, PBS_NCPUS='48',
+                 LIB_DIR=lib, OUT=os.path.join(tmp, 'job_out_%d' % n_jobs[0]), **env)
+        r = subprocess.run([BASH, '-c', STUB_FUNCS, 'r8', os.path.join(HERE, 'submit_range_check.sh')],
+                           env=e, capture_output=True, text=True)
         calls = open(log).read().splitlines() if os.path.exists(log) else []
         return r, [c for c in calls if not c.startswith('-c ')]
 
+    def explain(ok, r, calls):
+        """After a failed check, print what the job did, so a pasted run shows the cause."""
+        if ok:
+            return
+        print('    job exit %d, %d stub calls; its last output lines:' % (r.returncode, len(calls)))
+        for tag, text in (('out', r.stdout), ('err', r.stderr)):
+            for line in text.strip().splitlines()[-8:]:
+                print('    %s| %s' % (tag, line))
+
     r, calls = job(SETUP='lcdup')
     oat = [c for c in calls if '--rc-phase oat' in c]
-    check(r.returncode == 0 and len(oat) == 3 and sum('--rc-phase prior' in c for c in calls) == 1
-          and calls[-2].startswith('range_analysis.py') and calls[-1].startswith('range_plots.py'),
-          'lcdup: 3 oat + 1 prior + analysis + plots (%d calls)' % len(calls))
-    check(all('--freeze Cm,I_inj,VA=-50,DeltaA,VR=-55' in c and '--mode Neuronal' in c and '--n_workers 48' in c
-              for c in oat) and ['--rc-conn 0.1 ' in oat[0], '--rc-conn 0.35 ' in oat[1],
-                                 '--rc-conn 0.6 ' in oat[2]] == [True] * 3,
+    ok = check(r.returncode == 0 and len(oat) == 3 and sum('--rc-phase prior' in c for c in calls) == 1
+               and len(calls) >= 2 and calls[-2].startswith('range_analysis.py')
+               and calls[-1].startswith('range_plots.py'),
+               'lcdup: 3 oat + 1 prior + analysis + plots (%d calls)' % len(calls))
+    explain(ok, r, calls)
+    check(len(oat) == 3
+          and all('--freeze Cm,I_inj,VA=-50,DeltaA,VR=-55' in c and '--mode Neuronal' in c
+                  and '--n_workers 48' in c for c in oat)
+          and ['--rc-conn 0.1 ' in oat[0], '--rc-conn 0.35 ' in oat[1], '--rc-conn 0.6 ' in oat[2]] == [True] * 3,
           'lcdup: settings, 48 workers, conn levels in order')
     r, calls = job(SETUP='giulia', EXTRA='--stoa_gate_lo 0.2 --stoa_gate_hi 1.0',
                    OAT_EXTRA='--stoa_gate_lo 0.6 --stoa_gate_hi 0.6')
     oat = [c for c in calls if '--rc-phase oat' in c]
     prior = [c for c in calls if '--rc-phase prior' in c]
-    check(r.returncode == 0 and len(oat) == 3 and len(prior) == 1
-          and all('campaign_cadex_hhgap_v5/sweep_intel_task0000/job_args.json' in c for c in oat + prior),
-          'giulia: LIKE found in the hhgap_v5 campaign')
-    check(all('--stoa_gate_lo 0.2 --stoa_gate_hi 1.0' in c for c in oat + prior)
+    ok = check(r.returncode == 0 and len(oat) == 3 and len(prior) == 1
+               and all('campaign_cadex_hhgap_v5/sweep_intel_task0000/job_args.json' in c for c in oat + prior),
+               'giulia: LIKE found in the hhgap_v5 campaign')
+    explain(ok, r, calls)
+    check(len(oat) == 3 and len(prior) == 1
+          and all('--stoa_gate_lo 0.2 --stoa_gate_hi 1.0' in c for c in oat + prior)
           and all(c.endswith('--stoa_gate_lo 0.6 --stoa_gate_hi 0.6') for c in oat)
           and '0.6 --stoa_gate_hi 0.6' not in prior[0], 'giulia: EXTRA everywhere, OAT_EXTRA last in oat only')
     r, calls = job(SETUP='lcdup', FREEZE_ENC='Cm:I_inj:VA@-48:DeltaA:VR@-58.2:EC50_ampa:EC50_nmda:alpha_syn:O_G:Omega_G')
-    check(r.returncode == 0 and all('--freeze Cm,I_inj,VA=-48,DeltaA,VR=-58.2,EC50_ampa' in c
-                                    for c in calls if '--rc-phase' in c), 'lcdup: FREEZE_ENC decoded')
+    phases = [c for c in calls if '--rc-phase' in c]
+    ok = check(r.returncode == 0 and len(phases) == 4
+               and all('--freeze Cm,I_inj,VA=-48,DeltaA,VR=-58.2,EC50_ampa' in c for c in phases),
+               'lcdup: FREEZE_ENC decoded')
+    explain(ok, r, calls)
     r, calls = job(SETUP='nonsense')
-    check(r.returncode == 2 and not calls, 'unknown SETUP: exit 2, nothing run')
+    ok = check(r.returncode == 2 and not calls, 'unknown SETUP: exit 2, nothing run')
+    explain(ok, r, calls)
 
 
 def main():
