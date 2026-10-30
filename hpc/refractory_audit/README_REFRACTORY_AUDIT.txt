@@ -12,8 +12,21 @@ THIS FOLDER (repo path hpc/refractory_audit/)
   README_REFRACTORY_AUDIT.txt     this file
   .gitignore                      keeps the output folders out of git
   checks/                         standalone checks behind the numbers (README_CHECKS.txt)
+  clamp_cadex_copies.py           finds every CAdEx copy of ASD_fun_BD_cpp.py under the
+                                  project folders and holds V during t_ref in each (--apply)
+  smoke_test_clamp_cadex_copies.py  checks it (self-test + mock cluster tree)
 Nothing here writes into a campaign: results go to refractory_audit_<UTC>/
 next to the scripts.
+
+BEFORE RERUNNING ANY PROJECT (since 2026-10-30; Giulia, MEAMA, LindaColloDUP,
+the rho1300 family) -- every project folder must run the clamped model:
+  python3 clamp_cadex_copies.py --self-test | tail -1      (expect SELF-TEST: PASS)
+  qstat -u $USER                                           (stop what you will rerun)
+  python3 clamp_cadex_copies.py                            (report: every copy under ~/ANN)
+  python3 clamp_cadex_copies.py --apply                    (expect "ALL CAdEx COPIES CLAMPED (exit 0)")
+Relaunch with NEW campaign tags. After the first tasks start, the CODE section of
+  bash check_refractory_nan.sh --sample 20 <new campaign folders>
+must say CLAMPED for each.
 
 ORDER OF OPERATIONS ON DAVINCI (paste one line at a time)
 
