@@ -127,13 +127,22 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   - 2026-10-30 [author]: fix the refractory runaway: the refractory hold of
     section 2 in every repository copy of the CAdEx network and in
     LindaColloDUP (`REFRACTORY_CLAMP=yes`). Not applied in place to the
-    cluster's `MEAMA/` (its campaigns run there).
+    cluster's `MEAMA/` (its campaigns run there). Superseded for `MEAMA/` by
+    the next entry: MEAMA is rerun clamped, and Block 5 patches its folder
+    once its arrays are stopped.
   - 2026-10-30 [author]: every project is rerun with the clamped model --
     Giulia's simulations, MEAMA, LindaColloDUP and the rho1300 family (the
-    large-culture campaigns where a 100-electrode array fits) -- so every
+    100-electrode project, confirmed by the author on 2026-10-30) -- so every
     project folder must hold a clamped `ASD_fun_BD_cpp.py` before its rerun
     (section 5.1, Block 5). Reruns use new campaign tags; data from the
     unclamped model is never pooled with clamped runs.
+  - 2026-10-30 [author]: the campaigns run with the unclamped model are kept
+    apart from the clamped reruns and deleted later; where they are is
+    recorded in the project doc `claude/Unclamped_Campaigns_Inventory.md`.
+    Clamped tags carry `clamp` in their stem, and any tool that reads several
+    campaigns at once is given the clamped campaigns explicitly (for
+    `multi_campaign_report.py`, `--glob` with the clamped stem; its default
+    `campaign_*` takes every campaign in the folder).
   - 2026-10-29 [author]: LindaColloDUP runs MODE Neuronal; freezes Cm,
     I_inj, VR, VA, DeltaA, EC50_ampa, EC50_nmda (and the inert alpha_syn,
     O_G, Omega_G); SIMTIME 180 s; RHO_TOTAL 1300 cells/mm^2; everything else
@@ -334,7 +343,7 @@ author, is the record for them.
 | project | campaign family (job name) | model file it runs | in the repository | how it gets the clamp |
 |---|---|---|---|---|
 | Giulia's simulations | `campaign_cadex_hhgap_*` (`asn_campaign`) | `Phenomenological/Main/Giulia_Astro/ASD_fun_BD_cpp.py` (worker `lib_dir` = launch folder) (inferred) | `hpc/Phenomenological_finalv1/Giulia/` (relationship to `Giulia_Astro/` unresolved) | repository copy: Block 1; cluster copy: Block 5 |
-| rho1300 family, the 100-electrode culture (699 um, 637 neurons) | `campaign_cadex_rho1300v*` (`asn_campaign`) | `Phenomenological/Main/ASD_fun_BD_cpp.py` (inferred) | root pipeline `hpc/Phenomenological_finalv1/` (the cluster copy may drift) | repository copy: Block 1; cluster copy: Block 5 |
+| rho1300 family, the 100-electrode project (confirmed 2026-10-30; 637 neurons, `C_MAX` 700 um in `submit_sweep_mixed.sh`) | `campaign_cadex_rho1300v*` (`asn_campaign`) | `Phenomenological/Main/ASD_fun_BD_cpp.py` (inferred) | root pipeline `hpc/Phenomenological_finalv1/` (the cluster copy may drift) | repository copy: Block 1; cluster copy: Block 5 |
 | MEAMA | `campaign_meama_rho1600_*` (`meama_campaign`) | `Phenomenological/MEAMA/ASD_fun_BD_cpp.py`, 37-D | launch code only (`hpc/Phenomenological_finalv1/MEAMA/`); the 37-D model is not in the repository | Block 5 |
 | LindaColloDUP | `campaign_lcdup15_*` (`lcdup_campaign`) | `Phenomenological/LindaColloDUP/ASD_fun_BD_cpp.py`, copied from `MEAMA/` | launch package (Block 4); the model file is not in the repository | inherits it from a clamped `MEAMA/` copy, or Block 4's `apply_refractory_clamp.py` (step 5a); its launcher refuses a mismatch with `REFRACTORY_CLAMP`. On a copy clamped by Block 5, step 5a prints `ALREADY CLAMPED` with exit 0 for `--check` and the patch, and the launcher reads the file as clamped (sandbox, 2026-10-30) |
 
