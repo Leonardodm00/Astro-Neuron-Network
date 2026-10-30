@@ -11,6 +11,7 @@ THIS FOLDER (repo path hpc/refractory_audit/)
   smoke_test_refractory_scan.py   checks the two scripts on synthetic campaigns
   README_REFRACTORY_AUDIT.txt     this file
   .gitignore                      keeps the output folders out of git
+  checks/                         standalone checks behind the numbers (README_CHECKS.txt)
 Nothing here writes into a campaign: results go to refractory_audit_<UTC>/
 next to the scripts.
 
