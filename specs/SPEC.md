@@ -15,8 +15,9 @@ until the author has checked it against what was intended; a constraint that
 comes from an explicit decision of the author says `Confirmed: yes` with the
 date of the decision.
 
-Last reviewed at commit: 5f21a3d (first draft at 562a9fd; Block 5, the repository
-invariant of Block 1 and section 5.1 added on 2026-10-30 on top of 5f21a3d)
+Last reviewed at commit: 4aa3fdb (first draft at 562a9fd; Block 5, the repository
+invariant of Block 1 and section 5.1 added on 2026-10-30 on top of 5f21a3d;
+Block 5's REFUSED rule for an unrecognised CAdEx line added on top of 4aa3fdb)
 
 ## 0. Coverage
 
@@ -270,11 +271,13 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   name every worker imports from its `lib_dir`), descending at most D levels
   and skipping folders named `campaign_*`, `scratch*`, `mea_out*`, hidden
   folders and `__pycache__`.
-- Classifies each file: SKIP (no dV/dt line with the CAdEx term), CLAMPED
-  (one CAdEx dV/dt line ending in the flag), NOT CLAMPED (one CAdEx dV/dt line
-  without flags), REFUSED (CR bytes, not UTF-8, more than one CAdEx dV/dt
-  line, other flags on it, or the marker `[refractory clamp]` present
-  without the flag).
+- Classifies each file: SKIP (the CAdEx term `exp((V-VT)/DeltaT)`, spaces
+  ignored, appears nowhere in the file), CLAMPED (one CAdEx dV/dt line ending
+  in the flag), NOT CLAMPED (one CAdEx dV/dt line without flags), REFUSED (CR
+  bytes, not UTF-8, more than one CAdEx dV/dt line, other flags on it, the
+  marker `[refractory clamp]` present without the flag, or the term present
+  but carried by no single-line `dV/dt = ... : volt`). An unrecognised CAdEx
+  copy is therefore REFUSED, never SKIP.
 - With `--apply`, for each NOT CLAMPED file: HELD (left untouched) if a
   `campaign_*` folder next to it, or one of that folder's children, was
   modified less than H hours ago and `--force-running` is not given;
@@ -291,7 +294,7 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
 - Custom code: the scan and the patch rule; no library does this. Same patch
   rule as `hpc/Phenomenological_finalv1/LindaColloDUP/apply_refractory_clamp.py`,
   with the CAdEx-term condition added and a neutral marker.
-- Test oracles: `--self-test` (21 checks: classification of each case, the
+- Test oracles: `--self-test` (22 checks: classification of each case, the
   patch adds only the comment line and the flag, HH untouched, HELD and
   `--force-running`, backups, idempotence, exit codes, Brian2 parse of the
   patched equations); `smoke_test_clamp_cadex_copies.py` (16 checks: a mock
@@ -315,7 +318,7 @@ author, is the record for them.
 | Giulia's simulations | `campaign_cadex_hhgap_*` (`asn_campaign`) | `Phenomenological/Main/Giulia_Astro/ASD_fun_BD_cpp.py` (worker `lib_dir` = launch folder) (inferred) | `hpc/Phenomenological_finalv1/Giulia/` (relationship to `Giulia_Astro/` unresolved) | repository copy: Block 1; cluster copy: Block 5 |
 | rho1300 family, the 100-electrode culture (699 um, 637 neurons) | `campaign_cadex_rho1300v*` (`asn_campaign`) | `Phenomenological/Main/ASD_fun_BD_cpp.py` (inferred) | root pipeline `hpc/Phenomenological_finalv1/` (the cluster copy may drift) | repository copy: Block 1; cluster copy: Block 5 |
 | MEAMA | `campaign_meama_rho1600_*` (`meama_campaign`) | `Phenomenological/MEAMA/ASD_fun_BD_cpp.py`, 37-D | launch code only (`hpc/Phenomenological_finalv1/MEAMA/`); the 37-D model is not in the repository | Block 5 |
-| LindaColloDUP | `campaign_lcdup15_*` (`lcdup_campaign`) | `Phenomenological/LindaColloDUP/ASD_fun_BD_cpp.py`, copied from `MEAMA/` | launch package (Block 4); the model file is not in the repository | inherits it from a clamped `MEAMA/` copy, or Block 4's `apply_refractory_clamp.py` (step 5a); its launcher refuses a mismatch with `REFRACTORY_CLAMP` |
+| LindaColloDUP | `campaign_lcdup15_*` (`lcdup_campaign`) | `Phenomenological/LindaColloDUP/ASD_fun_BD_cpp.py`, copied from `MEAMA/` | launch package (Block 4); the model file is not in the repository | inherits it from a clamped `MEAMA/` copy, or Block 4's `apply_refractory_clamp.py` (step 5a); its launcher refuses a mismatch with `REFRACTORY_CLAMP`. On a copy clamped by Block 5, step 5a prints `ALREADY CLAMPED` with exit 0 for `--check` and the patch, and the launcher reads the file as clamped (sandbox, 2026-10-30) |
 
 After each relaunch, Block 3's CODE section, run on the new campaign
 folders, must report CLAMPED for each (it reads the model file named by the

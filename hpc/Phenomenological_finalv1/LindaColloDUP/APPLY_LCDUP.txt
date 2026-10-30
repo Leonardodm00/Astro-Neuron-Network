@@ -39,7 +39,10 @@ conda activate brian_final && python -c "import HPC_main_sweep as S; print(S.N_D
    "RESULT: 35 passed, 0 failed"):
 python apply_freeze_patch.py --check && python apply_freeze_patch.py && python smoke_test_freeze.py | tail -3
 
-5a. CLAMP (decided 2026-10-30; expect "SELF-TEST: PASS", "CHECK OK", "CLAMPED"):
+5a. CLAMP (decided 2026-10-30; expect "SELF-TEST: PASS", "CHECK OK", "CLAMPED").
+    If MEAMA/ was clamped first with clamp_cadex_copies.py (hpc/refractory_audit/),
+    the copy from step 0 is already clamped and 5a prints "ALREADY CLAMPED ... nothing
+    written" twice, exit 0: that is correct, go on to step 6.
 python apply_refractory_clamp.py --self-test | tail -1 && python apply_refractory_clamp.py --check && python apply_refractory_clamp.py
 5b. (not used since 2026-10-30) without the clamp: skip 5a and use REFRACTORY_CLAMP=no in steps 7-8.
 

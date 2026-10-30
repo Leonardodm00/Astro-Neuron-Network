@@ -8,8 +8,11 @@ check_rs_reset_adaptation.py
     Question: do the frozen V_A, Delta_A, V_R give the adapting (regular
     spiking) CAdEx cell of Gorski et al. 2021 (Table 1, "Adaptive spiking"),
     and which (V_A, V_R) keeps the reset below the V-nullcline minimum?
-    Run:    python3 -I check_rs_reset_adaptation.py
-    Result: LCO section 2.1.
+    Run:    python3 -I check_rs_reset_adaptation.py              (clamped model, as main 0963b7b)
+            python3 -I check_rs_reset_adaptation.py --unclamped  (the d0ced88 model)
+    Result: LCO section 2.1. Clamped (2026-10-30): rheobase unchanged (12.99 /
+            14.83 / 15.74 pA); every variant still adapts, A 0.020-0.045 against
+            0.024-0.052 unclamped, and resets below the V-nullcline minimum.
 
 check_neuronal_inert_axes.py
     Claim: under MODE=Neuronal, alpha_syn, O_G and Omega_G leave the spike

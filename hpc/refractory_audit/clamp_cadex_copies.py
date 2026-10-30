@@ -17,7 +17,9 @@ What counts as a CAdEx copy
     A file named ASD_fun_BD_cpp.py whose single CAdEx dV/dt line contains the
     exponential spike term exp((V-VT)/DeltaT). Files whose dV/dt lines lack
     that term (the Hodgkin-Huxley models) are listed as SKIP and never
-    touched: holding V during refractoriness would break an HH neuron.
+    touched: holding V during refractoriness would break an HH neuron. A file
+    that contains the term but no single-line "dV/dt = ... : volt" carrying it
+    is REFUSED, never SKIP, so an unrecognised CAdEx copy cannot pass silently.
 
 Patch (only with --apply, only on NOT CLAMPED files)
     Appends " (unless refractory)" to that dV/dt line and inserts one comment
@@ -73,6 +75,9 @@ def classify_text(text):
     hits = cadex_matches(text)
     if not hits:
         n_dv = len(DV.findall(text))
+        if CADEX_TERM in text.replace(' ', ''):
+            return ('REFUSED', 'CAdEx term present, but no single-line "dV/dt = ... : volt" '
+                    'carries it; check the file by hand', None)
         return 'SKIP', 'no CAdEx dV/dt line (%d other dV/dt line(s))' % n_dv, None
     if len(hits) > 1:
         return 'REFUSED', '%d CAdEx dV/dt lines; refusing to guess' % len(hits), None
@@ -248,6 +253,8 @@ def self_test():
            .replace(' ' + FLAG, '') == _CADEX)
     expect('dgA/dt line untouched', '- gA)/tauA : siemens\n' in clamped)
     expect('Hodgkin-Huxley model -> SKIP', classify_text(_HH)[0] == 'SKIP')
+    expect('CAdEx term, dV/dt line not recognised -> REFUSED (not SKIP)',
+           classify_text(_CADEX.replace(': volt\n', ': V\n', 1))[0] == 'REFUSED')
     expect('two CAdEx lines -> REFUSED', classify_text(_CADEX + _CADEX)[0] == 'REFUSED')
     expect('other flags -> REFUSED',
            classify_text(_CADEX.replace(': volt\n', ': volt (constant over dt)\n', 1))[0] == 'REFUSED')
