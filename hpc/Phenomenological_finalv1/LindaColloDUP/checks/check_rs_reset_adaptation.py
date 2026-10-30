@@ -10,7 +10,9 @@ Question
     V_R ABOVE that minimum)?
 
 Truth chosen (fixed before running)
-    The CAdEx equations of ASD_fun_BD_cpp.py (main @ d0ced88) with I_syn = 0,
+    The CAdEx equations of ASD_fun_BD_cpp.py (main @ 0963b7b: V held at V_R
+    during t_ref, "(unless refractory)"; with --unclamped, the d0ced88 model
+    without the hold, which produced the 2026-10-29 numbers) with I_syn = 0,
     no noise, a step current I_s, Brian2 runtime (numpy target),
     exponential Euler, dt = 0.05 ms, 1 s per step, V(0) = E_L,
     g_A(0) = g_A_inf(E_L).
@@ -36,8 +38,11 @@ V-nullcline g_A(V) = [g_L(E_L-V) + g_L Delta_T e^{(V-V_T)/Delta_T} + I_s]/(V-E_A
 Pass criteria (fixed before running): the Gorski reference shows A > 0 and
 V_R < V_min (sanity of the metric); each variant is reported, not judged.
 
-Usage:  python3 -I check_rs_reset_adaptation.py
+Usage:  python3 -I check_rs_reset_adaptation.py              # clamped model (current)
+        python3 -I check_rs_reset_adaptation.py --unclamped  # the d0ced88 model
 """
+import sys
+
 import numpy as np
 import brian2 as b2
 
@@ -74,14 +79,16 @@ def v_nullcline_min(p, I):
     return float(V[np.argmin(g)])
 
 
-def simulate(cells):
-    """cells: list of (label, params dict, I_s [pA]); one Brian2 group."""
+def simulate(cells, clamp=True):
+    """cells: list of (label, params dict, I_s [pA]); one Brian2 group.
+    clamp: V held at V_R during t_ref, as the production model since 0963b7b."""
     b2.prefs.codegen.target = 'numpy'
     b2.start_scope()
     b2.seed(CFG['seed'])
     b2.defaultclock.dt = CFG['dt_ms'] * b2.ms
     eqs = '''
-    dV/dt  = (gl*(El-V) + gl*DeltaT*exp((V-VT)/DeltaT) + gA*(EA-V) + Is)/Cm : volt
+    dV/dt  = (gl*(El-V) + gl*DeltaT*exp((V-VT)/DeltaT) + gA*(EA-V) + Is)/Cm : volt''' + \
+        (' (unless refractory)' if clamp else '') + '''
     dgA/dt = (gbarA/(1 + exp((VA-V)/DeltaA)) - gA)/tauA : siemens
     Cm : farad
     gl : siemens
@@ -99,8 +106,9 @@ def simulate(cells):
     tref : second
     Is : amp
     '''
-    # Same membrane equation as the production model: V is NOT clamped during
-    # t_ref (the threshold is simply not tested while refractory).
+    # Same membrane equation as the production model: since 0963b7b V is held
+    # at V_R during t_ref; with clamp=False (the d0ced88 model) V integrates
+    # during t_ref while the threshold is not tested.
     n = len(cells)
     G = b2.NeuronGroup(n, eqs, threshold='V > VD', reset='V = VR; gA += delta_gA',
                        refractory='tref', method='exponential_euler')
@@ -131,6 +139,9 @@ def simulate(cells):
 
 
 def main():
+    clamp = '--unclamped' not in sys.argv[1:]
+    print('model: %s' % ('V held at V_R during t_ref (main 0963b7b)' if clamp
+                         else 'V not held during t_ref (main d0ced88)'))
     cells = []
     for name, v in VARIANTS.items():
         p = dict(MODEL, **v)
@@ -141,7 +152,7 @@ def main():
     cells.append(('Gorski RS  I_s=200', GORSKI_RS, 200.0))
     for m in CFG['drives']:
         cells.append(('Gorski RS  %.1fx I_rh' % m, GORSKI_RS, m * Irh_g))
-    res = simulate(cells)
+    res = simulate(cells, clamp=clamp)
     print('rheobase [pA]: ' + ', '.join('%s %.2f' % (n, rheobase(dict(MODEL, **v)))
                                        for n, v in VARIANTS.items())
           + ', Gorski RS %.1f' % Irh_g)
