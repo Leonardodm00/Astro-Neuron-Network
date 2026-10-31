@@ -1170,8 +1170,9 @@ campaign's `job_args.json` `lib_dir`).
   2.785 / (dt O_N): 186 mM at the nominal O_N = 0.3 /(uM s), 18.6 mM at
   O_N's upper bound 3. Past it Gamma_A oscillated with growing amplitude
   (x15-20 per step) to -inf (float32, the group's dtype) at 26.7 ms in the
-  first astrocyte, then NaN, and the NaN spread through `I_coupling_tot`
-  (gap junctions) to all 108 astrocytes within 2.5 ms. Effect: for the rest
+  first astrocyte (`Y_extra` had reached 483 mM), then NaN, and the NaN
+  spread through `I_coupling_tot` (gap junctions) to all 108 astrocytes by
+  30.6 ms. Effect: for the rest
   of the run no astrocyte event (C > C_osc is false for NaN) and so no
   gliotransmitter release; the neurons stay finite (no NaN path leads back
   to them) and run without astrocyte feedback. At nominal parameters every
