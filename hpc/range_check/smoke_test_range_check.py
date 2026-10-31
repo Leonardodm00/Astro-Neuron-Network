@@ -26,11 +26,20 @@ random cells of its 7-bin grid.
       every run labelled from its theta (the 4 corners with the design's
       codes, the 4 cells with its bins); the analysis tables and the three
       figures are written; refuses an occupied folder and an unclamped model
+  R6b end to end in Full mode on the GiuliaGate setup (a patched copy of the
+      root pipeline, as APPLY_GG.txt makes it): corners level 0 of a tiny
+      network of 12 neurons and 6 astrocytes; runs.csv carries the gate p of
+      each run (in its box), Na = 6 and the astrocyte metrics; the corner
+      effects list the astrocyte outcomes; gate_networks.csv is written
   R7  analysis on synthetic runs with a known effect: Poisson trains at 2 Hz
       with axis A at its lower bound and 8 Hz at its upper bound give
       E_A = log10(8.01 / 2.01) within 0.05 and |E| < 0.05 for the inert B and
       conn_prob; interior medians follow 0.5 x 2^bin for A and stay flat for
-      B; a run off the grid is 'unmatched' and the analysis exits 1
+      B; a run off the grid is 'unmatched' and the analysis exits 1. Full
+      mode: astrocyte events at 0.05 Hz (B at its lower bound) and 0.4 Hz
+      (upper bound), times the network's gate p / 0.6, give the planted
+      E_B(y_astro) within 0.05 and |E_A(y_astro)| < 0.05; the gate Spearman
+      over the 12 corner networks is above 0.9 for the astro rate
   R8  bytes: pure ASCII, LF only, in every file of this folder
   R9  submit_range_check.sh with module, conda and python replaced by stub
       shell functions, in an environment built from scratch (only PATH kept;
@@ -44,17 +53,36 @@ random cells of its 7-bin grid.
       hhgap_v5 campaign; EXTRA reaches every call; FREEZE_ENC is decoded;
       PHASES, ANALYZE and BINS select what runs; CHECK_ONLY=1 runs nothing; an
       lcdup folder without the g box patch, a bad PHASES and an unknown SETUP
-      exit 2
+      exit 2. For SETUP=giulia (a really patched GiuliaGate copy; the stub
+      python hands apply_prior_patch.py to the real python3): the freeze list,
+      the conn_prob box 0.05-0.4 and the gate box 0.2-1 come from
+      prior_config.tsv, with Full, tripartite and the densities 1200/1200 on
+      300 um; level lists given with ':' (CORNER_LEVELS=1,
+      INTERIOR_LEVELS=4:5:6) run those levels; an unpatched copy and a folder
+      without prior_config.tsv exit 2 before any range_check.py call, and the
+      unpatched copy also fails CHECK_ONLY=1
   R10 launch_range_check.sh with a stub qsub, in the same sealed environment
       (probed first like R9, so the real qsub is never reached): the corners
       job on intel and the interior job on cpu (48 cores, 24 h each), the
       analysis on cpu with 8 cores held by depend=afterany on both, one OUT
       and the pass-through variables in all three; DRYRUN=1, a failed
       precheck and a comma in a passed variable submit nothing; a failed
-      second submission stops there and names the job to qdel
+      second submission stops there and names the job to qdel. NODES=4: four
+      compute jobs (corners levels 0 and 1 on intel, interior bins 0-3 and
+      4-6 on cpu; BINS=5 gives 0-2 and 3-4) and the analysis held by
+      depend=afterany on all four; NODES=3, or NODES=4 with a level list,
+      exits 2; a refused third submission names the two jobs to qdel; the
+      giulia setup launches on four nodes, and an unpatched GiuliaGate copy
+      fails the precheck
+  R11 the GiuliaGate design (patched copy): the 15 free axes of
+      prior_config.tsv + conn_prob = 16 dimensions, a two-level fraction of
+      16,384 corners of resolution >= 5 (8,192 per level), interior 2,352
+      cells per level with conn_prob at 0.075 in bin 0 of [0.05, 0.4]; Sigma
+      linear in [2, 10] mV, g_ampa and g_nmda log in [0.05, 10] nS; the fixed
+      axes at their TSV values in every vector
 
-Run:  python3 smoke_test_range_check.py | tail -1        (about 2 min with R6)
-      python3 smoke_test_range_check.py --no-sim          (skip R6)
+Run:  python3 smoke_test_range_check.py | tail -1        (about 4 min with R6, R6b)
+      python3 smoke_test_range_check.py --no-sim          (skip R6, R6b)
 """
 import json
 import os
@@ -72,6 +100,7 @@ CSV = os.path.join(PIPE, 'MEAMA', 'synapse_pdist.csv')
 LCDUP_FREEZE = 'Cm,I_inj,VA=-48,DeltaA,VR=-58.2,EC50_ampa,EC50_nmda,alpha_syn,O_G,Omega_G'
 OFF_NOMINAL_FREEZE = 'Cm,I_inj,VA=-50,DeltaA,VR=-55,EC50_ampa,EC50_nmda,alpha_syn,O_G,Omega_G'
 BOX_MARK = '[LindaColloDUP box 2026-10-30]'
+GG = os.path.join(PIPE, 'GiuliaGate')
 RESULTS = {'passed': 0, 'failed': 0, 'skipped': 0}
 
 
@@ -96,6 +125,34 @@ def make_lib(dst, src=PIPE, freeze_patch=False):
                             '--file', os.path.join(dst, 'HPC_main_sweep.py')], capture_output=True, text=True)
         assert r.returncode == 0, r.stdout + r.stderr
     return dst
+
+
+def make_gg_lib(dst, patch_boxes=True, tsv=True):
+    """A GiuliaGate copy as APPLY_GG.txt makes it: the root pipeline, the freeze
+    patch, prior_config.tsv and apply_prior_patch.py, the boxes patched
+    (patch_boxes=False leaves them at the registry; tsv=False omits the TSV)."""
+    make_lib(dst)
+    r = subprocess.run([sys.executable, os.path.join(GG, 'apply_freeze_patch.py'),
+                        '--file', os.path.join(dst, 'HPC_main_sweep.py')], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    shutil.copy2(os.path.join(GG, 'apply_prior_patch.py'), dst)
+    shutil.copy2(os.path.join(GG, 'prior_config.tsv'), dst)
+    if patch_boxes:
+        r = subprocess.run([sys.executable, os.path.join(dst, 'apply_prior_patch.py'),
+                            '--file', os.path.join(dst, 'HPC_main_sweep.py')], capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+    if not tsv:
+        os.remove(os.path.join(dst, 'prior_config.tsv'))
+    return dst
+
+
+def gg_query(lib, *opts):
+    """Output of the folder's apply_prior_patch.py for one query (--freeze-list, --topology X)."""
+    r = subprocess.run([sys.executable, os.path.join(lib, 'apply_prior_patch.py'), '--tsv',
+                        os.path.join(lib, 'prior_config.tsv'), '--file', os.path.join(lib, 'HPC_main_sweep.py')]
+                       + list(opts), capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    return r.stdout.strip()
 
 
 def in_subprocess(lib, body):
@@ -334,16 +391,60 @@ def r6(tmp):
     check(r.returncode != 0 and 'REFUSED' in (r.stdout + r.stderr), 'refuses an unclamped model')
 
 
-def _synthetic_run(pdir, topo, it, theta, names, rate, conn, rng, n_neurons=50, t_total=20.0):
+def r6b(tmp):
+    print('\n[R6b] end to end in Full mode on the GiuliaGate setup (tiny network)')
+    import importlib.util
+    if importlib.util.find_spec('brian2') is None:
+        return skip('brian2 not importable')
+    import pandas as pd
+    lib = make_gg_lib(os.path.join(tmp, 'lib_gg_e2e'))
+    out = os.path.join(tmp, 'out_full')
+    freeze = gg_query(lib, '--freeze-list')
+    cmd = [sys.executable, os.path.join(HERE, 'range_check.py'), '--rc-phase', 'corners', '--rc-level', '0',
+           '--lib_dir', lib, '--mode', 'Full', '--sweep_group', 'tripartite', '--freeze', freeze,
+           '--Nn', '12', '--Na', '6', '--c_max', '100', '--conn_prob_lo', '0.2', '--conn_prob_hi', '0.4',
+           '--stoa_gate_lo', '0.2', '--stoa_gate_hi', '1.0', '--n_workers', '2', '--rc-out', out,
+           '--rc-simtime', '0.3', '--rc-subset', '2']
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if not check(r.returncode == 0, 'corners level 0 in Full mode: exit 0'):
+        print(r.stdout[-2500:], r.stderr[-2500:])
+        return
+    a = subprocess.run([sys.executable, os.path.join(HERE, 'range_analysis.py'), out, '--t-skip', '0.05',
+                        '--burst-lib', PIPE], capture_output=True, text=True)
+    ok = a.returncode == 0 and os.path.isfile(os.path.join(out, 'runs.csv'))
+    if not ok:
+        print(a.stdout[-2500:], a.stderr[-2500:])
+    df = pd.read_csv(os.path.join(out, 'runs.csv')) if ok else pd.DataFrame()
+    check(ok and len(df) == 2 and set(df.Na) == {6} and df.astro_rate_win_hz.notna().all()
+          and df.astro_frac_active.between(0, 1).all()
+          and df.stoa_gate_p.between(0.2, 1.0).all() and df.stoa_gate_p.nunique() == 1,
+          'runs.csv: 2 runs with Na = 6, astrocyte metrics, one gate p in [0.2, 1] (one topology)')
+    eff = pd.read_csv(os.path.join(out, 'corner_effects.csv')) if ok else pd.DataFrame()
+    check(ok and 'effect_y_astro' in eff.columns and 'effect_astro_silent' in eff.columns
+          and os.path.isfile(os.path.join(out, 'gate_networks.csv')),
+          'corner effects carry the astrocyte outcomes; gate_networks.csv written')
+    p = subprocess.run([sys.executable, os.path.join(HERE, 'range_plots.py'), out], capture_output=True, text=True)
+    check(p.returncode == 0 and os.path.isfile(os.path.join(out, 'rate_distributions.png'))
+          and os.path.isfile(os.path.join(out, 'corner_effects.png')), 'figures written in Full mode')
+
+
+def _synthetic_run(pdir, topo, it, theta, names, rate, conn, rng, n_neurons=50, t_total=20.0,
+                   astro_rate=None, n_astro=100, gate=None):
     tdir = os.path.join(pdir, 'topo_%05d' % topo)
     os.makedirs(tdir, exist_ok=True)
     n = rng.poisson(rate * t_total * n_neurons)
-    np.savez(os.path.join(tdir, 'iter_%05d.npz' % it),
-             spk_N_t=np.sort(rng.uniform(0, t_total, n)).astype(np.float32),
-             spk_N_i=rng.integers(0, n_neurons, n).astype(np.int32))
-    json.dump(dict(topo_idx=topo, iter_idx=it, conn_prob=conn, theta=list(theta), params=list(theta),
-                   param_names=names, npz_relpath='topo_%05d/iter_%05d.npz' % (topo, it)),
-              open(os.path.join(tdir, 'iter_%05d.json' % it), 'w'))
+    arrays = dict(spk_N_t=np.sort(rng.uniform(0, t_total, n)).astype(np.float32),
+                  spk_N_i=rng.integers(0, n_neurons, n).astype(np.int32))
+    if astro_rate is not None:
+        m = rng.poisson(astro_rate * t_total * n_astro)
+        arrays.update(spk_A_t=np.sort(rng.uniform(0, t_total, m)).astype(np.float32),
+                      spk_A_i=rng.integers(0, n_astro, m).astype(np.int32))
+    np.savez(os.path.join(tdir, 'iter_%05d.npz' % it), **arrays)
+    side = dict(topo_idx=topo, iter_idx=it, conn_prob=conn, theta=list(theta), params=list(theta),
+                param_names=names, npz_relpath='topo_%05d/iter_%05d.npz' % (topo, it))
+    if gate is not None:
+        side['stoa_gate_p'] = gate
+    json.dump(side, open(os.path.join(tdir, 'iter_%05d.json' % it), 'w'))
 
 
 def r7(tmp):
@@ -355,6 +456,7 @@ def r7(tmp):
     root = os.path.join(tmp, 'synth')
     names, lo, hi = ['A', 'B'], [0.0, -1.0], [1.0, 1.0]
     rng = np.random.default_rng(7)
+    planted = []                                           # (code of B, planted y_astro) per corner run
     common = dict(free_axes=names, theta_lo=lo, theta_hi=hi, conn_box=[0.1, 0.5], lib_dir=PIPE,
                   param_names=names, log_params=[])
     for L, conn in ((0, 0.1), (1, 0.5)):
@@ -363,26 +465,33 @@ def r7(tmp):
         json.dump(dict(common, phase='corners', level=L, has_conn=True,
                        corner_design=dict(kind='full', n_runs=8, d=3, resolution=None)),
                   open(os.path.join(pdir, 'design.json'), 'w'))
-        json.dump(dict(Nn=50, simtime=20.0), open(os.path.join(pdir, 'job_args.json'), 'w'))
+        json.dump(dict(Nn=50, simtime=20.0, mode='Full', Na=100), open(os.path.join(pdir, 'job_args.json'), 'w'))
         it = 0
         for rep in range(6):
+            # 12 networks, 12 distinct gates spread over [0.2, 0.75] within each folder (folder
+            # medians are removed before the gate Spearman, so the spread must be within folders)
+            gate = 0.2 + 0.1 * rep + 0.05 * L
             for ca in (-1, 1):
                 for cb in (-1, 1):
                     theta = [hi[0] if ca > 0 else lo[0], hi[1] if cb > 0 else lo[1]]
-                    _synthetic_run(pdir, rep, it, theta, names, 8.0 if ca > 0 else 2.0, conn, rng)
+                    a_rate = (0.4 if cb > 0 else 0.05) * gate / 0.6
+                    planted.append((cb, np.log10(a_rate + RA.CFG['astro_rate_floor_hz'])))
+                    _synthetic_run(pdir, rep, it, theta, names, 8.0 if ca > 0 else 2.0, conn, rng,
+                                   astro_rate=a_rate, gate=gate)
                     it += 1
     pdir = os.path.join(root, 'interior_b0')
     os.makedirs(pdir)
     json.dump(dict(common, phase='interior', level=0, has_conn=False, bins=7), open(os.path.join(pdir, 'design.json'), 'w'))
-    json.dump(dict(Nn=50, simtime=20.0), open(os.path.join(pdir, 'job_args.json'), 'w'))
+    json.dump(dict(Nn=50, simtime=20.0, mode='Full', Na=100), open(os.path.join(pdir, 'job_args.json'), 'w'))
     mids = [RD.bin_midpoints(a, b, 7) for a, b in zip(lo, hi)]
     it = 0
     for rep in range(2):
         for ia in range(7):
             for ib in range(7):
-                _synthetic_run(pdir, rep, it, [mids[0][ia], mids[1][ib]], names, 0.5 * 2 ** ia, 0.3, rng)
+                _synthetic_run(pdir, rep, it, [mids[0][ia], mids[1][ib]], names, 0.5 * 2 ** ia, 0.3, rng,
+                               astro_rate=0.1)
                 it += 1
-    _synthetic_run(pdir, 9, 0, [0.33, mids[1][3]], names, 1.0, 0.3, rng)        # off the grid
+    _synthetic_run(pdir, 9, 0, [0.33, mids[1][3]], names, 1.0, 0.3, rng, astro_rate=0.1)   # off the grid
     rc = RA.main([root, '--burst-lib', PIPE, '--workers', '1'])
     eff = pd.read_csv(os.path.join(root, 'corner_effects.csv')).set_index('dimension')
     want = np.log10(8.01) - np.log10(2.01)
@@ -404,6 +513,21 @@ def r7(tmp):
     df = pd.read_csv(os.path.join(root, 'runs.csv'))
     check(rc == 1 and int((df.kind == 'unmatched').sum()) == 1 and int((df.kind == 'corner').sum()) == 48,
           'the off-grid run is unmatched and the analysis exits 1; 48 corners, 98 interior cells labelled')
+    pl = np.array(planted)
+    want_b = pl[pl[:, 0] > 0, 1].mean() - pl[pl[:, 0] < 0, 1].mean()
+    # lowest planted rate 0.0167 Hz x 100 astrocytes x 18 s = 30 events: SD of a run's log10 rate ~0.08,
+    # so the SE of E over 24 runs per side is ~0.02 and the log bias of Poisson(30) ~0.007; 0.05 is ~2.5 SE
+    check('effect_y_astro' in eff.columns and abs(eff.loc['B', 'effect_y_astro'] - want_b) < 0.05
+          and abs(eff.loc['A', 'effect_y_astro']) < 0.05,
+          'astro: E_B(y_astro) = %.4f (planted %.4f), |E_A(y_astro)| = %.4f'
+          % (eff.loc['B', 'effect_y_astro'], want_b, abs(eff.loc['A', 'effect_y_astro'])))
+    net = pd.read_csv(os.path.join(root, 'gate_networks.csv'))
+    from scipy import stats as _st
+    rho = _st.spearmanr(net.stoa_gate_p, net.dy_astro)[0] if len(net) > 2 else float('nan')
+    # signal within a folder: log10(0.7 / 0.2) = 0.54 across 6 networks; noise of a 4-run median ~0.06
+    check(len(net) == 12 and rho > 0.9 and 'Spearman of p with the network median log10 astro rate'
+          in open(os.path.join(root, 'calibration_summary.txt')).read(),
+          'gate: 12 corner networks, Spearman of p with the network astro rate %.3f (> 0.9), in the summary' % rho)
 
 
 def r8():
@@ -489,7 +613,9 @@ def r9(tmp):
     envbin = os.path.join(base, 'envs', 'stub', 'bin')
     os.makedirs(envbin)
     stub_py = os.path.join(envbin, 'python')
-    open(stub_py, 'w').write('#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$STUB_LOG"\nexit 0\n')
+    # logs every call; the GiuliaGate patcher (standard library only) then runs for real
+    open(stub_py, 'w').write('#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$STUB_LOG"\n'
+                             'case "$1" in */apply_prior_patch.py) exec python3 "$@" ;; esac\nexit 0\n')
     os.chmod(stub_py, 0o755)
     try:
         exec_ok = subprocess.run([stub_py, 'probe'], env=dict(STUB_LOG=os.devnull),
@@ -543,12 +669,37 @@ def r9(tmp):
           and all('--freeze Cm,I_inj,VA=-48,DeltaA,VR=-58.2' in c and '--mode Neuronal' in c
                   and '--n_workers 48' in c and '--conn_prob_lo 0.01 --conn_prob_hi 0.5' in c for c in cor + inte),
           'lcdup: freeze VA=-48 VR=-58.2, conn_prob box 0.01-0.5, 48 workers in every call')
-    r, calls, _ = job(SETUP='giulia', EXTRA='--stoa_gate_lo 0.2 --stoa_gate_hi 1.0')
+    gg = make_gg_lib(os.path.join(tmp, 'gg_setup'))
+    freeze = gg_query(gg, '--freeze-list')
+    r, calls, _ = job(SETUP='giulia', LIB_DIR=gg, EXTRA='--rc-subset 3')
     cor, inte = split(calls)
-    ok = check(r.returncode == 0 and len(cor + inte) == 9
-               and all('campaign_cadex_hhgap_v5/sweep_intel_task0000/job_args.json' in c
-                       and c.endswith('--stoa_gate_lo 0.2 --stoa_gate_hi 1.0') for c in cor + inte),
-               'giulia: LIKE found in the hhgap_v5 campaign; EXTRA last in every call')
+    pp = [c for c in calls if 'apply_prior_patch.py' in c]
+    ok = check(r.returncode == 0 and len(cor) == 2 and len(inte) == 7 and len(pp) == 4
+               and all(('--mode Full --sweep_group tripartite --freeze %s ' % freeze) in c
+                       and '--density 1200 --density_astro 1200 --c_max 300 ' in c
+                       and '--conn_prob_lo 0.05 --conn_prob_hi 0.4 ' in c
+                       and '--stoa_gate_lo 0.2 --stoa_gate_hi 1 --seed_stoa_gate 71 ' in c
+                       and '--rc-like' not in c and c.endswith('--rc-subset 3') for c in cor + inte),
+               'giulia: freeze list, conn_prob box 0.05-0.4 and gate box 0.2-1 from prior_config.tsv; Full, '
+               'tripartite, 1200/1200 on 300 um; EXTRA last (%d range_check calls, %d patcher calls)'
+               % (len(cor + inte), len(pp)))
+    explain(ok, r, calls)
+    r, calls, _ = job(SETUP='giulia', LIB_DIR=gg, CORNER_LEVELS='1', INTERIOR_LEVELS='4:5:6')
+    cor, inte = split(calls)
+    ok = check(r.returncode == 0 and len(cor) == 1 and '--rc-level 1 ' in cor[0] and len(inte) == 3
+               and all('--rc-phase interior --rc-level %d ' % L in c for L, c in zip((4, 5, 6), inte)),
+               "giulia: level lists with ':' (CORNER_LEVELS=1, INTERIOR_LEVELS=4:5:6) run those levels")
+    explain(ok, r, calls)
+    gg_raw = make_gg_lib(os.path.join(tmp, 'gg_unpatched'), patch_boxes=False)
+    r, calls, raw = job(SETUP='giulia', LIB_DIR=gg_raw)
+    r2, _, raw2 = job(SETUP='giulia', LIB_DIR=gg_raw, CHECK_ONLY='1')
+    ok = check(r.returncode == 2 and not split(calls)[0] + split(calls)[1] and r2.returncode == 2 and not raw2,
+               'giulia copy without the boxes: the job exits 2 before any range_check.py call; CHECK_ONLY fails too')
+    explain(ok, r, calls)
+    gg_notsv = make_gg_lib(os.path.join(tmp, 'gg_notsv'), tsv=False)
+    r, calls, raw = job(SETUP='giulia', LIB_DIR=gg_notsv)
+    ok = check(r.returncode == 2 and not raw and 'prior_config.tsv' in r.stderr,
+               'giulia folder without prior_config.tsv: exit 2, nothing run')
     explain(ok, r, calls)
     r, calls, _ = job(SETUP='lcdup', FREEZE_ENC='Cm:I_inj:VA@-50:DeltaA:VR@-55:EC50_ampa:EC50_nmda:alpha_syn:O_G:Omega_G')
     cor, inte = split(calls)
@@ -662,6 +813,97 @@ def r10(tmp):
     ok = check(r.returncode == 3 and len(calls) == 2 and 'qdel 101.pbsserver' in r.stderr,
                'second submission refused: exit 3, no third job, the first job named for qdel')
     explain(ok, r, calls, 'launcher')
+    r, calls = launch(NODES='4')
+    want = [('-q intel -N rc_corners_a ', ',PHASES=corners,ANALYZE=0,CORNER_LEVELS=0'),
+            ('-q intel -N rc_corners_b ', ',PHASES=corners,ANALYZE=0,CORNER_LEVELS=1'),
+            ('-q cpu -N rc_interior_a ', ',PHASES=interior,ANALYZE=0,INTERIOR_LEVELS=0:1:2:3'),
+            ('-q cpu -N rc_interior_b ', ',PHASES=interior,ANALYZE=0,INTERIOR_LEVELS=4:5:6')]
+    ok = check(r.returncode == 0 and len(calls) == 5
+               and all(q in c and (common + v) in c and '-l select=1:ncpus=48 -l walltime=24:00:00' in c
+                       for (q, v), c in zip(want, calls))
+               and '-q cpu -N rc_analysis -l select=1:ncpus=8' in calls[4]
+               and '-W depend=afterany:101.pbsserver:102.pbsserver:103.pbsserver:104.pbsserver' in calls[4]
+               and (common + ',PHASES=none,ANALYZE=1') in calls[4],
+               'NODES=4: corners levels 0 and 1 on intel, interior bins 0-3 and 4-6 on cpu, analysis held on all four')
+    explain(ok, r, calls, 'launcher')
+    r, calls = launch(NODES='4', BINS='5')
+    ok = check(r.returncode == 0 and len(calls) == 5 and 'INTERIOR_LEVELS=0:1:2,' not in calls[2]
+               and calls[2].count('INTERIOR_LEVELS=0:1:2') == 1 and 'INTERIOR_LEVELS=3:4' in calls[3]
+               and all(',BINS=5' in c for c in calls), 'NODES=4 BINS=5: interior bins 0-2 and 3-4')
+    explain(ok, r, calls, 'launcher')
+    r, calls = launch(NODES='3')
+    r2, calls2 = launch(NODES='4', INTERIOR_LEVELS='0:1')
+    ok = check(r.returncode == 2 and not calls and r2.returncode == 2 and not calls2,
+               'NODES=3, or NODES=4 with a level list: exit 2, nothing submitted')
+    explain(ok, r, calls, 'launcher')
+    r, calls = launch(NODES='4', QSUB_FAIL_AT='3')
+    ok = check(r.returncode == 3 and len(calls) == 3 and 'qdel 101.pbsserver 102.pbsserver' in r.stderr,
+               'NODES=4, third submission refused: exit 3, the two submitted jobs named for qdel')
+    explain(ok, r, calls, 'launcher')
+    r, calls = launch(NODES='4', DRYRUN='1')
+    ok = check(r.returncode == 0 and not calls and r.stdout.count('[dry run] qsub') == 5,
+               'NODES=4 DRYRUN=1: five qsub lines printed, nothing submitted')
+    explain(ok, r, calls, 'launcher')
+    gg = make_gg_lib(os.path.join(tmp, 'r10_gg'))
+    gg_raw = make_gg_lib(os.path.join(tmp, 'r10_gg_raw'), patch_boxes=False)
+    r, calls = launch(SETUP='giulia', LIB_DIR=gg, NODES='4')
+    r2, calls2 = launch(SETUP='giulia', LIB_DIR=gg_raw, NODES='4')
+    ok = check(r.returncode == 0 and len(calls) == 5 and all('SETUP=giulia,' in c for c in calls)
+               and r2.returncode == 2 and not calls2,
+               'giulia on four nodes: five jobs; an unpatched GiuliaGate copy fails the precheck, nothing submitted')
+    explain(ok, r, calls, 'launcher')
+
+
+def r11(tmp):
+    print('\n[R11] the GiuliaGate design (patched copy)')
+    lib = make_gg_lib(os.path.join(tmp, 'lib_gg_design'))
+    freeze = gg_query(lib, '--freeze-list')
+    rows = [ln.split('\t') for ln in open(os.path.join(lib, 'prior_config.tsv')).read().splitlines()
+            if ln and not ln.startswith('#')]
+    head, rows = rows[0], rows[1:]
+    col = {n: i for i, n in enumerate(head)}
+    free_tsv = sorted(r[col['axis']] for r in rows if r[col['status']] == 'free' and r[col['group']] != 'topology')
+    fixed = {r[col['axis']]: float(r[col['value']]) for r in rows if r[col['status']] == 'fixed'}
+    body = '''
+args = S.build_parser().parse_args(%r)
+space = RC.design_space(S, args)
+names = [S.PARAM_NAMES[j] for j in space['free']]
+out = dict(names=names, lo=dict(zip(names, space['lo'].tolist())), hi=dict(zip(names, space['hi'].tolist())),
+           log=[S.PARAM_NAMES[j] for j in sorted(S.LOG_PARAMS)], gate=[args.stoa_gate_lo, args.stoa_gate_hi])
+for phase in ('corners', 'interior'):
+    rc = RC.rc_parser().parse_args(['--rc-phase', phase, '--rc-level', '0', '--rc-out', 'x'])
+    design, padded, conn = RC.build_level(S, args, rc, 48)
+    nat = np.array([S.theta_to_natural(np.array(p)) for p in padded])
+    vals = {n: sorted(set(np.round(nat[:, S.PARAM_NAMES.index(n)], 9).tolist())) for n in %r}
+    out[phase] = dict(n_design=design['n_design'], n_slots=design['n_slots'], info=design.get('corner_design'),
+                      conn=conn, vals=vals, sigma=sorted(set(np.round(nat[:, S.PARAM_NAMES.index('Sigma')], 9).tolist())))
+print(json.dumps(out))
+''' % (['--out_dir', 'x', '--mode', 'Full', '--sweep_group', 'tripartite', '--freeze', freeze,
+        '--conn_prob_lo', '0.05', '--conn_prob_hi', '0.4', '--stoa_gate_lo', '0.2', '--stoa_gate_hi', '1'],
+       sorted(fixed))
+    d = in_subprocess(lib, body)
+    if not check(d is not None, 'design built'):
+        return
+    import math
+    check(sorted(d['names']) == free_tsv and len(free_tsv) == 15,
+          'the 15 free axes of prior_config.tsv are the free axes of the design')
+    ci = d['corners']['info']
+    check(ci['d'] == 16 and ci['kind'] == 'fraction' and ci['n_runs'] == 16384 and ci['resolution'] >= 5
+          and d['corners']['n_design'] == 8192 and d['corners']['conn'] == 0.05,
+          '16 dimensions: a fraction of 16384 corners, resolution %s; level 0: 8192 corners at conn_prob 0.05'
+          % ci['resolution'])
+    check(d['interior']['n_design'] == 2352 and abs(d['interior']['conn'] - 0.075) < 1e-12,
+          'interior: 2352 cells per level, conn_prob 0.075 in bin 0 of [0.05, 0.4]')
+    check('Sigma' not in d['log'] and d['lo']['Sigma'] == 2.0 and d['hi']['Sigma'] == 10.0
+          and d['corners']['sigma'] == [2.0, 6.0, 10.0],
+          'Sigma linear in [2, 10] mV (corner values %s)' % d['corners']['sigma'])
+    check(all(n in d['log'] and abs(d['lo'][n] - math.log(0.05)) < 1e-12 and abs(d['hi'][n] - math.log(10.0)) < 1e-12
+              for n in ('g_ampa', 'g_nmda')), 'g_ampa, g_nmda log in [0.05, 10] nS')
+    bad = [(ph, n, v) for ph in ('corners', 'interior') for n, v in d[ph]['vals'].items()
+           if len(v) != 1 or abs(v[0] - fixed[n]) > 1e-6 * max(1.0, abs(fixed[n]))]
+    check(not bad and d['gate'] == [0.2, 1.0],
+          'every fixed axis at its TSV value in every vector (%d axes); gate box 0.2-1 accepted' % len(fixed)
+          + ('' if not bad else ' -- off: %s' % bad[:3]))
 
 
 def main():
@@ -674,12 +916,15 @@ def main():
         r5(tmp)
         if '--no-sim' in sys.argv:
             skip('R6 (--no-sim)')
+            skip('R6b (--no-sim)')
         else:
             r6(tmp)
+            r6b(tmp)
         r7(tmp)
         r8()
         r9(tmp)
         r10(tmp)
+        r11(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print('\nRESULT: %d passed, %d failed%s' % (RESULTS['passed'], RESULTS['failed'],

@@ -13,7 +13,13 @@ Per run (topo_*/iter_*.npz + the .json sidecar of each level folder):
                  (li_burst_rate_per_min; also pr_burst_rate_per_min)
     cv_isi_mean, adapt_index_mean, li_burst_dur_mean_s,
     li_frac_spikes_outside_burst  from the same panel
-    astro_rate_hz from the sidecar (Full mode)
+    astro_rate_hz from the sidecar (Full mode; whole run, kept for reference)
+  Full mode (job_args mode Full, Na > 0), from the astrocyte events spk_A_t /
+  spk_A_i (threshold crossings C > C_osc of the astrocyte group) on the same
+  window, Na from job_args (density-resolved):
+    astro_rate_win_hz  events in the window / (Na * (T - t_skip))
+    astro_frac_active  astrocytes with at least one event in the window
+    stoa_gate_p        the network's contact gate, from the sidecar
 Labels come from each run's stored theta and its folder's design.json, so they
 do not depend on the order in which the runs were drawn:
     corners_c<L>   every free axis at its lower (code -1) or upper (+1) bound:
@@ -25,17 +31,28 @@ do not depend on the order in which the runs were drawn:
 
 Summaries, with y = log10(mean_rate_hz + rate_floor_hz) and the indicators
 silent = frac_active < silent_frac_active, high = mean_rate_hz > high_rate_hz,
-bursting = li_burst_rate_per_min > 0 (reporting conventions, not targets):
+bursting = li_burst_rate_per_min > 0 (reporting conventions, not targets);
+in Full mode also y_astro = log10(astro_rate_win_hz + astro_rate_floor_hz) and
+astro_silent = astro_frac_active < silent_frac_active:
     corner_effects.csv       per design dimension j: main effect
                              E_j(f) = mean(f | code_j = +1) - mean(f | code_j = -1)
                              over the corner runs, for f = y, silent, high, bursting
+                             (and y_astro, astro_silent in Full mode)
     corner_interactions.csv  per pair (j, k): E_jk(y) = mean(y | code_j code_k = +1)
                              - mean(y | code_j code_k = -1)
     interior_bins.csv        per dimension and bin: n, rate quartiles, shares
     interior_pairs.csv       per pair of dimensions and pair of bins: n, shares,
                              median y
     interior_spearman.csv    Spearman rho of each dimension (theta; conn_prob)
-                             with y and with the burst rate
+                             with y and with the burst rate (and y_astro)
+    gate_networks.csv        Full mode with a gate: one row per network (level
+                             folder, topology): its gate p, conn_prob, runs, and
+                             the median y (y_astro) of its runs minus the median
+                             over the networks of its folder (dy, dy_astro).
+                             The gate is drawn per topology, not designed, so its
+                             effect is read across networks: Spearman rho of p
+                             with dy and dy_astro (the folder median removes the
+                             conn_prob level shared within a folder)
     calibration_summary.txt  the above in short, plus the centre-point curvature
                              (mean y at the centre minus mean y over the corners)
 and runs.csv, one row per run.
@@ -60,7 +77,8 @@ sys.path.insert(0, HERE)
 import range_design as RD   # noqa: E402
 
 CFG = dict(t_skip=2.0, active_rate_hz=0.1, silent_frac_active=0.1, high_rate_hz=20.0,
-           rate_floor_hz=0.01, majority=0.5, n_top=20)
+           rate_floor_hz=0.01, astro_rate_floor_hz=0.001, majority=0.5, n_top=20)
+ASTRO = ('y_astro', 'astro_silent')          # outcomes added in Full mode
 _BM = {}
 
 
@@ -95,6 +113,7 @@ def run_records(pdir):
     """One dict per finished run of a level folder (sidecar fields + paths)."""
     design = json.load(open(os.path.join(pdir, 'design.json')))
     job = json.load(open(os.path.join(pdir, 'job_args.json')))
+    na = int(job.get('Na') or 0) if job.get('mode') == 'Full' else 0
     recs = []
     for js in sorted(glob.glob(os.path.join(pdir, 'topo_*', 'iter_*.json'))):
         side = json.load(open(js))
@@ -102,8 +121,9 @@ def run_records(pdir):
                          conn_prob=side.get('conn_prob', np.nan), theta=side['theta'],
                          params=side['params'], param_names=side['param_names'],
                          npz=os.path.join(pdir, side['npz_relpath']),
-                         Nn=int(job['Nn']), simtime=float(job['simtime']),
-                         astro_rate_hz=side.get('mean_astro_rate_Hz')))
+                         Nn=int(job['Nn']), Na=na, simtime=float(job['simtime']),
+                         astro_rate_hz=side.get('mean_astro_rate_Hz'),
+                         stoa_gate_p=side.get('stoa_gate_p', np.nan)))
     return design, recs
 
 
@@ -143,11 +163,25 @@ def window_metrics(spk_t, spk_i, n_neurons, t_total, bm, cfg=CFG):
     return out
 
 
+def astro_window_metrics(spk_t, spk_i, n_astro, t_total, cfg=CFG):
+    """Astrocyte events of one run on the window [t_skip, t_total]."""
+    t_rec = float(t_total) - cfg['t_skip']
+    keep = np.asarray(spk_t, dtype=np.float64) >= cfg['t_skip']
+    i = np.asarray(spk_i)[keep].astype(np.int64)
+    counts = np.bincount(i, minlength=n_astro)[:n_astro]
+    return dict(astro_rate_win_hz=float(keep.sum()) / (n_astro * t_rec),
+                astro_frac_active=float(np.mean(counts > 0)),
+                n_astro_events_window=int(keep.sum()))
+
+
 def _metrics_job(args):
     rec, bm_path, cfg = args
     bm = import_burst_metrics(bm_path)
     z = np.load(rec['npz'])
-    return window_metrics(z['spk_N_t'], z['spk_N_i'], rec['Nn'], rec['simtime'], bm, cfg)
+    out = window_metrics(z['spk_N_t'], z['spk_N_i'], rec['Nn'], rec['simtime'], bm, cfg)
+    if rec['Na'] > 0 and 'spk_A_t' in z.files:
+        out.update(astro_window_metrics(z['spk_A_t'], z['spk_A_i'], rec['Na'], rec['simtime'], cfg))
+    return out
 
 
 def build_table(root, workers=1, burst_lib=None, cfg=CFG):
@@ -170,8 +204,9 @@ def build_table(root, workers=1, burst_lib=None, cfg=CFG):
         d = designs[r['phase_dir']]
         kind, lab = label_run(r['theta'], r['param_names'], d)
         row = dict(phase_name=os.path.basename(r['phase_dir']), phase=d['phase'], level=d['level'],
-                   kind=kind, conn_prob=r['conn_prob'], topo_idx=r['topo_idx'], iter_idx=r['iter_idx'],
-                   astro_rate_hz=r['astro_rate_hz'], Nn=r['Nn'], simtime=r['simtime'])
+                   kind=kind, conn_prob=r['conn_prob'], stoa_gate_p=r['stoa_gate_p'], topo_idx=r['topo_idx'],
+                   iter_idx=r['iter_idx'], astro_rate_hz=r['astro_rate_hz'], Nn=r['Nn'], Na=r['Na'],
+                   simtime=r['simtime'])
         if d['has_conn']:
             row['code_conn_prob' if d['phase'] == 'corners' else 'bin_conn_prob'] = (
                 (-1 if d['level'] == 0 else 1) if d['phase'] == 'corners' else d['level'])
@@ -191,7 +226,16 @@ def add_outcomes(df, cfg=CFG):
     df['silent'] = (df.frac_active < cfg['silent_frac_active']).astype(float)
     df['high'] = (df.mean_rate_hz > cfg['high_rate_hz']).astype(float)
     df['bursting'] = (df.li_burst_rate_per_min.fillna(0.0) > 0).astype(float)
+    if has_astro(df):
+        df['y_astro'] = np.log10(df.astro_rate_win_hz + cfg['astro_rate_floor_hz'])
+        df['astro_silent'] = (df.astro_frac_active < cfg['silent_frac_active']).astype(float)
+        df.loc[df.astro_rate_win_hz.isna(), ['y_astro', 'astro_silent']] = np.nan
     return df
+
+
+def has_astro(df):
+    """Whether any run of the table carries astrocyte metrics (Full mode)."""
+    return 'astro_rate_win_hz' in df.columns and bool(df.astro_rate_win_hz.notna().any())
 
 
 def dimensions(df, prefix):
@@ -203,11 +247,12 @@ def dimensions(df, prefix):
 # ---------------------------------------------------------------------------
 def corner_effects(c, dims):
     rows = []
+    outcomes = ('y', 'silent', 'high', 'bursting') + (ASTRO if has_astro(c) else ())
     for j in dims:
         x = c['code_' + j]
         plus, minus = c[x == 1], c[x == -1]
         row = dict(dimension=j, n_plus=len(plus), n_minus=len(minus))
-        for f in ('y', 'silent', 'high', 'bursting'):
+        for f in outcomes:
             row['effect_' + f] = (plus[f].mean() - minus[f].mean()) if len(plus) and len(minus) else np.nan
         rows.append(row)
     out = pd.DataFrame(rows)
@@ -259,6 +304,18 @@ def corner_text(df, designs, cfg=CFG):
         for _, r in part.iterrows():
             ups = [j for j in dims if r['code_' + j] == 1]
             lines.append('    %10.3g: %s' % (r.mean_rate_hz, ', '.join(ups) if ups else '(all at the lower bound)'))
+    if has_astro(c):
+        q = np.nanpercentile(c.astro_rate_win_hz, [25, 50, 75])
+        lines.append('  astrocytes over the corners: astro-silent (active fraction < %g) %.1f %%; event rate per '
+                     'astrocyte [Hz] quartiles %.3g / %.3g / %.3g'
+                     % (cfg['silent_frac_active'], 100 * c.astro_silent.mean(), q[0], q[1], q[2]))
+        if len(ctr):
+            lines.append('  astro curvature: mean log10 astro rate at the centre %.3f, over the corners %.3f'
+                         % (ctr.y_astro.mean(), c.y_astro.mean()))
+        lines.append('  main effects on the astrocytes, by |effect| on log10 astro rate:')
+        lines.append('    %-12s %12s %13s' % ('dimension', 'log10astro', 'astro-silent'))
+        for _, r in eff.reindex(eff.effect_y_astro.abs().sort_values(ascending=False).index).iterrows():
+            lines.append('    %-12s %12.3f %13.3f' % (r.dimension, r.effect_y_astro, r.effect_astro_silent))
     return '\n'.join(lines) + '\n', eff, inter
 
 
@@ -267,13 +324,19 @@ def corner_text(df, designs, cfg=CFG):
 # ---------------------------------------------------------------------------
 def interior_bins(it, dims):
     rows = []
+    astro = has_astro(it)
     for j in dims:
         for i, g in it.groupby('bin_' + j):
             q = np.percentile(g.mean_rate_hz, [25, 50, 75])
-            rows.append(dict(dimension=j, bin=int(i), n=len(g), rate_q25=q[0], rate_median=q[1],
-                             rate_q75=q[2], share_silent=g.silent.mean(), share_high=g.high.mean(),
-                             share_bursting=g.bursting.mean(),
-                             burst_rate_median=g.li_burst_rate_per_min.fillna(0.0).median()))
+            row = dict(dimension=j, bin=int(i), n=len(g), rate_q25=q[0], rate_median=q[1],
+                       rate_q75=q[2], share_silent=g.silent.mean(), share_high=g.high.mean(),
+                       share_bursting=g.bursting.mean(),
+                       burst_rate_median=g.li_burst_rate_per_min.fillna(0.0).median())
+            if astro:
+                qa = np.nanpercentile(g.astro_rate_win_hz, [25, 50, 75])
+                row.update(astro_q25=qa[0], astro_median=qa[1], astro_q75=qa[2],
+                           share_astro_silent=g.astro_silent.mean())
+            rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -289,13 +352,22 @@ def interior_pairs(it, dims):
 def interior_spearman(it, dims):
     rows = []
     yb = it.li_burst_rate_per_min.fillna(0.0).values
+    astro = has_astro(it)
     for j in dims:
         x = it.conn_prob.values if j == 'conn_prob' else it['theta_' + j].values
         if np.ptp(x) == 0:
             continue
         rho_r, pv_r = stats.spearmanr(x, it.y.values)
         rho_b, pv_b = stats.spearmanr(x, yb)
-        rows.append(dict(dimension=j, rho_log_rate=rho_r, p_log_rate=pv_r, rho_burst=rho_b, p_burst=pv_b))
+        row = dict(dimension=j, rho_log_rate=rho_r, p_log_rate=pv_r, rho_burst=rho_b, p_burst=pv_b)
+        if astro:
+            ok = np.isfinite(it.y_astro.values)
+            ya = it.y_astro.values[ok]
+            if ok.sum() > 2 and np.ptp(ya) > 0 and np.ptp(x[ok]) > 0:
+                row['rho_log_astro'], row['p_log_astro'] = stats.spearmanr(x[ok], ya)
+            else:
+                row['rho_log_astro'], row['p_log_astro'] = np.nan, np.nan
+        rows.append(row)
     sp = pd.DataFrame(rows)
     return sp.reindex(sp.rho_log_rate.abs().sort_values(ascending=False).index) if len(sp) else sp
 
@@ -321,7 +393,57 @@ def interior_text(df, designs, cfg=CFG):
     lines.append('  Spearman with log10 rate, by |rho|:')
     for _, r in sp.iterrows():
         lines.append('    %-12s %7.3f (burst rate %7.3f)' % (r.dimension, r.rho_log_rate, r.rho_burst))
+    if has_astro(it):
+        q = np.nanpercentile(it.astro_rate_win_hz, [25, 50, 75])
+        lines.append('  astrocytes: astro-silent %.1f %%; event rate per astrocyte [Hz] quartiles %.3g / %.3g / %.3g'
+                     % (100 * it.astro_silent.mean(), q[0], q[1], q[2]))
+        lines.append('  bins where more than %d %% of the runs are astro-silent (A):' % (100 * cfg['majority']))
+        for j in dims:
+            b = bins_t[bins_t.dimension == j]
+            flags = ['%dA' % r.bin for _, r in b.iterrows() if r.share_astro_silent > cfg['majority']]
+            lines.append('    %-12s %s' % (j, ' '.join(flags) if flags else '-'))
+        lines.append('  Spearman with log10 astro rate, by |rho|:')
+        for _, r in sp.reindex(sp.rho_log_astro.abs().sort_values(ascending=False).index).iterrows():
+            lines.append('    %-12s %7.3f' % (r.dimension, r.rho_log_astro))
     return '\n'.join(lines) + '\n', bins_t, pairs_t, sp
+
+
+# ---------------------------------------------------------------------------
+# the contact gate, per network
+# ---------------------------------------------------------------------------
+def gate_networks(df):
+    """One row per network (level folder, topology) of the runs that carry a
+    gate; dy (dy_astro): the network's median y (y_astro) minus the median of
+    those over the networks of its folder."""
+    g = df[np.isfinite(df.stoa_gate_p.astype(float))] if 'stoa_gate_p' in df.columns else df.iloc[:0]
+    if g.empty:
+        return pd.DataFrame()
+    agg = dict(stoa_gate_p=('stoa_gate_p', 'first'), conn_prob=('conn_prob', 'first'), n_runs=('y', 'size'),
+               y_median=('y', 'median'))
+    if has_astro(g):
+        agg.update(y_astro_median=('y_astro', 'median'), share_astro_silent=('astro_silent', 'mean'))
+    net = g.groupby(['phase_name', 'topo_idx']).agg(**agg).reset_index()
+    net['dy'] = net.y_median - net.groupby('phase_name').y_median.transform('median')
+    if 'y_astro_median' in net.columns:
+        net['dy_astro'] = net.y_astro_median - net.groupby('phase_name').y_astro_median.transform('median')
+    return net
+
+
+def gate_text(net):
+    if net.empty:
+        return ''
+    lines = ['contact gate: %d networks with a gate, p from %.3f to %.3f (drawn per topology, not designed)'
+             % (len(net), net.stoa_gate_p.min(), net.stoa_gate_p.max())]
+    for col, label in (('dy', 'log10 rate'), ('dy_astro', 'log10 astro rate')):
+        if col in net.columns:
+            ok = np.isfinite(net[col].values)
+            if ok.sum() > 2 and np.ptp(net[col].values[ok]) > 0 and np.ptp(net.stoa_gate_p.values[ok]) > 0:
+                rho, pv = stats.spearmanr(net.stoa_gate_p.values[ok], net[col].values[ok])
+                lines.append('  Spearman of p with the network median %s (folder median removed): rho %.3f, '
+                             'p-value %.3g, %d networks' % (label, rho, pv, int(ok.sum())))
+            else:
+                lines.append('  Spearman of p with the network median %s: too few networks' % label)
+    return '\n'.join(lines) + '\n'
 
 
 def main(argv=None):
@@ -337,21 +459,27 @@ def main(argv=None):
     df.to_csv(os.path.join(a.root, 'runs.csv'), index=False)
     c_text, eff, inter = corner_text(df, designs, cfg)
     i_text, bins_t, pairs_t, sp = interior_text(df, designs, cfg)
-    for name, t in (('corner_effects.csv', eff), ('corner_interactions.csv', inter),
-                    ('interior_bins.csv', bins_t), ('interior_pairs.csv', pairs_t),
-                    ('interior_spearman.csv', sp)):
+    net = gate_networks(df)
+    tables = [('corner_effects.csv', eff), ('corner_interactions.csv', inter),
+              ('interior_bins.csv', bins_t), ('interior_pairs.csv', pairs_t),
+              ('interior_spearman.csv', sp)] + ([('gate_networks.csv', net)] if not net.empty else [])
+    for name, t in tables:
         t.to_csv(os.path.join(a.root, name), index=False)
     counts = df.groupby('phase_name').size()
     head = ('range_analysis  root %s\nwindow [%g s, T]; burst metrics from %s\nfolders: %s\n'
             '(silent: active fraction < %g; high: mean rate > %g Hz; reporting conventions, not targets)\n'
             % (a.root, cfg['t_skip'], bm, ', '.join('%s (%d runs)' % kv for kv in counts.items()),
                cfg['silent_frac_active'], cfg['high_rate_hz']))
-    text = head + c_text + i_text
+    if has_astro(df):
+        head += ('astrocytes: events = threshold crossings C > C_osc in the window; astro-silent: fewer than %g of '
+                 'the astrocytes with an event; log10(astro rate + %g)\n'
+                 % (cfg['silent_frac_active'], cfg['astro_rate_floor_hz']))
+    text = head + c_text + i_text + gate_text(net)
     with open(os.path.join(a.root, 'calibration_summary.txt'), 'w') as fh:
         fh.write(text)
     print(text)
-    print('wrote runs.csv (%d runs), corner_effects.csv, corner_interactions.csv, interior_bins.csv, '
-          'interior_pairs.csv, interior_spearman.csv, calibration_summary.txt in %s' % (len(df), a.root))
+    print('wrote runs.csv (%d runs), %s, calibration_summary.txt in %s'
+          % (len(df), ', '.join(n for n, _ in tables), a.root))
     unmatched = int((df.kind == 'unmatched').sum())
     if unmatched:
         print('WARNING: %d runs matched no design value' % unmatched)

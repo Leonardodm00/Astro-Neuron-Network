@@ -4,8 +4,10 @@ Question: does a campaign's prior box produce plausible activity across its
 whole range? Answered through the setup's own sweep code (its folder's
 HPC_main_sweep.py) before the campaign is (re)launched. Spec: specs/SPEC.md,
 Block 6. Decided 2026-10-30 as the standard for every setup: the corners of
-the box plus random cells of its 7-bin grid, on two 48-core nodes. Giulia's
-setup and LindaColloDUP's now; MEAMA and the rho1300 family later.
+the box plus random cells of its 7-bin grid, on two 48-core nodes (four with
+NODES=4, asked for Giulia's setup on 2026-10-31). Setups: lcdup
+(LindaColloDUP) and giulia (GiuliaGate, Giulia's new campaign); MEAMA and the
+rho1300 family later.
 
 THIS FOLDER (repository path hpc/range_check/)
   range_design.py           the designs (pure functions, numpy only)
@@ -15,8 +17,9 @@ THIS FOLDER (repository path hpc/range_check/)
   launch_range_check.sh     login node: one setup as three PBS jobs (below)
   submit_range_check.sh     the PBS job; PHASES and ANALYZE choose its part
                             (submitted alone, it runs everything on one node)
-  smoke_test_range_check.py the checks (65 with Brian2; R9 tests the job
-                            script and R10 the launcher, both with stubs)
+  smoke_test_range_check.py the checks (87 with Brian2; R9 tests the job
+                            script and R10 the launcher, both with stubs;
+                            R6b runs the giulia setup end to end in Full mode)
   README_RANGE_CHECK.txt    this file
 range_analysis.py imports burst_metrics.py from ../Phenomenological_finalv1/
 (so run it from a clone, or give --burst-lib DIR).
@@ -36,6 +39,13 @@ the sweep's theta coordinate (ln on log-uniform axes) plus conn_prob.
             the bin drawn uniformly and independently per dimension.
             LindaColloDUP: conn_prob at the 7 bin midpoints 0.045 ... 0.465,
             2,352 cells each (7 topologies x 48 workers x 7): 16,464 runs.
+  GiuliaGate: 15 free axes + conn_prob = 16, so a two-level fraction of
+            16,384 runs of resolution 8, 8,192 corners at conn_prob 0.05 and
+            8,192 at 0.4 (each on 8 topologies, 256 centre points); interior
+            2,352 cells at each of the 7 conn_prob midpoints 0.075 ... 0.375.
+            The contact gate p is drawn per topology from U[0.2, 1] as in the
+            campaign (not a design dimension): 16 corner networks and 49
+            interior networks, so its effect is read across networks.
   Each run is 20 s; metrics use the window 2-20 s.
 
 TWO NODES (launch_range_check.sh, decided 2026-10-30)
@@ -44,7 +54,15 @@ TWO NODES (launch_range_check.sh, decided 2026-10-30)
   job 3  rc_analysis  queue cpu     8 cores   2 h  analysis and figures, held
          until jobs 1 and 2 have ended (depend=afterany: it also runs if one
          of them failed; the summaries then show which parts are there)
-  All three write into one OUT. Before submitting, the launcher runs the job
+FOUR NODES (NODES=4, 2026-10-31)
+  rc_corners_a   intel  CORNER_LEVELS=0          (conn_prob at its lower bound)
+  rc_corners_b   intel  CORNER_LEVELS=1          (upper bound)
+  rc_interior_a  cpu    INTERIOR_LEVELS=0:1:2:3  (bins 0..ceil(BINS/2)-1)
+  rc_interior_b  cpu    INTERIOR_LEVELS=4:5:6    (the rest)
+  rc_analysis    cpu, 8 cores, held by depend=afterany on all four
+  The level lists travel with ':' (qsub -v splits on commas); with NODES=4
+  the launcher sets them itself and refuses CORNER_LEVELS / INTERIOR_LEVELS.
+  All jobs write into one OUT. Before submitting, the launcher runs the job
   script's own checks once on the login node (CHECK_ONLY=1): a setup folder
   that is not ready stops it, with nothing submitted. Variables: Q_CORNERS,
   Q_INTERIOR, Q_ANALYSIS, NCPUS (48), WALLTIME (24:00:00), ANALYSIS_NCPUS (8),
@@ -61,20 +79,29 @@ BEFORE SUBMITTING (davinci)
      set up with APPLY_LCDUP.txt steps 0-5a (pipeline copied from MEAMA/,
      freeze and box patches, smoke test, clamp). Without the two g box
      markers the job script stops (exit 2), and so does the launch.
-  3. Giulia: the gate box of the new setup, if its HPC_main_sweep.py has
-     --stoa_gate_lo/hi, goes in EXTRA; the gate is then drawn per topology
-     from its prior, not designed (it is not a design dimension yet)
+  3. Giulia: GiuliaGate in the clone,
+     ~/ANN/Astro-Neuron-Network/hpc/Phenomenological_finalv1/GiuliaGate, set
+     up with APPLY_GG.txt steps 0-4 (pipeline copied, freeze patch, boxes of
+     prior_config.tsv patched). The job reads the freeze list, the conn_prob
+     box and the gate box from prior_config.tsv itself and checks the boxes
+     (apply_prior_patch.py --check-applied); the launcher's precheck does the
+     same on the login node. Nothing to pass in EXTRA.
+  4. Giulia, Full mode: the astrocytes go non-finite about 27 ms into a
+     run at nominal parameters with the model of 2026-10-31 (specs/SPEC.md
+     section 8); until that is fixed the astrocyte outcomes are all
+     astro-silent and the astrocyte axes look inert.
 
 ON DAVINCI, from ~/ANN/Astro-Neuron-Network/hpc/range_check after git pull:
   conda activate brian_final && python smoke_test_range_check.py --no-sim | tail -1
-      (expect "RESULT: 58 passed, 0 failed, 1 skipped"; without --no-sim it
-       also simulates a tiny network, about 1 min: 65 passed)
+      (expect "RESULT: 76 passed, 0 failed, 2 skipped"; without --no-sim it
+       also simulates two tiny networks, about 2 min: 87 passed)
   DRYRUN=1 SETUP=lcdup bash launch_range_check.sh     (prints the 3 qsub lines)
   SETUP=lcdup bash launch_range_check.sh              (submits them)
-  SETUP=giulia EXTRA="--stoa_gate_lo 0.2 --stoa_gate_hi 1.0" bash launch_range_check.sh
-  (the gate values above are an example. No commas in any variable: qsub -v
-   splits on them, so a freeze list other than LindaColloDUP's goes in as
-   FREEZE_ENC, ':' for ',' and '@' for '=', as for submit_LCDUP.sh)
+  DRYRUN=1 NODES=4 SETUP=giulia bash launch_range_check.sh   (prints the 5 qsub lines)
+  NODES=4 SETUP=giulia bash launch_range_check.sh            (submits them)
+  (No commas in any variable: qsub -v splits on them, so a freeze list other
+   than the setup's own goes in as FREEZE_ENC, ':' for ',' and '@' for '=',
+   as for submit_LCDUP.sh)
   One node only: qsub -q cpu -v SETUP=lcdup submit_range_check.sh
   (both parts and the analysis in one job, about twice as long)
   To see a level's design without running it:
@@ -92,9 +119,18 @@ OUTPUT: ~/ANN/range_check/<setup>_<UTC>/ (outside every project folder)
   interior_bins.csv       per dimension and bin: rate quartiles and shares
   interior_pairs.csv      per pair of dimensions and pair of bins
   interior_spearman.csv   rank correlation of each dimension with the rate
+  gate_networks.csv       Full mode with a gate: one row per network, its gate
+                          p and its median log10 rate (and astro rate) minus
+                          the median of its folder
   calibration_summary.txt all of it in short, with the centre-point curvature
-  corner_effects.png, interior_bins.png, rate_distributions.png
-Send back calibration_summary.txt and the three png files.
+  corner_effects.png, interior_bins.png, rate_distributions.png, and in Full
+  mode interior_bins_astro.png
+  Full mode adds, per run, from the astrocyte events (C > C_osc) in the same
+  window: astro_rate_win_hz (events per astrocyte per second), astro_frac_active
+  (astrocytes with an event), y_astro = log10(astro rate + 0.001) and
+  astro_silent (active fraction < 0.1); the corner effects, interior bins and
+  Spearman tables carry them too.
+Send back calibration_summary.txt and the png files.
 Logs (#PBS -k eo, in $HOME): rc_corners.o<id>, rc_interior.o<id>,
 rc_analysis.o<id> and their .e<id>; a job submitted alone logs to
 range_check.o<id>. Runtime not measured on davinci. Sandbox, one core, 159
@@ -103,3 +139,13 @@ neurons: one 20 s run at nominal parameters and conn_prob 0.35 took 132 s plus
 24 s per run at conn_prob 0.01, 198 s at 0.5, compilation included). Each
 worker runs 352 runs (corners) or 343 (interior) one after another: about 11 h
 per node at the sandbox's speed, against the 24 h walltime.
+GiuliaGate (estimate, own reasoning, not measured): MEAMA's campaign 1 on
+davinci ran about 22.5 min per 200 s Full simulation at about 3,300 synapses
+(the 48-worker barrier included), about 2.0e-3 s per synapse per simulated
+second. Scaled to 20 s runs: rc_corners_a (conn_prob 0.05, ~580 synapses)
+about 1-2 h, rc_corners_b (0.4, ~4,600) about 9-10 h, rc_interior_a about
+4 h, rc_interior_b about 6-7 h. In the sandbox the cost tracked the synapse
+count, not the firing rate: 318 Hz at 4,706 synapses took 1.5x the wall time
+per simulated second of 31 Hz at 2,586 synapses (1.8x the synapses), so no
+more per synapse (two short Full runs, 3 s and 5 s, two at a time on two
+cores: a rough comparison).
