@@ -24,7 +24,8 @@ two-node split, added on top of 15f82c9; Block 7 and Block 1's GitHub-wide
 check added on top of a811543; Block 6 rewritten as the standard prior range
 calibration on top of dcb52ab; Block 9, Block 6's four-node split, GiuliaGate
 setup and astrocyte outcomes, and the diagnosis of the astrocyte NaN
-(section 8) added on top of fbc20f6)
+(section 8) added on top of fbc20f6; Block 10, the mean astrocyte drive,
+and GiuliaGate's O_N box added on top of 04dcaac)
 
 ## 0. Coverage
 
@@ -32,6 +33,9 @@ setup and astrocyte outcomes, and the diagnosis of the astrocyte NaN
 - `hpc/Phenomenological_finalv1/LindaColloDUP/` (launch package and its `checks/`)
 - `hpc/Phenomenological_finalv1/GiuliaGate/` (launch package of Giulia's new
   campaign, Block 9)
+- the astrocyte's glutamate drive (Block 10): the coupling line of
+  `Synapse_to_astro` in `hpc/Phenomenological_finalv1/ASD_fun_BD_cpp.py` and
+  `smoke_test_astro_drive.py` -- not the rest of the astrocyte model
 - `hpc/range_check/` (the standard prior range calibration, Block 6)
 - the seed guard (Block 7): `hpc/Phenomenological_finalv1/seed_alloc.py`, its
   identical copies in `MEAMA/` and `LindaColloDUP/`, its smoke test
@@ -242,6 +246,21 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
     jobs ("Can you run the range check over 4 jobs with 48 cores?") and
     reports astrocyte outcomes ("Add astrocyte outcomes"); the gate is drawn
     per network, not designed (Block 6).
+  - 2026-10-31 [author]: the astrocyte NaN of section 8 is fixed by option
+    (a), "use the option a": an astrocyte's glutamate drive is the mean of
+    Y_A over its links, not the sum (Block 10), in the root model, so for
+    every Full campaign from now on. Option (b), the exact per-step update
+    of Gamma_A, is not adopted.
+  - 2026-10-31 [author]: GiuliaGate's O_N box is [0.0001, 1] per (uM s),
+    log-uniform. Asked first for the upper bound, the author chose 2 (the
+    recommended cap, inside RK4's stability bound under the mean drive);
+    asked for the lower bound, the author answered "do also 0.0001 up to 1,
+    the gate p is useful for the number of synapses influenced", read here
+    as the box [0.0001, 1]. The gate stays: under the mean drive p sets how
+    many synapses are linked, in both directions (glutamate into the
+    astrocyte's mean, gliotransmitter back onto synapses), and how many
+    astrocytes have any link; it does not rescale the drive of a linked
+    astrocyte (Block 10).
   - 2026-10-29 [author]: LindaColloDUP runs MODE Neuronal; freezes Cm,
     I_inj, VR, VA, DeltaA, EC50_ampa, EC50_nmda (and the inert alpha_syn,
     O_G, Omega_G); SIMTIME 180 s; RHO_TOTAL 1300 cells/mm^2; everything else
@@ -795,7 +814,8 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   the giulia setup and the astrocyte outcomes: 87 passed (76 + 2 skipped
   with `--no-sim`). Skipped: davinci. The astrocyte outcomes of a real
   GiuliaGate run carry no information until section 8's astrocyte NaN is
-  fixed (R6b checks the plumbing only).
+  fixed (R6b checks the plumbing only). [corrected 2026-10-31] Fixed by
+  Block 10; 87 passed again with it.
 
 ### Block 7: the seed guard across ~/ANN
 
@@ -991,7 +1011,8 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   1/(uM s); Omega_G [0.001, 0.1] 1/s; I_bias [0.3, 1] uM (lin); F [0.1, 10]
   uM/s; U_A [0.1, 0.9] (lin); G_T [50, 1000] mM; O_N [0.03, 3] 1/(uM s); log
   unless marked lin; the registry boxes except Sigma (registry [3, 15]) and
-  g_ampa, g_nmda (registry [0.01, 5]). Fixed at the registry nominals:
+  g_ampa, g_nmda (registry [0.01, 5]). [corrected 2026-10-31] O_N [0.0001, 1]
+  1/(uM s), log (registry [0.03, 3]; section 4). Fixed at the registry nominals:
   gbarA 0.9 nS, delta_gA 0.135 nS, tauA 200 ms, VA -48 mV, DeltaA 5 mV, VR
   -58.2 mV, I_inj 4 pA, Cm 17.25 pF, DeltaT 2 mV, VT -51 mV, gL 1.15 nS,
   EC50_ampa 8.6 mM, EC50_nmda 3 mM, U_0_ar 0.003, U_max 0.5 1/ms,
@@ -1038,7 +1059,8 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
 - Test oracles (`smoke_test_gg.py`, G1-G8; 32 passed and 1 skipped without
   `--sim`, 35 with it): G1 the TSV (self-test, the 39 rows, 15 free axes,
   the scale rule); G2 the patches on a fresh copy (PATCHED with Sigma,
-  g_ampa, g_nmda; ALREADY APPLIED; BOXES OK; compiles; 3 marked rows); G3
+  g_ampa, g_nmda [and O_N since 2026-10-31]; ALREADY APPLIED; BOXES OK;
+  compiles; 3 marked rows [4 since 2026-10-31]); G3
   the patched module (N_DIMS 37; tripartite minus the freeze list = the 15
   TSV axes; their boxes; LOG_PARAMS); G4 refusals (a TSV edited after
   patching; DeltaT off the registry); G5 the launcher's dry run (banner,
@@ -1046,6 +1068,8 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   stub python (`--check-applied` first; the arguments; refusals); G7 bytes;
   G8 the real worker on a tiny Full network (2 runs ok, the gate p in every
   sidecar, no neuron NaN warning; it prints the astrocyte NaN warnings).
+  [corrected 2026-10-31] G8 also requires no astrocyte NaN warning (Block
+  10); 35 passed with `--sim`.
 - Confirmed: yes 2026-10-31 for the prior, the folder, MODE Full, 180 s,
   the densities and the gate (section 4); inferred for the sizing
   (N_TOPOLOGIES_WORKER 48 from MEAMA's measured 22.5 min per topology at
@@ -1055,7 +1079,66 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
 - Status: smoke-tested 2026-10-31 in the sandbox (35 passed with `--sim`).
   Skipped: davinci. Blocked for the campaign by section 8's astrocyte NaN:
   in G8 and in every Full run at nominal parameters the astrocytes go
-  non-finite within about 30 ms.
+  non-finite within about 30 ms. [corrected 2026-10-31] Unblocked by Block
+  10 (G8: 0 astrocyte NaN warnings).
+
+### Block 10: the astrocyte's glutamate drive is the mean over its links
+
+- Purpose (decided by the author on 2026-10-31, section 4): the fix of the
+  astrocyte NaN of section 8. Module: `Synapse_to_astro` in
+  `hpc/Phenomenological_finalv1/ASD_fun_BD_cpp.py` (the root model, so every
+  Full campaign copied from it: GiuliaGate, MEAMA's rerun, `launch_campaign.sh`).
+  Not changed: the repository's `Giulia/ASD_fun_BD_cpp.py` copy, the
+  Hodgkin-Huxley `hpc/ASD_fun_BD_cpp.py` and the top-level legacy
+  `ASN_fun*.py`, which keep the sum (section 8).
+- Equation. L is the list of (synapse j, astrocyte k) links of the topology
+  (`build_topology`'s `StoA_i`, `StoA_j`, after the contact gate). For each
+  astrocyte k with N_k = |{j : (j, k) in L}| >= 1 and for all t:
+  Y_extra,k(t) = (1/N_k) sum over {j : (j, k) in L} of Y_A,j(t); for N_k = 0,
+  Y_extra,k(t) = 0. Y_A,j is the slow cleft glutamate of synapse j (mM in
+  the model's concentration convention). Brian2: `Y_extra_post = Y_A_pre /
+  N_incoming : mole (summed)`, N_incoming = the number of links onto the same
+  astrocyte. Until 2026-10-31 it was the sum (Y_extra_post = Y_A_pre).
+  Reference: Stimberg et al. 2019, Computational Glioscience ch. 18, p. 498,
+  `Y_S_post = Y_S_pre/N_incoming` (project knowledge).
+- Stability (own derivation): dGamma_A/dt is linear in Gamma_A with rate
+  lambda_A = O_N (Y_bias + s Y_extra)^n + Omega_N (1 + zeta C/(C + K_KC));
+  the group's explicit RK4 is stable for lambda_A dt < 2.785 (the stability
+  interval of classical RK4 on the negative real axis; textbook, from
+  memory). Under the mean, Y_extra,k(t) <= max_j Y_A,j(t), and each release
+  adds rho Y_T r_Sr <= rho Y_T = 30 mM to Y_A,j (r_Sr = u_sr x_S <= 1), so
+  Y_extra stays near or below ~30-34 mM (measured maximum 29.9 mM at the
+  high-drive corner of section 8). With s = 0.75, n = 1, Y_bias = 0 and
+  dt = 0.05 ms that gives stability for O_N below about 2.2 per (uM s);
+  GiuliaGate's O_N <= 1 has the bound at 74 mM. A box reaching O_N = 3 is not
+  safe under the mean alone (section 8: NaN at 7 ms at that corner).
+- The contact gate under the mean: p sets N_k and which synapses are
+  linked (and, through the same list, which receive gliotransmitter); for
+  synapses of similar activity it does not move Y_extra,k. Measured
+  (sandbox, 108 + 108 cells, conn_prob 0.225, O_N 0.01, 5 s, astrocytes with
+  at least one link, t > 1 s): mean Gamma_A 0.774, 0.774, 0.775 at p = 0.2,
+  0.6, 1.0; linked astrocytes 83, 93, 94 of 108; median Y_extra 1.70 mM.
+- Receptor operating point (same setting, gate 0.6): mean Gamma_A of the
+  linked astrocytes 0.035, 0.262, 0.774, 0.910, 0.989, 0.997 at O_N =
+  0.0001, 0.001, 0.01, 0.03, 0.3, 1 per (uM s); the steady state
+  Gamma_A* = a/(a + b), a = O_N s Y_extra, b = Omega_N (1 + zeta C/(C +
+  K_KC)), for Y_extra and C held fixed, gives the same numbers (algebra).
+- Test oracles (`smoke_test_astro_drive.py`; 9 checks, 6 and 1 skipped
+  with `--no-sim`): A1 the model line (the mean once, the sum
+  gone); A2 the summed-variable semantics through the library's own
+  `Synapse_to_astro` on a stand-in network (Brian2 runtime, numpy): means of
+  known values to float64 roundoff, 0 for an astrocyte without a link, one
+  link and four links of equal value give the same drive, the returned
+  (astrocyte, synapse) pairs; A3 end to end, `HPC_single_run.py`, Full,
+  nominal, 48 + 48 cells on 200 um, 3 s: exit 0, no NaN warning, events from
+  at least half of the astrocytes (48 of 48). Planted fault (the sum
+  restored, 2026-10-31): A1, both A2 value checks and both A3 checks fail (4
+  NaN warnings, 1 astrocyte event). Regression on the root: Block 8's
+  `smoke_test_stoa_gate.py` 36 and `smoke_test_param_recording.py` 119
+  passed; Block 6's smoke test 87; Block 9's 35 with `--sim`.
+- Custom code: none (a Brian2 summed variable).
+- Confirmed: yes 2026-10-31 (author: "use the option a").
+- Status: smoke-tested 2026-10-31 in the sandbox. Skipped: davinci.
 
 ### 5.1 Projects and where their model runs
 
@@ -1099,6 +1182,7 @@ campaign's `job_args.json` `lib_dir`).
 | `python3 range_check.py --rc-phase corners --rc-level 0 --rc-out X --rc-design-only <settings>` | Block 6: a level's design, nothing run | the setup's folder | seconds |
 | `NODES=4 SETUP=giulia bash launch_range_check.sh` (first with `DRYRUN=1`) | Block 6 on GiuliaGate: corners split by conn_prob level on two intel nodes, interior split in two on two cpu nodes, then the analysis job | the GiuliaGate folder after `APPLY_GG.txt` steps 0-4; `qsub` | seconds to submit; the jobs about 1-2, 9-10, 4 and 6-7 h (estimate from MEAMA's davinci throughput, not measured) |
 | `python3 smoke_test_gg.py` (`--sim` adds G8) | Block 9 | the repository; G8 needs Brian2 and a C++ compiler | 30 s; about 1 min with `--sim` |
+| `python3 smoke_test_astro_drive.py` (`--no-sim` skips A3) | Block 10 | the root folder; A3 needs Brian2 and a C++ compiler | seconds; about 35 s with A3 |
 | `SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes DRYRUN=1 bash launch_GG.sh` | Block 9 dry run | the GiuliaGate folder after steps 0-4 | seconds |
 
 ## 7. Not executable in the sandbox
@@ -1199,7 +1283,23 @@ campaign's `job_args.json` `lib_dir`).
   the author: with either drive Gamma_A stays near saturation (mean 0.85-0.9)
   once the network is active, since O_N spill_over Y_extra >> Omega_N for
   Y_extra in the mM range, so O_N moves the astrocyte little; a calibration
-  question for the receptor and for `spill_over`.
+  question for the receptor and for `spill_over`. [corrected 2026-10-31] The
+  0.85-0.9 averaged in the astrocytes without any link (Gamma_A = 0 for all
+  t; 15 of 108 here): over the linked astrocytes, t > 1 s, Gamma_A is 0.989
+  at O_N 0.3 and 0.999 at O_N 3 (mean drive). [closed 2026-10-31] Fixed by
+  option (a), Block 10, decided by the author; option (b) not adopted. Under
+  the mean drive alone O_N must stay below about 2.2 per (uM s) (Block 10);
+  GiuliaGate's O_N box is [0.0001, 1], which spans the receptor's curve at
+  nominal activity (Gamma_A 0.035 to 0.997, Block 10). The saturation
+  question remains for boxes that start at O_N >= 0.03 (MEAMA's registry
+  box [0.03, 3], which also crosses the stability bound).
+- Copies of the model outside Block 10 keep the summed drive: the
+  repository's `Giulia/ASD_fun_BD_cpp.py` (37-D, synapse_astro), the
+  Hodgkin-Huxley `hpc/ASD_fun_BD_cpp.py` and the top-level `ASN_fun*.py`
+  (Y_S summed). If the cluster's `Giulia_Astro/` copy sums too, Giulia's
+  earlier campaigns (`campaign_cadex_hhgap_v1`-`v5`) may have lost their
+  astrocytes the same way; not checked on their data, and that copy is not
+  in the repository (raised 2026-10-31).
 - The legacy Izhikevich model in the top-level `ASN_fun_pheno.py` has a 2 ms
   refractory period and no hold: during it the quadratic term can carry v
   past the threshold with no reset, as in the CAdEx runaway. Not used by any
