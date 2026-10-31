@@ -15,7 +15,7 @@ THIS FOLDER (repository path hpc/range_check/)
   launch_range_check.sh     login node: one setup as three PBS jobs (below)
   submit_range_check.sh     the PBS job; PHASES and ANALYZE choose its part
                             (submitted alone, it runs everything on one node)
-  smoke_test_range_check.py the checks (63 with Brian2; R9 tests the job
+  smoke_test_range_check.py the checks (65 with Brian2; R9 tests the job
                             script and R10 the launcher, both with stubs)
   README_RANGE_CHECK.txt    this file
 range_analysis.py imports burst_metrics.py from ../Phenomenological_finalv1/
@@ -67,8 +67,8 @@ BEFORE SUBMITTING (davinci)
 
 ON DAVINCI, from ~/ANN/Astro-Neuron-Network/hpc/range_check after git pull:
   conda activate brian_final && python smoke_test_range_check.py --no-sim | tail -1
-      (expect "RESULT: 56 passed, 0 failed, 1 skipped"; without --no-sim it
-       also simulates a tiny network, about 1 min: 63 passed)
+      (expect "RESULT: 58 passed, 0 failed, 1 skipped"; without --no-sim it
+       also simulates a tiny network, about 1 min: 65 passed)
   DRYRUN=1 SETUP=lcdup bash launch_range_check.sh     (prints the 3 qsub lines)
   SETUP=lcdup bash launch_range_check.sh              (submits them)
   SETUP=giulia EXTRA="--stoa_gate_lo 0.2 --stoa_gate_hi 1.0" bash launch_range_check.sh

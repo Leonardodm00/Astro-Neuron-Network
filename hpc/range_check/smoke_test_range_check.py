@@ -35,7 +35,10 @@ random cells of its 7-bin grid.
   R9  submit_range_check.sh with module, conda and python replaced by stub
       shell functions, in an environment built from scratch (only PATH kept;
       see the comment above STUB_FUNCS); a probe first confirms the stubs are
-      the functions the job's shell sees, else R9 stops. For SETUP=lcdup:
+      the functions the job's shell sees, else R9 stops. The stub conda
+      activate points CONDA_PREFIX at a stub environment whose bin/python
+      logs its arguments: every interpreter call must go there, none to the
+      python function on PATH. For SETUP=lcdup:
       corners at levels 0 1, interior at levels 0..6, the analysis and the
       plots, with the LindaColloDUP settings; giulia finds LIKE in the
       hhgap_v5 campaign; EXTRA reaches every call; FREEZE_ENC is decoded;
@@ -419,8 +422,14 @@ def r8():
 # BASH_ENV) replaced the stubs, so the real module, conda and python ran and
 # the stubs logged no call (davinci, 2026-10-30). Functions also need no exec
 # permission, so a noexec /tmp cannot stop them either.
-STUB_FUNCS = r'''python() { printf '%s\n' "$*" >> "$STUB_LOG"; return 0; }
-conda() { if [ "${1:-}" = info ]; then printf '%s\n' "$STUB_BASE"; fi; return 0; }
+# The job takes its interpreter from CONDA_PREFIX (2026-10-31; on davinci a
+# module-loaded python can win on PATH after conda activate). The stub conda
+# activate therefore sets CONDA_PREFIX to a stub environment whose bin/python
+# is a small executable script logging its arguments; that one file needs exec
+# permission, which R9 checks first. The python function logs with the prefix
+# PATHPY, which must never appear: the job may not call a python from PATH.
+STUB_FUNCS = r'''python() { printf 'PATHPY %s\n' "$*" >> "$STUB_LOG"; return 0; }
+conda() { if [ "${1:-}" = info ]; then printf '%s\n' "$STUB_BASE"; elif [ "${1:-}" = activate ]; then export CONDA_PREFIX="$STUB_BASE/envs/stub"; fi; return 0; }
 module() { return 0; }
 export -f python conda module
 exec "$BASH" "$1"
@@ -472,8 +481,24 @@ def r9(tmp):
     print('\n[R9] the PBS job script with stub module, conda and python')
     base = os.path.join(tmp, 'stubbase')
     os.makedirs(os.path.join(base, 'etc', 'profile.d'))
+    # like the real conda.sh, this one defines the conda function that
+    # activates, so it too points CONDA_PREFIX at the stub environment
     open(os.path.join(base, 'etc', 'profile.d', 'conda.sh'), 'w').write(
-        'conda() { return 0; }\nmodule() { return 0; }\n')
+        'conda() { if [ "${1:-}" = activate ]; then export CONDA_PREFIX="$STUB_BASE/envs/stub"; fi; return 0; }\n'
+        'module() { return 0; }\n')
+    envbin = os.path.join(base, 'envs', 'stub', 'bin')
+    os.makedirs(envbin)
+    stub_py = os.path.join(envbin, 'python')
+    open(stub_py, 'w').write('#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$STUB_LOG"\nexit 0\n')
+    os.chmod(stub_py, 0o755)
+    try:
+        exec_ok = subprocess.run([stub_py, 'probe'], env=dict(STUB_LOG=os.devnull),
+                                 capture_output=True).returncode == 0
+    except OSError:
+        exec_ok = False
+    if not check(exec_ok, 'the stub environment python can be executed (no noexec on %s)' % tmp):
+        print('    the remaining checks of this section were not run')
+        return
     home = os.path.join(tmp, 'r9_home')
     os.makedirs(home)
     lib = make_fake_setup(os.path.join(tmp, 'fake_setup'))
@@ -499,7 +524,10 @@ def r9(tmp):
     def split(calls):
         return ([c for c in calls if '--rc-phase corners' in c], [c for c in calls if '--rc-phase interior' in c])
 
-    r, calls, _ = job(SETUP='lcdup')
+    r, calls, raw = job(SETUP='lcdup')
+    check(len(raw) > 0 and not any(c.startswith('PATHPY') for c in raw),
+          'every interpreter call goes to CONDA_PREFIX/bin/python, none to a python on PATH '
+          '(%d calls logged)' % len(raw))
     cor, inte = split(calls)
     ok = check(r.returncode == 0 and len(cor) == 2 and len(inte) == 7 and len(calls) == 11
                and calls[-2].startswith('range_analysis.py') and calls[-1].startswith('range_plots.py'),

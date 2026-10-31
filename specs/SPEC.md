@@ -362,10 +362,17 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   `--self-test`; exit 0 patched or already clamped, 1 refused.
 - Custom code: the two patchers and the box rule; no library edits a
   registry in place.
-- Test oracles: `smoke_test_freeze.py` (40 checks: T1-T8; T4 also sets a
+- Environment of `submit_LCDUP.sh` (2026-10-31): after `conda activate`
+  the interpreter is `$CONDA_PREFIX/bin/python`, never a bare `python` from
+  PATH (on davinci a module-loaded python can win on PATH after a successful
+  activate; MEAMA's cluster job script resolves it the same way); exit 2
+  when that file is not executable or fails the environment check.
+- Test oracles: `smoke_test_freeze.py` (41 checks: T1-T9; T4 also sets a
   value off the nominal to prove NAME=VALUE is applied, since the campaign's
   values equal the nominals; T7 checks the g boxes in `job_args.json`; T8
-  the box patch: both markers, box, log flag and theta box of each g axis);
+  the box patch: both markers, box, log flag and theta box of each g axis;
+  T9 the job script under stub module and conda: worker and manifest rebuild
+  run with CONDA_PREFIX/bin/python, none with a python from PATH);
   the three patchers' `--self-test` (the box patcher's 20 checks include the
   refusals, the backup, idempotence and file permissions; the clamp's
   includes a Brian2 parse of the patched equations); the dry run (Nn = 159,
@@ -590,7 +597,9 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   lcdup box guard, PHASES=none with no `OUT/*/design.json`. CHECK_ONLY=1
   runs those guards (all but the last), prints `[range_check] precheck OK:
   ...` and exits 0. Exit 2 also when `conda activate` or the environment
-  check fails; otherwise 1 if any call failed, else 0.
+  check fails; otherwise 1 if any call failed, else 0. Every interpreter call
+  after `conda activate` uses `$CONDA_PREFIX/bin/python` (2026-10-31; as
+  `submit_LCDUP.sh`, Block 4): exit 2 when that file is not executable.
 - Launcher (`launch_range_check.sh`, login node): refuses (exit 2) an
   unknown SETUP and a comma in OUT or in a passed variable (`qsub -v` splits
   on commas); runs the job script once with CHECK_ONLY=1 (failure: exit 2,
@@ -613,8 +622,8 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
 - Custom code: the fraction's generator search (`range_design.py`
   docstring: pyDOE3 1.6.2's `fracfact_by_res(n, 5)` is not resolution V for
   n = 14 or 23, checked 2026-10-30), the labels and the effect contrasts.
-- Test oracles (`smoke_test_range_check.py`, R1-R10; 63 checks with Brian2,
-  56 and 1 skipped with `--no-sim`): R1 the fraction for the 36-D root
+- Test oracles (`smoke_test_range_check.py`, R1-R10; 65 checks with Brian2,
+  58 and 1 skipped with `--no-sim`): R1 the fraction for the 36-D root
   pipeline (resolution 8 here, floor 7; no aliased main/two-axis pair in a
   Gram check; balanced; the two levels together are the design; every vector
   at the bounds its codes name; centre points; inactive axes at nominal); R2
@@ -626,7 +635,10 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   figures, refusals); R7 a planted effect recovered (E_A = 0.5985 for a
   planted 0.6004; inert axes |E| < 0.003; interior medians doubling per bin;
   an off-grid run unmatched, exit 1); R8 bytes; R9 the job script and R10
-  the launcher with stubs in a sealed environment, each probed first. Ten
+  the launcher with stubs in a sealed environment, each probed first (in R9
+  the stub conda activate points CONDA_PREFIX at a stub environment, and
+  every interpreter call must go to its bin/python, none to a python on
+  PATH). Ten
   planted faults (2026-10-30) were each caught by a named check.
 - Confirmed: yes 2026-10-30 for the design (corners at every free axis's
   bounds in all combinations, the same number of random cells of the 7-bin

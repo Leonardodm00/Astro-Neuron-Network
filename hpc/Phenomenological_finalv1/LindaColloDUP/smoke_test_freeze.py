@@ -28,11 +28,17 @@ Checks
   T8  the g box patch (decided 2026-10-30): g_ampa and g_nmda span
       [0.01, 10] nS, both log-uniform, theta box [ln 0.01, ln 10]; the file
       carries both markers
+  T9  submit_LCDUP.sh (2026-10-31) takes its interpreter from CONDA_PREFIX:
+      run with stub module and conda (whose activate points CONDA_PREFIX at
+      a stub environment) and a stub python function on PATH, the worker and
+      the manifest rebuild go to CONDA_PREFIX/bin/python and never to the
+      python on PATH (on davinci a module-loaded python can win there)
 """
 import argparse
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -222,10 +228,69 @@ def main():
               and abs(tlo - np.log(CAMPAIGN_G_BOX[0])) < 1e-12 and abs(thi - np.log(CAMPAIGN_G_BOX[1])) < 1e-12,
               '%s box [%g, %g] nS, log, theta [%.4f, %.4f]' % (g, lo, hi, tlo, thi))
 
+    t9_submit(here)
+
     print('\n' + '=' * 72)
     print('RESULT: %d passed, %d failed' % (_n_pass, _n_fail))
     print('=' * 72)
     return 1 if _n_fail else 0
+
+
+def t9_submit(here):
+    """T9: the job script's interpreter comes from CONDA_PREFIX. Runs a copy
+    of submit_LCDUP.sh in a scratch folder (stub HPC_main_sweep.py with the
+    freeze and box markers), with module and conda as stub shell functions in
+    an environment built from scratch, a stub conda.sh whose activate points
+    CONDA_PREFIX at a stub environment, and a python function that would log
+    PATHPY if the script ever called python from PATH."""
+    print('\n[T9] submit_LCDUP.sh takes its python from CONDA_PREFIX (~5 s)')
+    t9 = tempfile.mkdtemp(prefix='lcdup_t9_')
+    try:
+        base = os.path.join(t9, 'condabase')
+        os.makedirs(os.path.join(base, 'etc', 'profile.d'))
+        open(os.path.join(base, 'etc', 'profile.d', 'conda.sh'), 'w').write(
+            'conda() { if [ "${1:-}" = activate ]; then export CONDA_PREFIX="$STUB_BASE/envs/stub"; fi; return 0; }\n'
+            'module() { return 0; }\n')
+        envbin = os.path.join(base, 'envs', 'stub', 'bin')
+        os.makedirs(envbin)
+        stub_py = os.path.join(envbin, 'python')
+        open(stub_py, 'w').write('#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$STUB_LOG"\nexit 0\n')
+        os.chmod(stub_py, 0o755)
+        repo = os.path.join(t9, 'repo')
+        os.makedirs(repo)
+        shutil.copy(os.path.join(here, 'submit_LCDUP.sh'), repo)
+        open(os.path.join(repo, 'HPC_main_sweep.py'), 'w').write(
+            '# stub\ndef _apply_freeze(\n    (0.01, 10.0),  # 14 g_ampa %s\n    (0.01, 10.0),  # 15 g_nmda %s\n'
+            % (BOX_MARK, BOX_MARK))
+        log = os.path.join(t9, 'calls.log')
+        funcs = ('python() { printf \'PATHPY %s\\n\' "$*" >> "$STUB_LOG"; return 0; }\n'
+                 'conda() { if [ "${1:-}" = info ]; then printf \'%s\\n\' "$STUB_BASE"; fi; return 0; }\n'
+                 'module() { return 0; }\n'
+                 'export -f python conda module\n'
+                 'exec "$BASH" "$1"\n')
+        env = dict(PATH=os.environ.get('PATH', '/usr/bin:/bin'), HOME=t9, LC_ALL='C',
+                   STUB_LOG=log, STUB_BASE=base, NODETAG='t9', PBS_ARRAY_INDEX='0',
+                   FREEZE_ENC='Cm:I_inj:VA@-48:DeltaA:VR@-58.2:EC50_ampa:EC50_nmda:alpha_syn:O_G:Omega_G',
+                   REPO_DIR=repo, PBS_O_WORKDIR=repo, PBS_NCPUS='2', SEED_BASE='1000', CAMPAIGN_TAG='t9')
+        bash = shutil.which('bash') or '/bin/bash'
+        try:
+            r = subprocess.run([bash, '-c', funcs, 't9', os.path.join(repo, 'submit_LCDUP.sh')],
+                               env=env, capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            check(False, 'submit_LCDUP.sh ran under the stubs (%s)' % exc)
+            return
+        calls = open(log).read().splitlines() if os.path.exists(log) else []
+        script = os.path.join(repo, 'HPC_main_sweep.py')
+        worker = [c for c in calls if c.startswith(script)]
+        check(r.returncode == 0 and len(worker) == 2 and '--rebuild_manifest_only' in worker[-1]
+              and not any(c.startswith('PATHPY') for c in calls),
+              'worker and manifest rebuild ran with CONDA_PREFIX/bin/python, none with a python '
+              'from PATH (exit %d, %d calls)' % (r.returncode, len(calls)))
+        if r.returncode != 0 or len(worker) != 2:
+            tail = (r.stdout + r.stderr).strip().splitlines()[-6:]
+            print('    ' + '\n    '.join(tail + calls))
+    finally:
+        shutil.rmtree(t9, ignore_errors=True)
 
 
 if __name__ == '__main__':

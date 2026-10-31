@@ -135,8 +135,17 @@ module load python
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "$CONDA_ENV" || { echo "ERROR: conda activate ${CONDA_ENV} failed." >&2; exit 2; }
 set -u
-python -c "import os, sys, brian2, numpy, scipy, pandas; p = os.environ.get('CONDA_PREFIX', ''); assert p and sys.executable.startswith(p), sys.executable; print('[env]', sys.executable, '| brian2', brian2.__version__, '| numpy', numpy.__version__)" \
-    || { echo "ERROR: ${CONDA_ENV} is not usable." >&2; exit 2; }
+# The interpreter comes from CONDA_PREFIX, never from a bare `python` on PATH:
+# on davinci a module-loaded system python can win on PATH even after a
+# successful `conda activate` (seen by MEAMA's job script, 2026-08-31, which
+# resolves it the same way).
+PY="${CONDA_PREFIX:-}/bin/python"
+if [ ! -x "$PY" ]; then
+    echo "ERROR: ${PY} is not an executable python (CONDA_PREFIX=${CONDA_PREFIX:-unset})." >&2
+    exit 2
+fi
+"$PY" -c "import os, sys, brian2, numpy, scipy, pandas; p = os.environ.get('CONDA_PREFIX', ''); assert p and sys.executable.startswith(p), sys.executable; print('[env]', sys.executable, '| brian2', brian2.__version__, '| numpy', numpy.__version__)" \
+    || { echo "ERROR: ${CONDA_ENV} is not usable (${PY})." >&2; exit 2; }
 export OMP_NUM_THREADS=1
 export MAKEFLAGS="-j1"
 
@@ -161,19 +170,19 @@ mkdir -p "$OUT"
 status=0
 if [ "$PHASES" = "all" ] || [ "$PHASES" = "corners" ]; then
     for L in $CORNER_LEVELS; do
-        python range_check.py --rc-phase corners --rc-level "$L" --rc-corner-topologies "$CORNER_TOPOS" \
+        "$PY" range_check.py --rc-phase corners --rc-level "$L" --rc-corner-topologies "$CORNER_TOPOS" \
             --rc-corner-budget "$CORNER_BUDGET" "${COMMON[@]}" || status=1
     done
 fi
 if [ "$PHASES" = "all" ] || [ "$PHASES" = "interior" ]; then
     for L in $INTERIOR_LEVELS; do
-        python range_check.py --rc-phase interior --rc-level "$L" --rc-bins "$BINS" \
+        "$PY" range_check.py --rc-phase interior --rc-level "$L" --rc-bins "$BINS" \
             --rc-interior-runs "$INTERIOR_RUNS" --rc-interior-topologies "$INTERIOR_TOPOS" "${COMMON[@]}" || status=1
     done
 fi
 if [ "$ANALYZE" = "1" ]; then
-    python range_analysis.py "$OUT" --workers "$NW" || status=1
-    python range_plots.py "$OUT" || status=1
+    "$PY" range_analysis.py "$OUT" --workers "$NW" || status=1
+    "$PY" range_plots.py "$OUT" || status=1
 fi
 set +u; conda deactivate; set -u
 if [ "$ANALYZE" = "1" ]; then

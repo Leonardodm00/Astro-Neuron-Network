@@ -102,7 +102,16 @@ if [ -z "${LCDUP_NO_ENV:-}" ]; then
     conda activate "$CONDA_ENV" || {
         echo "ERROR: conda activate ${CONDA_ENV} failed." >&2; exit 2; }
     set -u
-    python - <<'PYCHK' || { echo "ERROR: ${CONDA_ENV} is not usable." >&2; exit 2; }
+    # The interpreter comes from CONDA_PREFIX, never from a bare `python` on
+    # PATH: on davinci a module-loaded system python can win on PATH even
+    # after a successful `conda activate` (seen by MEAMA's job script,
+    # 2026-08-31, which resolves it the same way).
+    PY="${CONDA_PREFIX:-}/bin/python"
+    if [ ! -x "$PY" ]; then
+        echo "ERROR: ${PY} is not an executable python (CONDA_PREFIX=${CONDA_PREFIX:-unset})." >&2
+        exit 2
+    fi
+    "$PY" - <<'PYCHK' || { echo "ERROR: ${CONDA_ENV} is not usable (${PY})." >&2; exit 2; }
 import os, sys, urllib, pathlib
 p = os.environ.get('CONDA_PREFIX', '')
 assert p and sys.executable.startswith(p), \
@@ -111,6 +120,7 @@ import brian2, numpy
 print(f"[env] {sys.executable} | brian2 {brian2.__version__} | numpy {numpy.__version__}")
 PYCHK
 else
+    PY="python"
     echo "[env] LCDUP_NO_ENV=1 -- using the ambient python, NOT ${CONDA_ENV}."
 fi
 mkdir -p "$OUTPUT_DIR"
@@ -189,11 +199,11 @@ ARGS=(
 [ -n "$SEED_MASTER" ] && ARGS+=(--seed_master "$SEED_MASTER")
 [ "$CONN_PERIODIC" -eq 1 ] && ARGS+=(--conn_periodic)
 
-python "$SCRIPT_PATH" "${ARGS[@]}"
+"$PY" "$SCRIPT_PATH" "${ARGS[@]}"
 EXIT_CODE=$?
 
 echo "[post] rebuilding manifest for ${NODETAG}/task${IDX} ..."
-python "$SCRIPT_PATH" --rebuild_manifest_only --out_dir "$OUTPUT_DIR" || true
+"$PY" "$SCRIPT_PATH" --rebuild_manifest_only --out_dir "$OUTPUT_DIR" || true
 
 if [ -z "${LCDUP_NO_ENV:-}" ]; then set +u; conda deactivate; set -u; fi
 sleep 5s
