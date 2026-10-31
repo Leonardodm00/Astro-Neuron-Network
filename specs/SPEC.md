@@ -39,6 +39,11 @@ calibration on top of dcb52ab)
   `hpc/Phenomenological_finalv1/Giulia/ASD_fun_BD_cpp.py`): in
   `Neuronal_Network`, the dV/dt line and the threshold, reset and refractory
   arguments of the neuron `NeuronGroup` -- not the rest of those files
+- the root pipeline's 37-D registry, sweep groups and astrocyte contact gate
+  (Block 8): `hpc/Phenomenological_finalv1/HPC_main_sweep.py` and
+  `HPC_single_run.py` as far as Block 8 describes them, and the `O_N` lines
+  of `ASD_fun_BD_cpp.py` -- not yet the model's equations or the rest of the
+  sweep loop (their entries are being written with the author, 2026-10-31)
 
 Everything else in the repository is not specified yet and is out of scope
 for the tester.
@@ -200,6 +205,12 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
     used.
   - 2026-10-30 [author]: every CAdEx model on GitHub carries the refractory
     hold, the second branch `Inverse-Transform-Sampling` included (Block 1).
+  - 2026-10-31 [author]: the 37-D pipeline with the astrocyte contact gate,
+    as the cluster's `MEAMA/` runs it, is the repository default at
+    `hpc/Phenomenological_finalv1/` (Block 8), with section 2's hold; the
+    36-D root pipeline is retired (last on `main` at c06363b). The
+    independent tester runs on this version once the model's equations are
+    specified and confirmed, as a night run (decided 2026-10-31).
   - 2026-10-29 [author]: LindaColloDUP runs MODE Neuronal; freezes Cm,
     I_inj, VR, VA, DeltaA, EC50_ampa, EC50_nmda (and the inert alpha_syn,
     O_G, Omega_G); SIMTIME 180 s; RHO_TOTAL 1300 cells/mm^2; everything else
@@ -391,7 +402,11 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   repository's root 36-D files, whose registry rows equal `MEAMA/`'s; the
   unclamped model of d0ced88; the three 37-D flags as no-op options):
   `APPLY_LCDUP.txt` steps 2-7 as written, the guards above, the probe.
-  Skipped: the 37-D files and davinci.
+  Skipped: the 37-D files and davinci. [2026-10-31] Re-run on a folder built
+  from the cluster's own 37-D files (the author's zip of `MEAMA/`, Block 8):
+  steps 2-7 as written: both patches CHECK OK and PATCHED, smoke test 41
+  passed (with T9), CLAMPED, probe 2 ok with 0 NaN warnings and the gate
+  declared inert, dry run with Nn=159.
 
 ### Block 5: clamp_cadex_copies, the cluster-wide clamp
 
@@ -623,7 +638,8 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   docstring: pyDOE3 1.6.2's `fracfact_by_res(n, 5)` is not resolution V for
   n = 14 or 23, checked 2026-10-30), the labels and the effect contrasts.
 - Test oracles (`smoke_test_range_check.py`, R1-R10; 65 checks with Brian2,
-  58 and 1 skipped with `--no-sim`): R1 the fraction for the 36-D root
+  58 and 1 skipped with `--no-sim`): R1 the fraction for the 37-D root (the
+  36-D root until 2026-10-31)
   pipeline (resolution 8 here, floor 7; no aliased main/two-axis pair in a
   Gram check; balanced; the two levels together are the design; every vector
   at the bounds its codes name; centre points; inactive axes at nominal); R2
@@ -651,7 +667,8 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   freeze-patched copy, 37-D `Giulia/` copy; both phases with the exact
   LindaColloDUP settings on 159 neurons: corners at conn_prob 0.5, interior
   at 0.465, labels and analysis correct). Skipped: davinci, the cluster's
-  gate version. History: until 2026-10-30 (a3878d2) this block specified
+  gate version [2026-10-31: run on it, Block 8; 65 passed on the 37-D root].
+  History: until 2026-10-30 (a3878d2) this block specified
   one-axis sweeps at three conn_prob levels and a prior sample, replaced by
   this design at the author's request. The R8 failure on davinci of
   2026-10-30 (an exported `module` function reaching the job) was fixed by
@@ -720,6 +737,94 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   copy of MEAMA's allocator left by an earlier step 0 (git 2.43). Skipped:
   davinci (the real ANN tree, its size and its git 2.31).
 
+### Block 8: the 37-D pipeline with the astrocyte contact gate (the default)
+
+- Module: `hpc/Phenomenological_finalv1/HPC_main_sweep.py`,
+  `HPC_single_run.py`, `ASD_fun_BD_cpp.py`, `synapse_pdist.csv`: the
+  pipeline the cluster's `Phenomenological/MEAMA/` runs, the repository
+  default since 2026-10-31 (decision in section 4). Callers: every launcher
+  that uses the root folder or a copy of it (`launch_campaign.sh` /
+  `submit_sweep_mixed.sh`, `MEAMA/`, `LindaColloDUP/`, Block 6).
+- Provenance (the author's zip of `MEAMA/`, 2026-10-31): `HPC_main_sweep.py`
+  (sha256 d609504e...) and `HPC_single_run.py` (f71851d5...) byte-identical
+  to the cluster's; `ASD_fun_BD_cpp.py` = the cluster's file (01e4f998...,
+  unclamped) plus Block 1's hold, so it differs from the cluster's only by
+  section 2's `(unless refractory)` and its four comment lines;
+  `smoke_test_param_recording.py` (ebcdb93b...) byte-identical;
+  `smoke_test_stoa_gate.py` was already identical. `synapse_pdist.csv` is
+  `MEAMA/synapse_pdist.csv` (the root folder had none; `hpc/synapse_pdist.csv`
+  holds the same numbers with CRLF line ends). `aggregate_sweep.py` is
+  unchanged: the cluster's copy was not in the zip (section 8). The
+  pipeline files keep their non-ASCII comment characters (valid UTF-8, as on
+  the cluster), so their sha256 still matches the cluster's.
+- Registry (37-D). `PARAM_NAMES` gains `O_N` at index 36 (unit `1/(uM*s)`,
+  nominal 0.3, in `ASTRO_PARAMS`); `PARAM_BOUNDS` row 36 is (0.03, 3.0),
+  log-uniform; the `I_bias` box is (0.3, 1.0) [was (0.3, 1.5)];
+  `assert PARAM_BOUNDS.shape == (37, 2)`. `HPC_main_sweep.py` repairs a stale
+  36-D registry from `HPC_single_run.py` at import (appends `O_N`, nominal
+  0.3). The model declares `O_N : 1/mole/second` per astrocyte, default
+  `Params_astroGT['O_N']`, and run_args sets it to `params[36] / umole /
+  second`.
+- Sweep groups: `tripartite` = the free neuron, synapse and astrocyte axes
+  minus `I_Theta` and `omega_I` (held at their nominals 0.3 uM and 0.05 uM):
+  32 axes. `neuron_synapse` 23 (unchanged), `all` 34.
+- Astrocyte contact gate (a topology-level axis). CLI of the sweep:
+  `--stoa_gate_lo`, `--stoa_gate_hi` (default 1.0 each: off) and
+  `--seed_stoa_gate` (default 71); of the single run: `--stoa_gate_p`,
+  `--seed_stoa_gate`.
+  - Per topology k: under mode Full with lo < hi, p_k ~ U[lo, hi] drawn from
+    the task's master RNG (only then, so gate-off and Neuronal campaigns keep
+    a byte-identical seed stream); with lo == hi, p_k = lo; under Neuronal
+    the gate is not drawn, is declared inert and is held at 1.0. The prior
+    must satisfy 0 <= lo <= hi <= 1 (else ValueError).
+  - The gate draws come from a dedicated generator,
+    `default_rng((topo_seed_base + seed_stoa_gate) mod (2^31 - 1))`, never
+    from the position or wiring streams.
+  - `build_topology(..., stoa_gate_p, seed_stoa_gate)`: every viable
+    (synapse, astrocyte) pair of the topology rule is kept independently with
+    probability p_k; both directions (spillover synapse -> astrocyte and
+    gliotransmission astrocyte -> synapse) are built from the same kept list;
+    p_k >= 1 draws nothing (output bit-identical to pre-gate builds); p_k
+    outside [0, 1] raises ValueError. `StoA_viable_i/j` keep the pre-gate list.
+  - Records: `stoa_gate_p` in each simulation's npz, sidecar and failure
+    record; `seed_stoa_gate` and `n_stoa_viable` in `topology_meta.json`; the
+    keys are absent under Neuronal. `manifest_version` 5.
+- Unchanged by this block: the inverse-transform (BINV) `Binomial_fun` of
+  the asynchronous release (python, cython and cpp implementations), Block
+  1's hold, the CAdEx equations, the seed chain.
+- Callers on `main`: `launch_campaign.sh` and `submit_sweep_mixed.sh` pass
+  the gate flags since 0d8a1c9; with the 36-D root the worker rejected them
+  as unrecognized arguments, now the two agree.
+- `MEAMA/` launch code follows the cluster's copies: `submit_MEAMA.sh`,
+  `bench_sizing.sh`, `env_check.py`, `make_brian_final.sh` byte-identical to
+  them (the environment fixes of 2026-08-31: `set +u` around the conda
+  calls, the interpreter from `CONDA_PREFIX`, the brian2/python profiles);
+  `launch_MEAMA.sh` keeps Block 7's guard and takes the cluster's queues
+  (intel:48:2, cpu:48:2; cfd commented out) and default walltime 300:00:00.
+- Test oracles: `smoke_test_stoa_gate.py` (36 checks) and
+  `smoke_test_param_recording.py` (119 checks, 11 astrocyte axes) on the root;
+  Block 6's smoke test (R1 the 24-dimension fraction, R3 the 41 values of a
+  `--rc-like` rebuild, R6 the tiny end-to-end run); Block 5's report on the
+  repository (both CAdEx copies CLAMPED); an end-to-end Full `tripartite`
+  sweep with the gate.
+- Confirmed: yes 2026-10-31 that this version, with the contact gate and 37
+  parameters, is the default (author); inferred for the content of this
+  entry, read from the cluster's code, to be confirmed with the model's
+  equations (section 8).
+- Status: smoke-tested 2026-10-31 in the sandbox. `smoke_test_stoa_gate.py`
+  36 passed (it failed on the 36-D root); `smoke_test_param_recording.py` 119
+  passed; Block 6's smoke test 65 passed; Block 5 report: 2 CLAMPED, 1 SKIP;
+  audit smoke tests 18 and 41 passed; seed allocation 47; burst metrics
+  passed. End to end (`HPC_main_sweep.py`, Full, `tripartite`, 20 + 20
+  cells, 2 topologies, 0.5 s, seed 4242): 32 free axes including `O_N`;
+  gate p = 0.737 and 0.648 kept 184 of 254 and 59 of 92 viable links; 2 runs
+  ok per topology; `manifest_version` 5; theta of length 37; `stoa_gate_p`
+  in the npz and the sidecar. `APPLY_LCDUP.txt` steps 2-7 and Block 6's
+  corners and interior ran on a LindaColloDUP folder built from the cluster
+  files (Block 4). `smoke_test_cadex.py` fails stage 1 as before (section 8).
+  `MEAMA/launch_MEAMA.sh` dry run on a mock folder: the guard's scan, intel
+  and cpu at 48 cores, walltime 300:00:00. Skipped: davinci.
+
 ### 5.1 Projects and where their model runs
 
 The tester can check only what is in the repository. The cluster folders
@@ -731,7 +836,7 @@ author, is the record for them.
 |---|---|---|---|---|
 | Giulia's simulations | `campaign_cadex_hhgap_*` (`asn_campaign`) | `Phenomenological/Main/Giulia_Astro/ASD_fun_BD_cpp.py` (worker `lib_dir` = launch folder) (inferred) | `hpc/Phenomenological_finalv1/Giulia/` (relationship to `Giulia_Astro/` unresolved) | repository copy: Block 1; cluster copy: Block 5 |
 | rho1300 family, the 100-electrode project (confirmed 2026-10-30; 637 neurons, `C_MAX` 700 um in `submit_sweep_mixed.sh`) | `campaign_cadex_rho1300v*` (`asn_campaign`) | `Phenomenological/Main/ASD_fun_BD_cpp.py` (inferred) | root pipeline `hpc/Phenomenological_finalv1/` (the cluster copy may drift) | repository copy: Block 1; cluster copy: Block 5 |
-| MEAMA | `campaign_meama_rho1600_*` (`meama_campaign`) | `Phenomenological/MEAMA/ASD_fun_BD_cpp.py`, 37-D | launch code only (`hpc/Phenomenological_finalv1/MEAMA/`); the 37-D model is not in the repository | Block 5 |
+| MEAMA | `campaign_meama_rho1600_*` (`meama_campaign`) | `Phenomenological/MEAMA/ASD_fun_BD_cpp.py`, 37-D | launch code only (`hpc/Phenomenological_finalv1/MEAMA/`); the 37-D model is not in the repository [corrected 2026-10-31: the 37-D model is the root pipeline, Block 8; the cluster's copy is the same file without the hold] | Block 5 |
 | LindaColloDUP | `campaign_lcdup15_*` (`lcdup_campaign`) | `Phenomenological/LindaColloDUP/ASD_fun_BD_cpp.py`, copied from `MEAMA/` [corrected 2026-10-30: `Astro-Neuron-Network/hpc/Phenomenological_finalv1/LindaColloDUP/ASD_fun_BD_cpp.py` in the git clone, copied from `MEAMA/` and ignored by git; Block 5 sees it as an ordinary file, not GIT CLONE, since it is untracked] | launch package (Block 4); the model file is not in the repository | inherits it from a clamped `MEAMA/` copy, or Block 4's `apply_refractory_clamp.py` (step 5a); its launcher refuses a mismatch with `REFRACTORY_CLAMP`. On a copy clamped by Block 5, step 5a prints `ALREADY CLAMPED` with exit 0 for `--check` and the patch, and the launcher reads the file as clamped (sandbox, 2026-10-30) |
 
 After each relaunch, Block 3's CODE section, run on the new campaign
@@ -752,7 +857,9 @@ campaign's `job_args.json` `lib_dir`).
 | `SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes DRYRUN=1 bash launch_LCDUP.sh` | Block 4 dry run | the LindaColloDUP folder on davinci | seconds |
 | `python3 clamp_cadex_copies.py --self-test` and `python3 smoke_test_clamp_cadex_copies.py` | Block 5 | embedded fixtures; a repository clone for the mock tree | seconds |
 | `python3 clamp_cadex_copies.py <repository root>` | the repository invariant of Block 1 | the repository | seconds |
-| `python3 smoke_test_seed_allocation.py` | Block 7 (and the allocator's older groups) | numpy, the root 36-D pipeline | seconds |
+| `python3 smoke_test_seed_allocation.py` | Block 7 (and the allocator's older groups) | numpy, the root pipeline | seconds |
+| `python3 smoke_test_stoa_gate.py` | Block 8: the contact gate (36 checks) | the root folder | seconds |
+| `python3 smoke_test_param_recording.py` | Block 8: axis declaration and records under the 37-D registry (119 checks) | the root folder | seconds |
 | `python3 seed_alloc.py --root . --ledger artifacts/seed_ledger.tsv --scan-tree /davinci-1/home/ldellamea/ANN --report` | Block 7 on davinci: what the guard sees | a launch folder | seconds (not timed on davinci) |
 | `python3 smoke_test_range_check.py` | Block 6 | the repository pipeline, Brian2 and a C++ compiler | minutes |
 | `qsub -v SETUP=...,LIB_DIR=...,OUT=... submit_range_check.sh` | Block 6 on a setup, one node | the setup's folder on davinci | hours (not timed on davinci) |
@@ -765,6 +872,9 @@ campaign's `job_args.json` `lib_dir`).
   `LindaColloDUP/`), real campaign sizes, job-log naming, read speed.
   Substitutes used: 36-D `main` copies with no-op parser options for the
   37-D flags; a stub `qsub`; campaign trees built from real worker output.
+  [corrected 2026-10-31] The root is the 37-D pipeline (Block 8): no
+  substitute is needed for it, and LindaColloDUP's procedure was re-run on
+  the cluster's own files.
 - Runs at the campaigns' length (180-200 s); the checks used 5 s, and 30 s
   for false positives.
 
@@ -797,7 +907,8 @@ campaign's `job_args.json` `lib_dir`).
   Block 5's report lists them all as CLAMPED (raised 2026-10-30).
 - The 37-D model files of `MEAMA/` (and so of LindaColloDUP) are not in the
   repository, so the tester cannot check them; committing them would bring
-  them under this spec (raised 2026-10-29, still open).
+  them under this spec (raised 2026-10-29, still open). [closed 2026-10-31]
+  They are the root pipeline now (Block 8).
 - Astrocyte variables ending NaN in Full runs at nominal parameters: a
   separate failure, not investigated (raised 2026-10-29).
 - The legacy Izhikevich model in the top-level `ASN_fun_pheno.py` has a 2 ms
@@ -814,7 +925,9 @@ campaign's `job_args.json` `lib_dir`).
 - Bring the Giulia setup onto GitHub: its 37-D pipeline with the new axis,
   the probability that a synapse is contacted by an astrocyte (the contact
   gate), which today exists only in the cluster's `Giulia_Astro/` (decided
-  2026-10-30; files to come from the cluster).
+  2026-10-30; files to come from the cluster). [2026-10-31] MEAMA's gate
+  version is the default now (Block 8); whether `Giulia_Astro/` runs the
+  same code is known only once its files arrive.
 - Topology-level axes other than conn_prob (the contact gate of the new
   Giulia setup) are not design dimensions of Block 6 yet: with a gate box in
   EXTRA each topology draws its gate from the prior (raised 2026-10-30).
@@ -824,4 +937,20 @@ campaign's `job_args.json` `lib_dir`).
   `theta_to_natural`, `build_parser` (and its `conn_prob_lo`, `conn_prob_hi`,
   `conn_rule`), `PARAM_NAMES`, `LOG_PARAMS` and `N_DIMS` of the setup's module;
   checked on the 36-D root pipeline and the 37-D `Giulia/` copy, not on the
-  cluster's gate version (raised 2026-10-30).
+  cluster's gate version (raised 2026-10-30). [closed 2026-10-31] Checked on
+  the gate version: Block 6's smoke test on the 37-D root, and a corners and
+  an interior level on a LindaColloDUP folder built from MEAMA's files.
+- `aggregate_sweep.py --write-index` puts `conn_prob` but not `stoa_gate_p`
+  in its index table, so a gated campaign's index lacks the gate value (it is
+  in every sidecar and npz). The cluster's `MEAMA/aggregate_sweep.py` was not
+  in the zip of 2026-10-31 and may differ (raised 2026-10-31).
+- `smoke_test_cadex.py` (root) checks a 35-D registry: its stage 1 failed on
+  `main` before Block 8 (11 failures, 36-D) and fails after it (10, 37-D);
+  its stage 2, a nominal Neuronal run, passes now that `synapse_pdist.csv`
+  is in the root folder. Rewrite it for the 37-D registry or retire it
+  (raised 2026-10-31).
+- The model's equations (neuron, synapse with the BINV asynchronous release,
+  receptors and cleft glutamate, astrocyte calcium and IP3,
+  gliotransmission, gap junctions, the contact gate) and the rest of the
+  sweep loop get spec entries, confirmed with the author, before the
+  independent tester runs on Block 8 (decided 2026-10-31).

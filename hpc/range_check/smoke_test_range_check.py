@@ -4,7 +4,7 @@ smoke_test_range_check.py -- checks of hpc/range_check/ (specs/SPEC.md Block 6),
 the standard prior range calibration: the corners of a setup's prior box and
 random cells of its 7-bin grid.
 
-  R1  corner design on the repository's 36-D root pipeline (23 free axes +
+  R1  corner design on the repository's 37-D root pipeline (23 free axes +
       conn_prob = 24 dimensions): a two-level fraction of 16,384 runs of
       resolution >= 5, no main effect or two-axis interaction aliased with
       another (Gram check), every column balanced; per conn level 8,192
@@ -150,7 +150,7 @@ print(json.dumps(res))
 
 
 def r1(tmp):
-    print('\n[R1] corner design, 36-D root pipeline (24 dimensions: a fraction)')
+    print('\n[R1] corner design, 37-D root pipeline (24 dimensions: a fraction)')
     d = in_subprocess(make_lib(os.path.join(tmp, 'lib36')), CORNER_BODY % (
         ['--out_dir', 'x', '--mode', 'Neuronal', '--sweep_group', 'neuron_synapse'], True))
     check(d is not None, 'design built')

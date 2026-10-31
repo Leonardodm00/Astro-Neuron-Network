@@ -19,8 +19,56 @@
 set -u
 
 ENV_NAME="${ENV_NAME:-brian_final}"
-PY_VER="${PY_VER:-3.11}"
 _HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ---------------------------------------------------------------------------
+# PROFILE -- brian2 and python versions are COUPLED, pick one coherent pair.
+#
+#   brian2 >= 2.10 requires python >= 3.12   (confirmed from pip's own resolver
+#                                             2026-08-31: "2.10.0/2.10.1
+#                                             Requires-Python >=3.12")
+#   brian2 <= 2.9  breaks against numpy 2.x  (calls the ndarray.ptp method,
+#                                             removed in numpy 2.0)
+#
+# So there is no valid python-3.11 + numpy-2.x combination. The two coherent
+# choices are:
+#
+#   PROFILE=modern (default)  python 3.12, numpy 2.x, brian2 >= 2.10
+#       The stack verified end to end for this pipeline: python 3.12.3,
+#       numpy 2.4.4, scipy 1.17.1, pandas 3.0.2, sklearn 1.8.0,
+#       matplotlib 3.10.8, seaborn 0.13.2, brian2 2.10.1 -- env_check.py
+#       48/48 including a real cpp_standalone compile-and-run.
+#
+#   PROFILE=legacy            python 3.11, numpy < 2, brian2 == 2.9.0
+#       Closer to the original brian_env (python 3.11). Use this if you need
+#       MEAMA to sit on the same numerical stack as the earlier campaigns.
+#       Check what the old environment actually had first:
+#           grep -E '^(brian2|numpy|scipy) ' brian_env_versions_*.txt
+#
+# The numpy constraint is applied at CONDA CREATE time, never with a later
+# `pip install numpy<2`: conda-forge builds scipy/pandas/scikit-learn against
+# whichever numpy is resolved here, and downgrading numpy underneath them
+# afterwards is an ABI mismatch that fails in far more confusing ways than a
+# clean version error.
+# ---------------------------------------------------------------------------
+PROFILE="${PROFILE:-modern}"
+case "$PROFILE" in
+    modern)
+        PY_VER="${PY_VER:-3.12}"
+        NUMPY_SPEC="numpy"
+        BRIAN2_SPEC="${BRIAN2_SPEC:-brian2>=2.10}"
+        ;;
+    legacy)
+        PY_VER="${PY_VER:-3.11}"
+        NUMPY_SPEC="numpy<2"
+        BRIAN2_SPEC="${BRIAN2_SPEC:-brian2==2.9.0}"
+        ;;
+    *)
+        echo "ERROR: PROFILE must be 'modern' or 'legacy', got '${PROFILE}'." >&2
+        exit 2
+        ;;
+esac
+echo "[env] PROFILE=${PROFILE}: python ${PY_VER}, ${NUMPY_SPEC}, ${BRIAN2_SPEC}"
 
 echo "============================================================"
 echo "Building conda environment : ${ENV_NAME}   (python ${PY_VER})"
@@ -77,7 +125,7 @@ echo
 
 PKGS=(
     "python=${PY_VER}"
-    numpy scipy pandas matplotlib seaborn scikit-learn
+    "${NUMPY_SPEC}" scipy pandas matplotlib seaborn scikit-learn
     cython            # brian2 code generation
     gxx_linux-64      # C++ compiler inside the env, so cpp_standalone does not
                       # depend on whichever gcc a compute node happens to expose
@@ -96,18 +144,69 @@ fi
 conda create -y -n "${ENV_NAME}" -c conda-forge "${PKGS[@]}" || {
     echo "ERROR: conda create failed." >&2; exit 4; }
 
-conda activate "${ENV_NAME}" || {
-    echo "ERROR: could not activate ${ENV_NAME}." >&2; exit 5; }
+# `set -u` is on for this whole script, but `conda activate` sources
+# THIRD-PARTY hook scripts (etc/conda/activate.d/*.sh) that were not written
+# to be nounset-safe. Observed on this cluster 2026-08-31:
+#   .../deactivate.d/geotiff-deactivate.sh: line 5:
+#   _CONDA_SET_GEOTIFF_CSV: unbound variable
+# That belongs to a GDAL/GEOTIFF package in the base miniconda install,
+# unrelated to this pipeline; it fires because activating ${ENV_NAME}
+# deactivates whatever was already active in the invoking shell first.
+set +u
+conda activate "${ENV_NAME}"
+_activate_rc=$?
+set -u
+if [ $_activate_rc -ne 0 ]; then
+    echo "ERROR: could not activate ${ENV_NAME}." >&2; exit 5
+fi
+
+# DO NOT trust bare `python`/`pip` on PATH from here on. Confirmed 2026-08-31
+# on this cluster: after a successful `conda activate`, CONDA_PREFIX resolves
+# correctly to the new env, but bare `python` can still resolve to a
+# module-loaded system interpreter instead (observed: /archive/apps/Python/
+# 3.12.13/bin/python winning over the env's own 3.11). CONDA_PREFIX itself IS
+# reliable -- conda sets it directly, independent of PATH search order -- so
+# resolve the interpreter from it explicitly and use ONLY that path.
+ENV_PY="${CONDA_PREFIX}/bin/python"
+if [ ! -x "$ENV_PY" ]; then
+    echo "ERROR: ${ENV_PY} does not exist. conda create may have failed" >&2
+    echo "       silently, or CONDA_PREFIX (${CONDA_PREFIX}) is wrong." >&2
+    exit 5
+fi
+echo "[env] resolved interpreter: ${ENV_PY}"
 
 # brian2 from pip: conda-forge's build sometimes lags, and pip resolves against
-# the numpy already installed above.
-pip install --no-cache-dir brian2 || {
-    echo "ERROR: pip install brian2 failed." >&2; exit 6; }
+# the numpy already installed above. Using ENV_PY -m pip (not bare `pip`) for
+# the same PATH-reliability reason as above.
+#
+# VERSION FLOOR IS LOAD-BEARING, do not drop it. NumPy 2.0 removed the
+# `ndarray.ptp` METHOD (the `np.ptp` function still exists). brian2 2.9.0
+# calls `np.ndarray.ptp` at import time, so brian2 <= 2.9 dies with
+#   AttributeError: type object 'numpy.ndarray' has no attribute 'ptp'
+# against the numpy 2.x that conda-forge installs above. Observed here
+# 2026-08-31: an unpinned `pip install brian2` resolved to 2.9.0 and broke
+# exactly this way. brian2 2.10.x is numpy-2 clean (verified: 2.10.1 with
+# numpy 2.4.4, full cpp_standalone compile-and-run).
+echo "[env] installing ${BRIAN2_SPEC}"
+"$ENV_PY" -m pip install --no-cache-dir "$BRIAN2_SPEC" || {
+    echo "ERROR: pip install ${BRIAN2_SPEC} failed." >&2
+    echo "       brian2 >= 2.10 needs python >= 3.12; this env is ${PY_VER}." >&2
+    echo "       Either rebuild with PROFILE=modern (python 3.12), or use" >&2
+    echo "       PROFILE=legacy (python 3.11 + numpy<2 + brian2 2.9.0)." >&2
+    echo "       See what pip can actually see:" >&2
+    echo "         ${ENV_PY} -m pip index versions brian2" >&2
+    exit 6; }
+
+# Fail here, not three checks later, if the pair is still incompatible.
+"$ENV_PY" - <<'PYVER' || { echo "ERROR: brian2/numpy pair is not usable." >&2; exit 6; }
+import numpy, brian2
+print(f"[env] brian2 {brian2.__version__} imported cleanly against numpy {numpy.__version__}")
+PYVER
 
 echo
 echo "============================================================"
 echo "Installed versions in ${ENV_NAME}:"
-python - <<'PY'
+"$ENV_PY" - <<'PY'
 import importlib
 for m in ('numpy', 'scipy', 'pandas', 'matplotlib', 'seaborn', 'sklearn', 'brian2'):
     try:
@@ -120,12 +219,15 @@ print(f"  python         {sys.version.split()[0]}  ({sys.executable})")
 PY
 echo "============================================================"
 echo
-echo "NEXT -- verify before trusting it:"
-echo "    conda activate ${ENV_NAME}"
+echo "NEXT -- verify before trusting it. Use the SAME absolute path as above,"
+echo "not bare 'python' -- bare python can still resolve to a module-loaded"
+echo "system interpreter even after 'conda activate' succeeds (see the"
+echo "comment above ENV_PY in this script for what that looked like)."
 echo "    cd ${_HERE}"
-echo "    python env_check.py          # expect 47 passed, 0 failed"
+echo "    ${ENV_PY} env_check.py          # expect 47 passed, 0 failed"
 echo
-echo "Then point the job scripts at it:"
-echo "    sed -i 's/conda activate brian_env/conda activate ${ENV_NAME}/' \\"
-echo "        ${_HERE}/bench_sizing.sh ${_HERE}/submit_MEAMA.sh"
-echo "    grep -n 'conda activate' ${_HERE}/*.sh"
+echo "Nothing else needs editing: bench_sizing.sh and submit_MEAMA.sh read"
+echo "CONDA_ENV (default brian_final) rather than a hardcoded name, and both"
+echo "resolve their own interpreter the same way env_check.py was just run --"
+echo "via \\\${CONDA_PREFIX}/bin/python, never bare 'python'. To use a"
+echo "different environment name for one run:  CONDA_ENV=other bash launch_bench.sh"

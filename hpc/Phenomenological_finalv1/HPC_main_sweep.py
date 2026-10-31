@@ -113,8 +113,12 @@ if 'Cm' not in PARAM_NAMES:                          # stale 35-D registry -> re
     PARAM_NAMES.append('Cm')
     PARAM_UNITS.append('pF')
     NOMINAL_PARAMS = np.append(NOMINAL_PARAMS, 17.25) # idx 35 Cm nominal (tau_m=15 ms at gl=1.15)
-assert len(PARAM_NAMES) == len(PARAM_UNITS) == NOMINAL_PARAMS.shape[0] == 36, \
-    "registry must be 36-D (names/units/nominal); check HPC_single_run.py"
+if 'O_N' not in PARAM_NAMES:                         # stale 36-D registry -> repair
+    PARAM_NAMES.append('O_N')
+    PARAM_UNITS.append('1/(uM*s)')
+    NOMINAL_PARAMS = np.append(NOMINAL_PARAMS, 0.3)   # idx 36 O_N nominal (De Pitta default; Giulia table)
+assert len(PARAM_NAMES) == len(PARAM_UNITS) == NOMINAL_PARAMS.shape[0] == 37, \
+    "registry must be 37-D (names/units/nominal); check HPC_single_run.py"
 
 # ---------------------------------------------------------------------------
 # FREEZE OVERRIDE  (Doorn / Bucket-A refit — 2026-06)
@@ -142,11 +146,22 @@ _ASTRO_FREE    = [PARAM_NAMES[i]
                   for i in SWEEP_GROUPS.get('astro', [])
                   if PARAM_NAMES[i] not in _FROZEN]
 
+# Giulia astro-table freezes (Full tripartite campaign, 2026-08): I_Theta and
+# omega_I (the gliorelease tanh threshold/steepness) are frozen at their
+# nominals (0.3 uM / 0.05 uM), exactly as in the Giulia O_N campaign's
+# parameter table. _ASTRO_FREE already contains O_N (idx 36) via the base
+# 'astro' group once HPC_single_run exports it (the guard above repairs a
+# stale registry). Applied ONLY to the 'tripartite' group so the base
+# astro/all groups still expose every axis for other runs.
+_ASTRO_TABLE_FROZEN = {'I_Theta', 'omega_I'}
+_ASTRO_TABLE_FREE   = [n for n in _ASTRO_FREE if n not in _ASTRO_TABLE_FROZEN]
+
 SWEEP_GROUPS = {
     'neuron':         _grp(_NEURON_FREE),
     'synapse':        _grp(_SYNAPSE_FREE),
     'astro':          _grp(_ASTRO_FREE),
     'neuron_synapse': _grp(_NEURON_FREE + _SYNAPSE_FREE),
+    'tripartite':     _grp(_NEURON_FREE + _SYNAPSE_FREE + _ASTRO_TABLE_FREE),
     'all':            _grp(_NEURON_FREE + _SYNAPSE_FREE + _ASTRO_FREE),
 }
 
@@ -218,6 +233,19 @@ def conn_record_keys(conn_rule, conn_prob, p0_conn, d0_conn, beta_conn):
                 'd0_conn':   float(d0_conn),
                 'beta_conn': float(beta_conn)}
     raise ValueError(f"unknown conn_rule {conn_rule!r}; expected 'flat' or 'weibull'")
+
+
+def stoa_gate_record_keys(mode, stoa_gate_p):
+    """
+    Return the astrocyte-contact-gate keys that are causally live under `mode`,
+    as a dict of name -> float. Mirrors conn_record_keys: under mode='Neuronal'
+    no Astrocyte / Synapse_to_astro / Astro_to_Syn group exists, so the gate is
+    never read -- the key is then ABSENT rather than NaN or JSON null (a NaN
+    propagates silently; 'k in record' is true for a null; absence raises).
+    """
+    if mode == 'Full':
+        return {'stoa_gate_p': float(stoa_gate_p)}
+    return {}
 
 
 def build_axis_declaration(args, active_idx):
@@ -297,6 +325,31 @@ def build_axis_declaration(args, active_idx):
             inert[name] = ('NOT DRAWN under conn_rule=flat: the '
                            'stretched-exponential kernel is not used.')
 
+    # ---- astrocyte contact gate (topology-level; see build_topology) -------
+    # Swept iff mode=Full AND lo < hi; fixed iff mode=Full AND lo == hi;
+    # inert (NOT DRAWN) under mode=Neuronal, where no astrocyte group exists.
+    # getattr defaults keep older callers (fake-args smoke tests) valid.
+    _g_lo = float(getattr(args, 'stoa_gate_lo', 1.0))
+    _g_hi = float(getattr(args, 'stoa_gate_hi', 1.0))
+    if not (0.0 <= _g_lo <= _g_hi <= 1.0):
+        raise ValueError(
+            f"stoa gate prior [{_g_lo}, {_g_hi}] must satisfy 0 <= lo <= hi <= 1")
+    if args.mode == 'Full':
+        if _g_lo < _g_hi:
+            swept['stoa_gate_p'] = {'level': 'topology',
+                                    'low':   _g_lo,
+                                    'high':  _g_hi,
+                                    'log':   False}
+        else:
+            fixed['stoa_gate_p'] = _g_lo
+        consumed.append('stoa_gate_p')
+    else:
+        inert['stoa_gate_p'] = (
+            'NOT DRAWN under mode=%s: no astrocyte, gliotransmission or '
+            'synapse-to-astrocyte group is instantiated, so the contact gate '
+            'is never read. Held at 1.0 (gate off).' % args.mode)
+        fixed['stoa_gate_p'] = 1.0
+
     # conn_periodic is a campaign-level switch, read only by the weibull
     # kernel's minimum-image distance computation.
     fixed['conn_periodic'] = bool(args.conn_periodic)
@@ -361,7 +414,8 @@ PARAM_BOUNDS = np.array([
     (0.1,    5.0),      # 20 O_beta     [uM/s]  PLCbeta gain
     (1.0,    15.0),     # 21 O_3K       [uM/s]  IP3-3K rate
     (0.01,   1.0),      # 22 Omega_5P   [1/s]   IP3-5P degradation
-    (0.3,    1.5),      # 23 I_bias     [uM]    IP3 exogenous set-point
+    (0.3,    1.0),      # 23 I_bias     [uM]    IP3 exogenous set-point; CAPPED 1.5->1.0
+                        #                       per the Giulia table ('keep astro neuron-driven')
     (0.1,    10.0),     # 24 F          [uM/s]  GJ + exogenous permeability
     (0.1,    1.0),      # 25 I_Theta    [uM]    tanh threshold
     (0.01,   0.5),      # 26 omega_I    [uM]    tanh steepness
@@ -374,10 +428,12 @@ PARAM_BOUNDS = np.array([
     (-68.2,  -48.2),    # 33 VR         [mV]   reset potential V_R                     (linear; shifted -3.2 to track El)
     (4.5,    7.5),      # 34 I_inj      [pA]   restored to the v1-v9 box (was lo 2: 'Doorn scale dV=I_inj*u/g_L')  (linear)
     (9.2,    34.5),     # 35 Cm         [pF]   SWEPT: tau_m=Cm/gl in [8,30] ms at gl=1.15 nS (linear -> uniform tau_m)
+    (0.03,   3.0),      # 36 O_N        [1/(uM*s)]  astrocyte mGluR binding -- KEY neuron->astro axis
+                        #                       (Giulia table; 2-decade span -> log)
 ], dtype=np.float64)
 
 N_DIMS = PARAM_BOUNDS.shape[0]
-assert PARAM_BOUNDS.shape == (36, 2)
+assert PARAM_BOUNDS.shape == (37, 2)
 
 # =============================================================================
 # Log parametrisation:  sampling coordinate  +  storage / inference coordinate
@@ -698,8 +754,9 @@ def rebuild_manifest(out_dir) -> dict:
             pass
 
     manifest = {
-        'manifest_version':                 4,        # v1=14-D HH; v2=30-D HH; v3=34-D CAdEx;
+        'manifest_version':                 5,        # v1=14-D HH; v2=30-D HH; v3=34-D CAdEx;
                                                       # v4=+axis_declaration, rule-dependent conn keys
+                                                      # v5=37-D (+O_N), +stoa contact gate axis
         'n_dims':                           int(N_DIMS),
         'updated_at':                       time.strftime('%Y-%m-%dT%H:%M:%S'),
         'job_id':                           os.environ.get('PBS_JOBID', ''),
@@ -756,6 +813,9 @@ def _worker_entry(pack: dict) -> list:
     conn_periodic    : bool  — weibull minimum-image flag (provenance)
     p0_conn,d0_conn,beta_conn : float — the weibull kernel params for this
                        topology (NaN under the flat rule); recorded per sim
+    stoa_gate_p      : float -- this topology's astrocyte contact-gate keep
+                       probability (provenance only: the topology arrays are
+                       already gated; recorded per sim, ABSENT under Neuronal)
     params_list      : (k, 30) ndarray — NATURAL units; built into run_args
     theta_list       : (k, 30) ndarray — inference coords (ln on log-axes);
                        stored verbatim as the SBI label, never used in run_args
@@ -778,6 +838,7 @@ def _worker_entry(pack: dict) -> list:
     p0_conn       = pack['p0_conn']
     d0_conn       = pack['d0_conn']
     beta_conn     = pack['beta_conn']
+    stoa_gate_p   = pack.get('stoa_gate_p', 1.0)   # provenance; topology already gated
     params_list   = pack['params_list']
     theta_list    = pack['theta_list']
     iter_indices  = pack['iter_indices']
@@ -1039,6 +1100,7 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
                 net['Gliot_release'].C_Theta: params[27] * umole,
                 net['Gliot_release'].U_A:     params[28],
                 net['Gliot_release'].G_T:     params[29] * mmole,
+                net['Astrocyte'].O_N:         params[36] / umole / second,
             })
 
         # ──────────────────────────────────────────────────────────────────
@@ -1098,6 +1160,7 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
                 'conn_periodic': bool(conn_periodic),
                 **conn_record_keys(conn_rule, conn_prob,
                                    p0_conn, d0_conn, beta_conn),
+                **stoa_gate_record_keys(cli['mode'], stoa_gate_p),
                 'params':      params.tolist(),
                 'theta':       theta.tolist(),
                 'param_names': PARAM_NAMES,
@@ -1166,6 +1229,9 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
             **{_k: np.float64(_v) for _k, _v in
                conn_record_keys(conn_rule, conn_prob,
                                 p0_conn, d0_conn, beta_conn).items()},
+            # Astrocyte contact gate (topology-level; ABSENT under Neuronal).
+            **{_k: np.float64(_v) for _k, _v in
+               stoa_gate_record_keys(cli['mode'], stoa_gate_p).items()},
             topo_idx=np.int32(topo_idx),
             seed_run=np.int64(seed_run_saved),
             noise_mode=np.array(noise_mode),     # 'fresh' or 'paired'
@@ -1210,6 +1276,7 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
             'conn_periodic':      bool(conn_periodic),
             **conn_record_keys(conn_rule, conn_prob,
                                p0_conn, d0_conn, beta_conn),
+            **stoa_gate_record_keys(cli['mode'], stoa_gate_p),
             'params':             params.tolist(),
             'theta':              theta.tolist(),
             'param_names':        PARAM_NAMES,
@@ -1362,6 +1429,21 @@ def build_parser() -> argparse.ArgumentParser:
                    help='[topology_mode=wallach only] Soft distance cap on '
                         'top of the Voronoi rule. Default: %(default)s.')
     p.add_argument('--stoa_cutoff', type=float, default=70.0,   metavar='UM')
+    p.add_argument('--stoa_gate_lo', type=float, default=1.0, metavar='P',
+                   help='Astrocyte contact gate prior LOW edge. Per topology, '
+                        'stoa_gate_p ~ U[lo, hi]; each VIABLE synapse->astrocyte '
+                        'link is then kept i.i.d. with that probability (both '
+                        'directions gated together). lo == hi == 1.0 (default) '
+                        'switches the gate off (no draw; bit-identical to '
+                        'pre-gate campaigns). Read only under --mode Full.')
+    p.add_argument('--stoa_gate_hi', type=float, default=1.0, metavar='P',
+                   help='Astrocyte contact gate prior HIGH edge (see '
+                        '--stoa_gate_lo).')
+    p.add_argument('--seed_stoa_gate', type=int, default=71,
+                   help='Per-topology gate seed offset: the gate Bernoulli '
+                        'stream is seeded with (topo_seed_base + this) so it is '
+                        'dedicated -- never shared with the neuron/synapse/'
+                        'astro position streams.')
     p.add_argument('--stoa_sigma',  type=float, default=200.0,  metavar='UM',
                    help='[topology_mode=distance only] σ of the Gaussian '
                         'StoA acceptance. Default: %(default)s.')
@@ -1444,6 +1526,14 @@ def _print_banner(args, n_workers, seed_master) -> None:
     print(f'  topology fixed args  : displ_bias={args.displ_bias} gj_dist={args.gj_dist} '
           f'gj_max_dist={args.gj_max_dist} '
           f'stoa_cutoff={args.stoa_cutoff} stoa_sigma={args.stoa_sigma}')
+    if args.mode == 'Full':
+        _glo, _ghi = float(args.stoa_gate_lo), float(args.stoa_gate_hi)
+        print('  stoa contact gate    : '
+              + (f'stoa_gate_p ~ U[{_glo}, {_ghi}] per topology'
+                 if _glo < _ghi else
+                 (f'FIXED at {_glo}' if _glo < 1.0 else 'OFF (p = 1.0)')))
+    else:
+        print('  stoa contact gate    : inert (mode=Neuronal; not drawn)')
     print(f'  n_workers            : {n_workers}')
     print(f'  n_params_per_worker  : {args.n_params_per_worker}')
     print(f'  sims per topology    : {n_workers * args.n_params_per_worker}')
@@ -1587,10 +1677,24 @@ def main():
             )
         else:
             p0_k = d0_k = beta_k = float('nan')   # recorded, but unused for wiring
+        # Astrocyte contact gate draw. GUARDED like the kernel draw above: the
+        # gate consumes master_rng ONLY when it is actually swept (mode=Full
+        # and lo < hi), so every gate-off campaign -- including all existing
+        # Neuronal campaigns -- keeps a byte-identical seed stream.
+        # DELIBERATE CONSEQUENCE: a gated campaign is NOT seed-reproducible
+        # against a pre-gate campaign (same policy as the weibull kernel draw).
+        if args.mode == 'Full' and float(args.stoa_gate_lo) < float(args.stoa_gate_hi):
+            stoa_gate_p_k = float(master_rng.uniform(args.stoa_gate_lo,
+                                                     args.stoa_gate_hi))
+        elif args.mode == 'Full':
+            stoa_gate_p_k = float(args.stoa_gate_lo)    # fixed (lo == hi)
+        else:
+            stoa_gate_p_k = 1.0                         # never read; see decl.
         topo_seed_base  = int(master_rng.integers(0, 2**31 - 1))
         seed_neuron_k   = (topo_seed_base + args.seed_neuron)  % (2**31 - 1)
         seed_synapse_k  = (topo_seed_base + args.seed_synapse) % (2**31 - 1)
         seed_astro_k    = (topo_seed_base + args.seed_astro)   % (2**31 - 1)
+        seed_gate_k     = (topo_seed_base + args.seed_stoa_gate) % (2**31 - 1)
 
         # 2) Pass-1 numpy topology -------------------------------------------
         t0 = time.time()
@@ -1616,6 +1720,8 @@ def main():
                 d0_conn=d0_k,
                 beta_conn=beta_k,
                 conn_periodic=args.conn_periodic,
+                stoa_gate_p=stoa_gate_p_k,
+                seed_stoa_gate=seed_gate_k,
             )
         except Exception as e:
             print(f'[main] topo_{topo_idx:05d}: FAILED to build topology '
@@ -1644,6 +1750,8 @@ def main():
             # 'conn_rule'; see manifest.json 'axis_declaration' for the
             # authoritative swept/consumed/fixed/inert statement.
             **conn_record_keys(args.conn_rule, conn_prob, p0_k, d0_k, beta_k),
+            # Astrocyte contact gate: ABSENT under Neuronal (never read there).
+            **stoa_gate_record_keys(args.mode, stoa_gate_p_k),
             'topo_seed_base':    int(topo_seed_base),
             'seed_neuron':       int(seed_neuron_k),
             'seed_synapse':      int(seed_synapse_k),
@@ -1657,9 +1765,12 @@ def main():
             'gj_max_dist':       float(args.gj_max_dist),
             'stoa_cutoff':       float(args.stoa_cutoff),
             'stoa_sigma':        float(args.stoa_sigma),
+            'seed_stoa_gate':    int(seed_gate_k),
             'n_synapses':        int(len(topo['S_i'])),
             'n_gj_links':        int(len(topo['GJ_i'])),
             'n_stoa_links':      int(len(topo['StoA_i'])),
+            'n_stoa_viable':     int(len(topo.get('StoA_viable_i',
+                                                  topo['StoA_i']))),
             'p_eff_actual':      float(len(topo['S_i']) / max(args.Nn * (args.Nn - 1), 1)),
             't_topo_build_s':    float(t_topo),
             'mode':              args.mode,
@@ -1720,6 +1831,7 @@ def main():
                 'p0_conn':      p0_k,
                 'd0_conn':      d0_k,
                 'beta_conn':    beta_k,
+                'stoa_gate_p':  stoa_gate_p_k,
                 'params_list':  [param_matrix[i] for i in chunk_idxs],
                 'theta_list':   [theta_matrix[i] for i in chunk_idxs],
                 'iter_indices': chunk_idxs,
@@ -1732,9 +1844,14 @@ def main():
         _conn_desc = (f'conn_prob = {conn_prob:.4f}'
                       if args.conn_rule == 'flat'
                       else f'kernel p0={p0_k:.3f} d0={d0_k:.1f} beta={beta_k:.2f}')
-        print(f'\n[main] topo_{topo_idx:05d} | {_conn_desc} | '
+        _gate_desc = (f' | gate p={stoa_gate_p_k:.3f}'
+                      if args.mode == 'Full' and stoa_gate_p_k < 1.0 else '')
+        print(f'\n[main] topo_{topo_idx:05d} | {_conn_desc}{_gate_desc} | '
               f'n_syn={len(topo["S_i"])}, n_gj={len(topo["GJ_i"])}, '
-              f'n_stoa={len(topo["StoA_i"])}', flush=True)
+              f'n_stoa={len(topo["StoA_i"])}'
+              + (f'/{len(topo["StoA_viable_i"])} viable'
+                 if args.mode == 'Full' and stoa_gate_p_k < 1.0 else ''),
+              flush=True)
         print(f'[main]   launching {len(tasks)} workers × '
               f'{args.n_params_per_worker} params each '
               f'= {sims_per_topo} simulations  (topo built in {t_topo:.2f} s)',

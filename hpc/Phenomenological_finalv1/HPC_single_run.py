@@ -74,6 +74,7 @@ PARAM_NAMES = [
     'gL', 'VA', 'DeltaA', 'VR',                  # 30-33 Neuron  (NEW: CAdEx)
     'I_inj',                                     # 34    Neuron  (swept per-neuron bias SCALE)
     'Cm',                                        # 35    Neuron  (SWEPT membrane capacitance; tau_m axis, gl frozen)
+    'O_N',                                       # 36    Astrocyte (mGluR glutamate-binding rate; ported from the Giulia run)
 ]
 
 PARAM_UNITS = [
@@ -93,6 +94,7 @@ PARAM_UNITS = [
     'nS', 'mV', 'mV', 'mV',
     'pA',
     'pF',
+    '1/(uM*s)',
 ]
 
 # Nominal parameter vector.  Each entry is used as the default when the
@@ -134,6 +136,7 @@ NOMINAL_PARAMS = np.array([
     -58.2,      # 33 VR             mV    (reset potential; shifted -3.2 to track El -55->-58.2)
     4.0,        # 34 I_inj          pA    (per-neuron bias SCALE; mid of [1,7.5])
     17.25,      # 35 Cm             pF    (SWEPT; nominal tau_m=15 ms at gl=1.15 nS)
+    0.3,        # 36 O_N            1/(uM*s)  astrocyte mGluR glutamate-binding rate (De Pitta default; Giulia table)
 ])
 
 # =============================================================================
@@ -150,7 +153,7 @@ SYNAPSE_PARAMS = ['EC50_ampa', 'EC50_nmda', 'U_0_ar', 'U_max', 'U_0_sr',
                   'Omega_f_sr', 'Omega_f_ar', 'Omega_d', 'alpha_syn',
                   'g_ampa', 'g_nmda', 'x0', 'O_G', 'Omega_G']
 ASTRO_PARAMS   = ['O_beta', 'O_3K', 'Omega_5P', 'I_bias', 'F', 'I_Theta',
-                  'omega_I', 'C_Theta', 'U_A', 'G_T']
+                  'omega_I', 'C_Theta', 'U_A', 'G_T', 'O_N']
 
 
 def _grp_idx(names):
@@ -291,6 +294,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help='[topology_mode=distance only] σ of the Gaussian '
                         'connection probability for synapse→astrocyte links '
                         '(µm, default: %(default)s).')
+    p.add_argument('--stoa_gate_p', type=float, default=1.0, metavar='P',
+                   help='Astrocyte contact gate: each VIABLE synapse->astrocyte '
+                        'link produced by the topology rule is kept i.i.d. with '
+                        'this probability (both directions gated together). '
+                        '1.0 = gate off, bit-identical to pre-gate builds '
+                        '(default: %(default)s).')
+    p.add_argument('--seed_stoa_gate', type=int, default=71,
+                   help='Dedicated seed for the contact-gate Bernoulli draws '
+                        '(default: %(default)s).')
 
     # ── Seeds ────────────────────────────────────────────────────────────────
     p.add_argument('--seed_device',  type=int, default=50)
@@ -441,7 +453,9 @@ def build_topology(Nn, Na, c_max,
                    p0_conn=0.6,               # [weibull] kernel p(0)
                    d0_conn=100.0,             # [weibull] kernel length scale [um]
                    beta_conn=1.0,             # [weibull] kernel stretch exponent
-                   conn_periodic=False) -> dict:   # [weibull] minimum-image torus
+                   conn_periodic=False,       # [weibull] minimum-image torus
+                   stoa_gate_p=1.0,           # astro contact gate: keep prob per VIABLE StoA link
+                   seed_stoa_gate=None) -> dict:  # dedicated gate RNG seed (None => derived)
     """
     Build the full network topology using plain NumPy / SciPy.
     No Brian2 device is touched.
@@ -483,8 +497,26 @@ def build_topology(Nn, Na, c_max,
         GJ_i, GJ_j  (n_gj,) int32    — gap-junction (bidirectional) pairs
         StoA_i      (n_sta,) int32   — synapse index  (→ astrocyte)
         StoA_j      (n_sta,) int32   — astrocyte index
+        StoA_viable_i / StoA_viable_j : the PRE-GATE ("viable") StoA pair list.
+
+    Astrocyte contact gate (stoa_gate_p). For each fixed topology, every viable
+    (synapse, astrocyte) pair produced by the topology rule is RETAINED
+    independently with probability stoa_gate_p in [0, 1] (i.i.d. Bernoulli per
+    link, drawn on a DEDICATED generator seeded by seed_stoa_gate). Both the
+    glutamate spillover direction (synapse -> astrocyte) and the reciprocal
+    gliotransmission direction (astrocyte -> synapse) are built downstream from
+    the SAME gated pair list, so a dropped link is dropped in both directions.
+    stoa_gate_p >= 1.0 makes NO random draw: output arrays are bit-identical to
+    the pre-gate behaviour (backward compatible with every existing campaign).
     """
     from scipy.spatial import KDTree
+
+    # Validate the contact gate up front (fail fast in EVERY mode, before any
+    # expensive work; the gate itself is applied only in the Full branch).
+    if not (0.0 <= float(stoa_gate_p) <= 1.0):
+        raise ValueError(
+            f"build_topology: stoa_gate_p={stoa_gate_p!r} outside [0, 1]."
+        )
 
     print('\n[pass 1] Building topology (pure numpy) ...')
     t0 = _wall.time()
@@ -599,6 +631,8 @@ def build_topology(Nn, Na, c_max,
             GJ_j=np.array([], dtype=np.int32),
             StoA_i=np.array([], dtype=np.int32),
             StoA_j=np.array([], dtype=np.int32),
+            StoA_viable_i=np.array([], dtype=np.int32),
+            StoA_viable_j=np.array([], dtype=np.int32),
         )
         _log_topology(topo, _wall.time() - t0, topology_mode=topology_mode)
         return topo
@@ -666,12 +700,34 @@ def build_topology(Nn, Na, c_max,
         StoA_i = np.array(StoA_i_list, dtype=np.int32)
         StoA_j = np.array(StoA_j_list, dtype=np.int32)
 
+    # -- Astrocyte contact gate ----------------------------------------------
+    # Every VIABLE (synapse, astrocyte) pair from the topology rule above is
+    # retained i.i.d. with probability stoa_gate_p (see docstring). The draw
+    # lives on a DEDICATED generator: reusing seed_astro/seed_synapse integers
+    # would replay the position/wiring streams as gate marks and correlate the
+    # gate with the geometry. stoa_gate_p >= 1.0 consumes NO randomness, so a
+    # gate-off run is bit-identical to the pre-gate code path. (Value range
+    # already validated at function entry.)
+    StoA_viable_i = StoA_i.copy()
+    StoA_viable_j = StoA_j.copy()
+    if float(stoa_gate_p) < 1.0 and len(StoA_i) > 0:
+        if seed_stoa_gate is not None:
+            rng_g = np.random.default_rng(int(seed_stoa_gate))
+        else:
+            # Deterministic but distinct from every other stream in this build.
+            rng_g = np.random.default_rng([int(seed_astro),
+                                           int(seed_synapse), 71])
+        keep = rng_g.random(len(StoA_i)) < float(stoa_gate_p)
+        StoA_i = StoA_i[keep]
+        StoA_j = StoA_j[keep]
+
     topo = dict(
         N_pos=N_pos,
         S_i=S_i, S_j=S_j, S_x_syn=S_x_syn, S_y_syn=S_y_syn,
         A_pos=A_pos,
         GJ_i=GJ_i, GJ_j=GJ_j,
         StoA_i=StoA_i, StoA_j=StoA_j,
+        StoA_viable_i=StoA_viable_i, StoA_viable_j=StoA_viable_j,
     )
     _log_topology(topo, _wall.time() - t0, topology_mode=topology_mode)
     return topo
@@ -689,8 +745,11 @@ def _log_topology(topo: dict, elapsed: float, topology_mode: str = '') -> None:
           f'(p_actual = {n_syn / max(Nn*(Nn-1), 1):.4f})')
     if Na > 0:
         mode_tag = f' ({topology_mode})' if topology_mode else ''
+        n_viable = len(topo.get('StoA_viable_i', topo['StoA_i']))
+        gate_tag = (f' (gated: {n_stoa}/{n_viable} viable kept)'
+                    if n_viable != n_stoa else '')
         print(f'         {Na} astrocytes  {n_gj} GJ links  '
-              f'{n_stoa} StoA links{mode_tag}')
+              f'{n_stoa} StoA links{mode_tag}{gate_tag}')
 
 
 def save_topology(topo: dict, out_dir: str) -> str:
@@ -958,6 +1017,7 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
             net['Gliot_release'].C_Theta: params[27] * umole,
             net['Gliot_release'].U_A:     params[28],
             net['Gliot_release'].G_T:     params[29] * mmole,
+            net['Astrocyte'].O_N:         params[36] / umole / second,
         })
 
     # ── Execute ───────────────────────────────────────────────────────────────
@@ -1782,7 +1842,10 @@ def write_summary(path, args, params, topo, results):
         + (f'target = {args.conn_prob:.4f})' if args.conn_rule == 'flat'
            else 'rule = weibull)'),
         f'    Gap junctions     : {n_gj}',
-        f'    StoA links        : {n_stoa}',
+        f'    StoA links        : {n_stoa}'
+        + (f'  (gate p={args.stoa_gate_p:.3f}: '
+           f'{n_stoa}/{len(topo.get("StoA_viable_i", topo["StoA_i"]))} viable kept)'
+           if float(args.stoa_gate_p) < 1.0 else ''),
         '',
         '  Connectivity geometry',
         f'    Arena             : [{args.c_max:.0f} µm]²',
@@ -1934,6 +1997,8 @@ def main():
         d0_conn=args.d0_conn,
         beta_conn=args.beta_conn,
         conn_periodic=args.conn_periodic,
+        stoa_gate_p=args.stoa_gate_p,
+        seed_stoa_gate=args.seed_stoa_gate,
     )
     t_topo = _wall.time() - t0_topo
     save_topology(topo, args.out_dir)

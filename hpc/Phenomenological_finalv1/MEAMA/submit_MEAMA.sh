@@ -105,14 +105,46 @@ cd "$REPO_DIR" || exit 2
 CONDA_ENV="${CONDA_ENV:-brian_final}"     # injected via qsub -v; see launchers
 if [ -z "${MEAMA_NO_ENV:-}" ]; then
     module load python
+    # `set -u` is on for this whole script (catches real bugs in OUR logic),
+    # but conda's activate/deactivate machinery sources THIRD-PARTY hook
+    # scripts (etc/conda/activate.d/*.sh, deactivate.d/*.sh) that were not
+    # written to be nounset-safe. Observed on this cluster 2026-08-31:
+    #   .../deactivate.d/geotiff-deactivate.sh: line 5:
+    #   _CONDA_SET_GEOTIFF_CSV: unbound variable
+    # That script belongs to a GDAL/GEOTIFF package in the base miniconda
+    # install and has nothing to do with this pipeline; it runs because
+    # `conda activate` deactivates whatever environment was already active
+    # in the invoking shell (base, typically) before activating CONDA_ENV.
+    # Bracket only the conda calls with nounset relaxed, so a genuine bug in
+    # our own code below is still caught.
+    set +u
     source "$(conda info --base)/etc/profile.d/conda.sh"
-    conda activate "$CONDA_ENV" || {
-        echo "ERROR: conda activate ${CONDA_ENV} failed." >&2; exit 2; }
-    # Guard against the module-loaded system python winning on PATH, and
-    # against a damaged environment (brian_env was found with an incomplete
-    # stdlib: lib/python3.11/urllib/ missing). Both fail loudly here rather
-    # than deep inside a simulation hours later.
-    python - <<'PYCHK' || { echo "ERROR: ${CONDA_ENV} is not usable." >&2; exit 2; }
+    conda activate "$CONDA_ENV"
+    _activate_rc=$?
+    set -u
+    if [ $_activate_rc -ne 0 ]; then
+        echo "ERROR: conda activate ${CONDA_ENV} failed." >&2; exit 2
+    fi
+    # DO NOT trust bare `python` on PATH from here on. On this cluster, a
+    # module-loaded system python can still win on PATH even after a
+    # successful `conda activate` (confirmed 2026-08-31: CONDA_PREFIX resolved
+    # correctly to the env, but `python`/`sys.executable` still pointed at
+    # /archive/apps/Python/3.12.13/bin/python). CONDA_PREFIX itself IS
+    # reliable -- conda sets it directly, independent of PATH search order --
+    # so resolve the interpreter from it explicitly and use ONLY that path,
+    # never a bare `python` call, anywhere below in this script.
+    PY="${CONDA_PREFIX}/bin/python"
+    if [ ! -x "$PY" ]; then
+        echo "ERROR: ${PY} does not exist or is not executable." >&2
+        echo "       conda activate ${CONDA_ENV} set CONDA_PREFIX=${CONDA_PREFIX}" >&2
+        echo "       but that environment has no python binary there." >&2
+        exit 2
+    fi
+    # Guard against a damaged environment (brian_env was found with an
+    # incomplete stdlib: lib/python3.11/urllib/ missing entirely) and
+    # against the packages simply not being installed. Fails loudly here
+    # rather than deep inside a simulation hours into a campaign.
+    "$PY" - <<'PYCHK' || { echo "ERROR: ${CONDA_ENV} is not usable (see ${PY})." >&2; exit 2; }
 import os, sys, urllib, pathlib          # urllib: the exact brian_env failure
 p = os.environ.get('CONDA_PREFIX', '')
 assert p and sys.executable.startswith(p), \
@@ -121,6 +153,7 @@ import brian2, numpy
 print(f"[env] {sys.executable} | brian2 {brian2.__version__} | numpy {numpy.__version__}")
 PYCHK
 else
+    PY="python"
     echo "[env] MEAMA_NO_ENV=1 -- using the ambient python, NOT ${CONDA_ENV}."
 fi
 mkdir -p "$OUTPUT_DIR"
@@ -198,11 +231,11 @@ ARGS=(
 [ -n "$SEED_MASTER" ] && ARGS+=(--seed_master "$SEED_MASTER")
 [ "$CONN_PERIODIC" -eq 1 ] && ARGS+=(--conn_periodic)
 
-python "$SCRIPT_PATH" "${ARGS[@]}"
+"$PY" "$SCRIPT_PATH" "${ARGS[@]}"
 EXIT_CODE=$?
 
 echo "[post] rebuilding manifest for ${NODETAG}/task${IDX} ..."
-python "$SCRIPT_PATH" --rebuild_manifest_only --out_dir "$OUTPUT_DIR" || true
+"$PY" "$SCRIPT_PATH" --rebuild_manifest_only --out_dir "$OUTPUT_DIR" || true
 
 [ -z "${MEAMA_NO_ENV:-}" ] && conda deactivate
 sleep 5s

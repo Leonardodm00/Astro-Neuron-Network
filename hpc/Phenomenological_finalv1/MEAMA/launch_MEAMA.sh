@@ -39,7 +39,7 @@ C_MAX="${C_MAX:-350}"                # um -- benchmark cell you selected
 SIMTIME="${SIMTIME:-200}"            # s  -- benchmark cell you selected
 N_TOPOLOGIES_WORKER="${N_TOPOLOGIES_WORKER:-40}"   # from bench_report
 K_PARAMS="${K_PARAMS:-1}"            # n_params_per_worker; 1 = max topologies
-WALLTIME="${WALLTIME:-200:00:00}"
+WALLTIME="${WALLTIME:-300:00:00}"
 TARGET="${TARGET:-1000000}"
 HEADROOM_PCT="${HEADROOM_PCT:-200}"
 
@@ -65,9 +65,9 @@ STOA_GATE_HI="${STOA_GATE_HI:-1.0}"
 
 # --- Queues:  "name:ncpus:concurrency" ------------------------------------
 QUEUES=(
-    "cfd:192:2"
-    "intel:48:5"
-    "cpu:48:5"
+    #"cfd:192:2"
+    "intel:48:2"
+    "cpu:48:2"
   # "egeos:192:8"
 )
 # ===========================================================================

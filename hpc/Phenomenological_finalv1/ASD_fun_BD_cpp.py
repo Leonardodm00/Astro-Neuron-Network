@@ -1642,6 +1642,12 @@ def Astrocyte_Group(N_astro, Simulated_network, seed_astro=None, ics='steady',
         F        : mole/second
         I_Theta  : mole
         omega_I  : mole
+        # O_N: astrocyte mGluR glutamate-binding rate (SWEPT sensitivity axis;
+        # ported from the Giulia O_N run). Unit 1/mole/second is fixed by the
+        # Gamma_A balance with n=1 (n frozen); written as 1/mole/second (NOT
+        # 1/(mole*second)) because Brian2's unit parser rejects a parenthesised
+        # denominator. If n is ever swept this declaration must change.
+        O_N      : 1/mole/second
         ''')
        
        
@@ -1670,6 +1676,7 @@ def Astrocyte_Group(N_astro, Simulated_network, seed_astro=None, ics='steady',
     Astro.F        = Params_astroGT['F']
     Astro.I_Theta  = Params_astroGT['I_Theta']
     Astro.omega_I  = Params_astroGT['omega_I']
+    Astro.O_N      = Params_astroGT['O_N']   # default; shadowed by run_args when swept
 
     # ----- Initial conditions (Report 3 §A.1) -----
     if ics == 'rand':

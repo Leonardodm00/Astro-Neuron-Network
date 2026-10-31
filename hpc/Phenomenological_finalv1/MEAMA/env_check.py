@@ -8,10 +8,16 @@
 # the standard library explicitly instead of assuming it: a broken interpreter
 # does not announce itself, it just fails somewhere unrelated later.
 #
-# Run it from the MEAMA folder, in the environment under test:
+# Run it from the MEAMA folder, in the environment under test. Use the
+# ABSOLUTE PATH to the env's python, not bare `python` -- on this cluster,
+# `conda activate` can succeed (CONDA_PREFIX correctly set) while bare
+# `python` on PATH still resolves to a module-loaded system interpreter
+# instead (confirmed 2026-08-31: /archive/apps/Python/3.12.13/bin/python won
+# over the activated env's own 3.11). Check [1] below catches this if you
+# invoke it wrong, but invoking it right avoids the false run entirely:
 #     conda activate brian_final
 #     cd /davinci-1/home/ldellamea/ANN/Phenomenological/MEAMA
-#     python env_check.py
+#     "$CONDA_PREFIX/bin/python" env_check.py
 #
 # Exit status 0 iff every check passes. The cpp_standalone test is the one that
 # matters most -- it is the only check that exercises the C++ toolchain, the
@@ -54,11 +60,19 @@ def t_interpreter():
     prefix = os.environ.get('CONDA_PREFIX', '')
     check(bool(prefix), 'CONDA_PREFIX is set (an environment is active)')
     if prefix:
-        check(sys.executable.startswith(prefix),
-              'the running python belongs to the ACTIVE environment',
+        ok = sys.executable.startswith(prefix)
+        check(ok, 'the running python belongs to the ACTIVE environment',
               f'if this fails, `python` is resolving to another install '
               f'(module-loaded system python) and every check below is '
               f'testing the wrong interpreter')
+        if not ok:
+            print(f'\n  Re-run this exact command instead:\n'
+                  f'      {prefix}/bin/python {os.path.abspath(__file__)}\n'
+                  f'  Every script in this folder (bench_sizing.sh, '
+                  f'submit_MEAMA.sh, make_brian_final.sh) already resolves '
+                  f'the interpreter this same way -- via CONDA_PREFIX, never '
+                  f'bare `python` -- so they are not affected by this even '
+                  f'though this interactive check just was.')
 
 
 def t_stdlib():
@@ -99,6 +113,51 @@ def t_thirdparty():
         except Exception as e:
             check(False, f'import {mod}  (install: {pip_name})',
                   f'{type(e).__name__}: {e}')
+
+
+def t_version_compat():
+    section('[3b] known incompatible version pairings')
+    # NumPy 2.0 removed the ndarray.ptp METHOD (np.ptp the function survives).
+    # brian2 <= 2.9 calls np.ndarray.ptp at import time and dies with
+    #   AttributeError: type object 'numpy.ndarray' has no attribute 'ptp'
+    # Encountered for real on 2026-08-31 (brian2 2.9.0 + numpy 2.x). Checked
+    # explicitly so the failure reads as a version problem rather than as an
+    # obscure AttributeError from deep inside brian2's unit system.
+    try:
+        import numpy as np
+    except Exception:
+        check(False, 'numpy importable (prerequisite for this check)')
+        return
+
+    np_major = int(np.__version__.split('.')[0])
+    has_ptp_method = hasattr(np.ndarray, 'ptp')
+
+    try:
+        import brian2
+        b2v = brian2.__version__
+        parts = b2v.split('.')
+        b2_tuple = (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+    except Exception as e:
+        # brian2 import failure is already reported in [3]; explain it here if
+        # it matches the known-bad signature.
+        if np_major >= 2 and not has_ptp_method and 'ptp' in str(e):
+            check(False,
+                  'brian2 <= 2.9 is INCOMPATIBLE with numpy 2.x',
+                  f'numpy {np.__version__} removed ndarray.ptp. Fix: '
+                  f'pip install -U "brian2>=2.10"  (or pin "numpy<2")')
+        else:
+            check(False, 'brian2 importable (prerequisite for this check)',
+                  f'{type(e).__name__}: {str(e)[:200]}')
+        return
+
+    if np_major >= 2:
+        check(b2_tuple >= (2, 10),
+              f'brian2 {b2v} is numpy-2 compatible (needs >= 2.10)',
+              f'numpy {np.__version__} removed ndarray.ptp; brian2 <= 2.9 '
+              f'calls it at import. Fix: pip install -U "brian2>=2.10"')
+    else:
+        check(True, f'numpy {np.__version__} is 1.x; the ndarray.ptp '
+                    f'incompatibility does not apply', f'brian2 {b2v}')
 
 
 def t_matplotlib_headless():
@@ -211,6 +270,7 @@ def main():
     t_interpreter()
     t_stdlib()
     t_thirdparty()
+    t_version_compat()
     t_matplotlib_headless()
     t_toolchain()
     t_brian_standalone()
