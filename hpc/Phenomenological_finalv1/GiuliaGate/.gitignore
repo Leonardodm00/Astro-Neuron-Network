@@ -1,0 +1,19 @@
+# The GiuliaGate campaign runs from this folder of the git clone on davinci
+# (decided 2026-10-31). Nothing below is ever committed.
+# Campaign output, the seed ledger and the launch logs:
+/campaign_*/
+/artifacts/
+# The pipeline, copied from the clone's root folder in APPLY_GG.txt step 0 and
+# patched in place (apply_freeze_patch.py, apply_prior_patch.py):
+/HPC_main_sweep.py
+/HPC_single_run.py
+/ASD_fun_BD_cpp.py
+/aggregate_sweep.py
+/burst_metrics.py
+/burst_plots.py
+/synapse_pdist.csv
+# Backups written by the patchers and by the line-ending fix:
+*.bak-*
+*.crlf_bak
+# Never run "git clean -x" in the clone: it deletes ignored files, so the
+# pipeline copies and every campaign above.

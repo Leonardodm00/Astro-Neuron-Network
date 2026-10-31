@@ -1,47 +1,50 @@
-# Giulia gate campaign -- prior configuration, PROPOSAL of 2026-10-31 (read by no code yet).
-# One row per axis. Edit only status (free|fixed), low and high (free rows), value (fixed rows).
-# Natural units as in the unit column. scale is computed, not set: log when low > 0 and
-# high/low >= 10 (the rule of HPC_main_sweep.py), else lin; topology axes are drawn uniform.
-# giulia_copy: the repository copy hpc/Phenomenological_finalv1/Giulia/, group synapse_astro (the group
-#   every Giulia campaign v1-v5 ran, per the axis audit); its boxes and values are taken as v5 ones,
-#   to confirm with v5 job_args.json. registry: the 37-D default (root pipeline; MEAMA, LindaColloDUP).
-axis	group	unit	status	low	high	value	scale	giulia_copy	registry	meaning
-Sigma	neuron	mV	free	2	10	-	lin	free [2, 10] lin	nominal 4; box [3, 15] lin	membrane noise amplitude (diffusion noise, sigma_V); free in Giulia v1-v5 although a neuron axis: decide (fix at 4 mV, or keep free)
-gbarA	neuron	nS	fixed	-	-	10	-	fixed 10	nominal 0.9; box [0.01, 10] log	maximal subthreshold adaptation conductance; value of the chosen cell (here: Giulia RS)
-delta_gA	neuron	nS	fixed	-	-	1	-	fixed 1	nominal 0.135; box [0.005, 10] log	post-spike adaptation increment; value of the chosen cell (here: Giulia RS)
-tauA	neuron	ms	fixed	-	-	200	-	fixed 200	nominal 200; box [10, 2000] log	adaptation time constant; value of the chosen cell (here: Giulia RS)
-VA	neuron	mV	fixed	-	-	-50	-	fixed -50	nominal -48; box [-73, -38] lin	half-activation voltage of subthreshold adaptation; value of the chosen cell (here: Giulia RS)
-DeltaA	neuron	mV	fixed	-	-	5	-	fixed 5	nominal 5; box [0.1, 15] log	slope of subthreshold adaptation; value of the chosen cell (here: Giulia RS)
-VR	neuron	mV	fixed	-	-	-55	-	fixed -55	nominal -58.2; box [-68.2, -48.2] lin	reset potential; value of the chosen cell (here: Giulia RS)
-I_inj	neuron	pA	fixed	-	-	40	-	fixed 40	nominal 4; box [4.5, 7.5] lin	width of the per-neuron bias current: each neuron gets I_inj*u, u ~ U[-0.5, 0.5] fixed per network (mean 0); value of the chosen cell (here: Giulia RS)
-Cm	neuron	pF	fixed	-	-	200	-	fixed 200	nominal 17.25; box [9.2, 34.5] lin	membrane capacitance (tau_m = Cm/gL); value of the chosen cell (here: Giulia RS)
-DeltaT	neuron_frozen	mV	fixed	-	-	2	-	fixed 2	frozen 2	spike-initiation slope; frozen in every group; value of the chosen cell (here: Giulia RS)
-VT	neuron_frozen	mV	fixed	-	-	-50	-	fixed -50	frozen -51	spike threshold; frozen in every group; value of the chosen cell (here: Giulia RS)
-gL	neuron_frozen	nS	fixed	-	-	10	-	fixed 10	frozen 1.15	leak conductance; frozen in every group; value of the chosen cell (here: Giulia RS)
-EC50_ampa	synapse	mmole	fixed	-	-	8.6	-	fixed 8.6	nominal 8.6; box [2, 150] log	AMPA receptor half-activation glutamate concentration
-EC50_nmda	synapse	mmole	fixed	-	-	3	-	fixed 3	nominal 3; box [0.5, 50] log	NMDA receptor half-activation glutamate concentration
-U_0_ar	synapse	1	free	0.0001	0.05	-	log	free [0.0001, 0.05] log	nominal 0.003; box [0.0001, 0.05] log	asynchronous release: per-spike increment of the release rate toward U_max
-U_max	synapse	1/ms	free	0.1	1	-	log	free [0.1, 1] log	nominal 0.5; box [0.1, 1] log	asynchronous release: ceiling of the per-vesicle release rate
-U_0_sr	synapse	1	free	0.1	1	-	log	free [0.1, 1] log	nominal 0.15; box [0.1, 1] log	synchronous release probability (baseline)
-Omega_f_sr	synapse	1/s	free	0.1	4.5	-	log	free [0.1, 4.5] log	nominal 2; box [0.1, 4.5] log	facilitation decay rate, synchronous release
-Omega_f_ar	synapse	1/s	free	0.1	4.5	-	log	free [0.1, 4.5] log	nominal 1.42857; box [0.1, 4.5] log	decay rate of the asynchronous release rate
-Omega_d	synapse	1/s	free	0.1	4.5	-	log	free [0.1, 4.5] log	nominal 2; box [0.1, 4.5] log	recovery rate of the vesicle pool (depression)
-alpha_syn	synapse	1	free	0.1	1	-	log	free [0.1, 1] log	nominal 1; box [0.1, 1] log	effect of gliotransmission on release probability (Full mode)
-g_ampa	synapse	nS	free	0.05	5	-	log	free [0.05, 5] log	nominal 0.3; box [0.01, 5] log	AMPA conductance
-g_nmda	synapse	nS	free	0.05	5	-	log	free [0.05, 5] log	nominal 0.3; box [0.01, 5] log	NMDA conductance
-x0	synapse	1	free	0.05	0.5	-	log	free [0.05, 0.5] log	nominal 0.2; box [0.05, 0.5] log	quantal vesicle size (fraction of the pool per release)
-O_G	synapse	1/(uM*s)	free	0.1	10	-	log	free [0.1, 10] log	nominal 1.5; box [0.1, 10] log	presynaptic receptor binding rate of gliotransmitter
-Omega_G	synapse	1/s	free	0.001	0.1	-	log	free [0.001, 0.1] log	nominal 0.00833; box [0.001, 0.1] log	presynaptic receptor inactivation rate
-O_beta	astro	uM/s	free	0.1	5	-	log	free [0.1, 5] log	nominal 1; box [0.1, 5] log	astrocyte IP3 production by PLCbeta (gain)
-O_3K	astro	uM/s	free	1	15	-	log	free [1, 15] log	nominal 4.5; box [1, 15] log	astrocyte IP3 degradation by IP3-3K (rate)
-Omega_5P	astro	1/s	free	0.01	1	-	log	free [0.01, 1] log	nominal 0.1; box [0.01, 1] log	astrocyte IP3 degradation by IP3-5P (rate)
-I_bias	astro	uM	free	0.3	1	-	lin	free [0.3, 1] lin	nominal 0.8; box [0.3, 1] lin	astrocyte exogenous IP3 set-point
-F	astro	uM/s	free	0.1	10	-	log	free [0.1, 10] log	nominal 2; box [0.1, 10] log	permeability of the astrocyte IP3 flux through gap junctions and from the exogenous source
-I_Theta	astro	uM	fixed	-	-	0.3	-	fixed 0.3	nominal 0.3; box [0.1, 1] log	IP3-gradient threshold of that flux (tanh)
-omega_I	astro	uM	fixed	-	-	0.05	-	fixed 0.05	nominal 0.05; box [0.01, 0.5] log	steepness of that flux (tanh)
-C_Theta	astro	uM	free	0.1	2	-	log	free [0.1, 2] log	nominal 0.5; box [0.1, 2] log	astrocyte Ca2+ threshold for gliotransmitter exocytosis
-U_A	astro	1	free	0.1	0.9	-	lin	free [0.1, 0.9] lin	nominal 0.6; box [0.1, 0.9] lin	gliotransmitter release probability
-G_T	astro	mM	free	50	1000	-	log	free [50, 1000] log	nominal 200; box [50, 1000] log	total gliotransmitter in the astrocyte
-O_N	astro	1/(uM*s)	free	0.03	3	-	log	free [0.03, 3] log	nominal 0.3; box [0.03, 3] log	astrocyte mGluR glutamate binding rate (neuron-to-astrocyte coupling)
-conn_prob	topology	1	free	0.05	0.6	-	lin	free [0.05, 0.6] (June 2026 decision; v5 to confirm)	MEAMA [0.1, 0.6]; LindaColloDUP [0.01, 0.5]	flat rule: each directed neuron pair wired with this probability, one draw per network
-stoa_gate_p	topology	1	free	0.2	1.0	-	lin	absent (every viable contact kept, p = 1)	MEAMA [0.2, 1.0]	contact gate: each viable contact (a synapse and its nearest astrocyte within stoa_cutoff) kept with this probability, one draw per network; uptake and gliotransmission gated together (Full mode only)
+# GiuliaGate campaign -- prior configuration, decided by the author on 2026-10-31.
+# Read by apply_prior_patch.py: it patches the boxes of the free axes into this folder's copy of
+# HPC_main_sweep.py and gives the launchers the freeze list (the fixed axes, NAME=VALUE).
+# Edit only status (free|fixed), low and high (free rows) and value (fixed rows); then run
+# APPLY_GG.txt steps 0 and 4 again. Natural units (unit column). scale is computed, not set: log
+# when low > 0 and high/low >= 10 (the rule of HPC_main_sweep.py), else lin. Rows of the group
+# neuron_frozen, and I_Theta and omega_I, are outside the sweep group: their value must equal the
+# registry. The two topology rows are read by the launchers (conn_prob and gate boxes).
+# registry: the 37-D default (root pipeline). giulia_copy: Giulia campaigns v1-v5 (repository copy
+#   hpc/Phenomenological_finalv1/Giulia/, group synapse_astro), for reference.
+axis	group	unit	status	low	high	value	scale	registry	giulia_copy	meaning
+Sigma	neuron	mV	free	2	10	-	lin	nominal 4; box [3, 15] lin	free [2, 10]	membrane noise amplitude (diffusion noise, sigma_V)
+gbarA	neuron	nS	fixed	-	-	0.9	-	nominal 0.9; box [0.01, 10] log	fixed 10	maximal subthreshold adaptation conductance
+delta_gA	neuron	nS	fixed	-	-	0.135	-	nominal 0.135; box [0.005, 10] log	fixed 1	post-spike adaptation increment
+tauA	neuron	ms	fixed	-	-	200	-	nominal 200; box [10, 2000] log	fixed 200	adaptation time constant
+VA	neuron	mV	fixed	-	-	-48	-	nominal -48; box [-73, -38] lin	fixed -50	half-activation voltage of subthreshold adaptation
+DeltaA	neuron	mV	fixed	-	-	5	-	nominal 5; box [0.1, 15] log	fixed 5	slope of subthreshold adaptation
+VR	neuron	mV	fixed	-	-	-58.2	-	nominal -58.2; box [-68.2, -48.2] lin	fixed -55	reset potential
+I_inj	neuron	pA	fixed	-	-	4	-	nominal 4; box [4.5, 7.5] lin	fixed 40	width of the per-neuron bias current: each neuron gets I_inj*u, u ~ U[-0.5, 0.5] fixed per network
+Cm	neuron	pF	fixed	-	-	17.25	-	nominal 17.25; box [9.2, 34.5] lin	fixed 200	membrane capacitance (tau_m = Cm/gL)
+DeltaT	neuron_frozen	mV	fixed	-	-	2	-	frozen 2	fixed 2	spike-initiation slope
+VT	neuron_frozen	mV	fixed	-	-	-51	-	frozen -51	fixed -50	spike threshold
+gL	neuron_frozen	nS	fixed	-	-	1.15	-	frozen 1.15	fixed 10	leak conductance
+EC50_ampa	synapse	mmole	fixed	-	-	8.6	-	nominal 8.6; box [2, 150] log	fixed 8.6	AMPA receptor half-activation glutamate concentration
+EC50_nmda	synapse	mmole	fixed	-	-	3	-	nominal 3; box [0.5, 50] log	fixed 3	NMDA receptor half-activation glutamate concentration
+U_0_ar	synapse	1	fixed	-	-	0.003	-	nominal 0.003; box [0.0001, 0.05] log	free [0.0001, 0.05]	asynchronous release: per-spike increment of the release rate toward U_max
+U_max	synapse	1/ms	fixed	-	-	0.5	-	nominal 0.5; box [0.1, 1] log	free [0.1, 1]	asynchronous release: ceiling of the per-vesicle release rate
+U_0_sr	synapse	1	free	0.1	1	-	log	nominal 0.15; box [0.1, 1] log	free [0.1, 1]	synchronous release probability (baseline)
+Omega_f_sr	synapse	1/s	free	0.1	4.5	-	log	nominal 2; box [0.1, 4.5] log	free [0.1, 4.5]	facilitation decay rate, synchronous release
+Omega_f_ar	synapse	1/s	fixed	-	-	1.42857	-	nominal 1.42857; box [0.1, 4.5] log	free [0.1, 4.5]	asynchronous release: decay rate of the release rate
+Omega_d	synapse	1/s	free	0.1	4.5	-	log	nominal 2; box [0.1, 4.5] log	free [0.1, 4.5]	recovery rate of the vesicle pool (depression)
+alpha_syn	synapse	1	free	0.1	1	-	log	nominal 1; box [0.1, 1] log	free [0.1, 1]	effect of gliotransmission on release probability
+g_ampa	synapse	nS	free	0.05	10	-	log	nominal 0.3; box [0.01, 5] log	free [0.05, 5]	AMPA conductance
+g_nmda	synapse	nS	free	0.05	10	-	log	nominal 0.3; box [0.01, 5] log	free [0.05, 5]	NMDA conductance
+x0	synapse	1	free	0.05	0.5	-	log	nominal 0.2; box [0.05, 0.5] log	free [0.05, 0.5]	quantal vesicle size (fraction of the pool per release)
+O_G	synapse	1/(uM*s)	free	0.1	10	-	log	nominal 1.5; box [0.1, 10] log	free [0.1, 10]	presynaptic receptor binding rate of gliotransmitter
+Omega_G	synapse	1/s	free	0.001	0.1	-	log	nominal 0.00833; box [0.001, 0.1] log	free [0.001, 0.1]	presynaptic receptor inactivation rate
+O_beta	astro	uM/s	fixed	-	-	1	-	nominal 1; box [0.1, 5] log	free [0.1, 5]	astrocyte IP3 production by PLCbeta (gain)
+O_3K	astro	uM/s	fixed	-	-	4.5	-	nominal 4.5; box [1, 15] log	free [1, 15]	astrocyte IP3 degradation by IP3-3K (rate)
+Omega_5P	astro	1/s	fixed	-	-	0.1	-	nominal 0.1; box [0.01, 1] log	free [0.01, 1]	astrocyte IP3 degradation by IP3-5P (rate)
+I_bias	astro	uM	free	0.3	1	-	lin	nominal 0.8; box [0.3, 1] lin	free [0.3, 1]	astrocyte exogenous IP3 set-point
+F	astro	uM/s	free	0.1	10	-	log	nominal 2; box [0.1, 10] log	free [0.1, 10]	permeability of the astrocyte IP3 flux through gap junctions and from the exogenous source
+I_Theta	astro	uM	fixed	-	-	0.3	-	nominal 0.3; box [0.1, 1] log	fixed 0.3	IP3-gradient threshold of that flux (tanh)
+omega_I	astro	uM	fixed	-	-	0.05	-	nominal 0.05; box [0.01, 0.5] log	fixed 0.05	steepness of that flux (tanh)
+C_Theta	astro	uM	fixed	-	-	0.5	-	nominal 0.5; box [0.1, 2] log	free [0.1, 2]	astrocyte Ca2+ threshold for gliotransmitter exocytosis (and for an astrocyte event)
+U_A	astro	1	free	0.1	0.9	-	lin	nominal 0.6; box [0.1, 0.9] lin	free [0.1, 0.9]	gliotransmitter release probability
+G_T	astro	mM	free	50	1000	-	log	nominal 200; box [50, 1000] log	free [50, 1000]	total gliotransmitter in the astrocyte
+O_N	astro	1/(uM*s)	free	0.03	3	-	log	nominal 0.3; box [0.03, 3] log	free [0.03, 3]	astrocyte mGluR glutamate binding rate (neuron-to-astrocyte coupling)
+conn_prob	topology	1	free	0.05	0.4	-	lin	MEAMA [0.1, 0.6]; LindaColloDUP [0.01, 0.5]	free [0.05, 0.6]	flat rule: each directed neuron pair wired with this probability, one draw per network
+stoa_gate_p	topology	1	free	0.2	1	-	lin	MEAMA [0.2, 1.0]	absent (p = 1)	contact gate: each viable contact (a synapse and its nearest astrocyte within stoa_cutoff) kept with this probability, one draw per network; uptake and gliotransmission gated together
