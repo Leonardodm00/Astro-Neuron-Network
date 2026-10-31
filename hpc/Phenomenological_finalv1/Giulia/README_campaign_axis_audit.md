@@ -18,9 +18,10 @@ Files:
 ## Why axis names, not indices
 
 The parameter registry changed dimensionality between campaigns. The copy in
-`hpc/Phenomenological_finalv1/` is 36-D (`assert PARAM_BOUNDS.shape == (36, 2)`,
-no `O_N`); the `Giulia/` copy -- which matches `Giulia_Astro/` on the cluster --
-is 37-D with `O_N` at index 36. Comparing `params[j]` across campaigns is
+`hpc/Phenomenological_finalv1/` was 36-D (`assert PARAM_BOUNDS.shape == (36, 2)`,
+no `O_N`) until 2026-10-31 and is 37-D since then (`O_N` at index 36, the
+astrocyte contact gate; `specs/SPEC.md` Block 8); the `Giulia/` copy -- which
+matches `Giulia_Astro/` on the cluster -- is 37-D with `O_N` at index 36. Comparing `params[j]` across campaigns is
 therefore silently wrong. Everything here is keyed by name.
 
 

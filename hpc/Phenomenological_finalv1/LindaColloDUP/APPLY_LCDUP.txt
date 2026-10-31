@@ -21,7 +21,10 @@ THIS FOLDER (repository path hpc/Phenomenological_finalv1/LindaColloDUP/)
   checks/                    sandbox checks behind the settings (not needed on davinci)
 
 NOT IN GIT: the pipeline. It is copied from the cluster's MEAMA/ folder (the
-37-D version, which is not on GitHub) in step 0. Not seed_alloc.py: since
+37-D version) in step 0. Since 2026-10-31 the same version is also on GitHub,
+at hpc/Phenomenological_finalv1/ with the clamp already in ASD_fun_BD_cpp.py
+(specs/SPEC.md Block 8); step 0 still copies from MEAMA/, so this campaign
+runs MEAMA's files. Not seed_alloc.py: since
 2026-10-30 the package's own copy comes with git (MEAMA's cannot check other
 folders; a git pull replaces a copy taken from MEAMA/ by an earlier step 0).
 
