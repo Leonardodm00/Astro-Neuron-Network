@@ -1879,7 +1879,16 @@ def Synapse_to_astro(synapse, Astro, connections,
                      topology_mode='distance',
                      stoa_cutoff=70.0):
     """
-    Build the (summed) glutamate-spillover link from synapses onto astrocytes.
+    Build the glutamate-spillover link from synapses onto astrocytes.
+
+    Y_extra of astrocyte k is the MEAN of Y_A over the synapses linked to it
+    (Y_A_pre / N_incoming, summed), as in Stimberg et al. 2019 (Computational
+    Glioscience ch. 18, `Y_S_post = Y_S_pre/N_incoming`). Decided by the author
+    on 2026-10-31 (specs/SPEC.md Block 10). Until then it was the SUM over the
+    links, which reached 0.1-1.3 M during bursts and drove dGamma_A/dt past the
+    stability bound of RK4 at dt = 0.05 ms: Gamma_A diverged and the NaN spread
+    to every astrocyte through the gap junctions (specs/SPEC.md section 8).
+    An astrocyte with no link keeps Y_extra = 0.
 
     Two `topology_mode` rules are supported when `connections is True`:
 
@@ -1916,8 +1925,9 @@ def Synapse_to_astro(synapse, Astro, connections,
     """
     Syn_Astro = Synapses(synapse, Astro,
                          model='''
-                         # neurotransmitter concentration in the extracellular space
-                         Y_extra_post = Y_A_pre : mole (summed)
+                         # neurotransmitter concentration in the extracellular space:
+                         # the mean over this astrocyte's links (Block 10)
+                         Y_extra_post = Y_A_pre / N_incoming : mole (summed)
                          ''',
                          namespace=synapse.namespace,
                          method='rk4',
