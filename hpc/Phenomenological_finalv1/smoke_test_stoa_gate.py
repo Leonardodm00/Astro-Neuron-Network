@@ -6,7 +6,8 @@
 #
 #   (1) O_N registry port (Giulia table): the run_args registry is 37-D, with
 #       O_N (astrocyte mGluR glutamate-binding rate) at index 36, bounds
-#       [0.03, 3.0] (log), nominal 0.3; I_bias capped at [0.3, 1.0]; and a new
+#       [0.0001, 1.0] (log; [0.03, 3.0] until 2026-10-31, specs/SPEC.md
+#       Block 10), nominal 0.3; I_bias capped at [0.3, 1.0]; and a new
 #       'tripartite' sweep group = neuron(9) + synapse(14) + the Giulia astro
 #       table (I_Theta / omega_I frozen at nominal) = 32 run_args axes.
 #
@@ -69,8 +70,8 @@ def t1_registry(S):
     check(S.PARAM_NAMES[36] == 'O_N', 'O_N is registry index 36')
     check(S.PARAM_UNITS[36] == '1/(uM*s)', 'O_N units 1/(uM*s)')
     check(abs(S.NOMINAL_PARAMS[36] - 0.3) < 1e-12, 'O_N nominal 0.3')
-    check(tuple(S.PARAM_BOUNDS[36]) == (0.03, 3.0), 'O_N bounds [0.03, 3.0]')
-    check(36 in S.LOG_PARAMS, 'O_N is a log axis (2-decade span)')
+    check(tuple(S.PARAM_BOUNDS[36]) == (0.0001, 1.0), 'O_N bounds [0.0001, 1.0] (decided 2026-10-31)')
+    check(36 in S.LOG_PARAMS, 'O_N is a log axis (4-decade span)')
     k_ib = S.PARAM_NAMES.index('I_bias')
     check(tuple(S.PARAM_BOUNDS[k_ib]) == (0.3, 1.0),
           'I_bias capped at [0.3, 1.0] (Giulia table)')

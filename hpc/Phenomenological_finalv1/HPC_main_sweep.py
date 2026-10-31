@@ -428,8 +428,11 @@ PARAM_BOUNDS = np.array([
     (-68.2,  -48.2),    # 33 VR         [mV]   reset potential V_R                     (linear; shifted -3.2 to track El)
     (4.5,    7.5),      # 34 I_inj      [pA]   restored to the v1-v9 box (was lo 2: 'Doorn scale dV=I_inj*u/g_L')  (linear)
     (9.2,    34.5),     # 35 Cm         [pF]   SWEPT: tau_m=Cm/gl in [8,30] ms at gl=1.15 nS (linear -> uniform tau_m)
-    (0.03,   3.0),      # 36 O_N        [1/(uM*s)]  astrocyte mGluR binding -- KEY neuron->astro axis
-                        #                       (Giulia table; 2-decade span -> log)
+    (0.0001, 1.0),      # 36 O_N        [1/(uM*s)]  astrocyte mGluR binding -- KEY neuron->astro axis
+                        #                       (4-decade span -> log). Was (0.03, 3.0) (Giulia table)
+                        #                       until 2026-10-31: with the median drive of specs/SPEC.md
+                        #                       Block 10 this box spans the receptor's curve at nominal
+                        #                       activity and stays below RK4's bound (O_N < ~2.2).
 ], dtype=np.float64)
 
 N_DIMS = PARAM_BOUNDS.shape[0]

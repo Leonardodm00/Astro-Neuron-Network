@@ -10,9 +10,10 @@ folder; no cluster, no qsub; no simulation unless --sim.
      with 0 < low < high; its scale column follows the rule of
      HPC_main_sweep.py (log iff low > 0 and high/low >= 10)
   G2 patches on the copy: apply_freeze_patch.py PATCHED; apply_prior_patch.py
-     --check CHECK OK, then PATCHED with Sigma, g_ampa, g_nmda and O_N (the
-     boxes that differ from the registry); a second run ALREADY APPLIED;
-     --check-applied BOXES OK; the patched file compiles, 4 rows marked
+     --check CHECK OK, then PATCHED with Sigma, g_ampa and g_nmda (the boxes
+     that differ from the registry; O_N's [0.0001, 1] is the registry box
+     since 2026-10-31); a second run ALREADY APPLIED; --check-applied BOXES
+     OK; the patched file compiles, 3 rows marked
   G3 the patched module: N_DIMS 37; tripartite minus the freeze list = the 15
      free axes of the TSV; their PARAM_BOUNDS = the TSV boxes; LOG_PARAMS
      follows the rule (Sigma, I_bias, U_A linear, the other 12 log)
@@ -56,7 +57,8 @@ PIPELINE = ('HPC_main_sweep.py', 'HPC_single_run.py', 'ASD_fun_BD_cpp.py', 'aggr
             'burst_metrics.py', 'burst_plots.py', 'synapse_pdist.csv')
 PACKAGE = ('launch_GG.sh', 'submit_GG.sh', 'apply_prior_patch.py', 'apply_freeze_patch.py', 'seed_alloc.py',
            'prior_config.tsv', 'smoke_test_gg.py', 'APPLY_GG.txt', '.gitignore')
-CHANGED = {'Sigma': (2.0, 10.0), 'g_ampa': (0.05, 10.0), 'g_nmda': (0.05, 10.0), 'O_N': (0.0001, 1.0)}
+# O_N [0.0001, 1] equals the registry box since 2026-10-31 (specs/SPEC.md Block 10), so it is not patched
+CHANGED = {'Sigma': (2.0, 10.0), 'g_ampa': (0.05, 10.0), 'g_nmda': (0.05, 10.0)}
 LINEAR = {'Sigma', 'I_bias', 'U_A'}
 RESULTS = {'passed': 0, 'failed': 0, 'skipped': 0}
 

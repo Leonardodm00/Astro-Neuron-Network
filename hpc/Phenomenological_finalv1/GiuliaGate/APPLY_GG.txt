@@ -33,7 +33,9 @@ DECIDED 2026-10-31 (by the author; operations doc section 2):
   astrocytes: O_beta, O_3K, Omega_5P and C_Theta fixed; I_bias, F, U_A, G_T
     free in the registry boxes; O_N free in [0.0001, 1] 1/(uM s) (log; decided
     after the fix below: the receptor then spans its whole curve, and O_N <= 1
-    keeps it inside RK4's stability bound)
+    keeps it inside RK4's stability bound). Since 2026-10-31 this is also the
+    registry box (the default for MEAMA and every setup), so the prior patch
+    leaves O_N's row alone.
   conn_prob U[0.05, 0.4] per network; the contact gate p U[0.2, 1] per network
     (as MEAMA); 180 s per simulation; 1200 neurons and 1200 astrocytes per
     mm^2 on a 300 um well (108 + 108)
@@ -48,7 +50,8 @@ astrocyte axes carry no information: do not launch step 9 before it.
 [FIXED 2026-10-31] The root model now drives each astrocyte with the MEAN of
 the glutamate over its contacts instead of the sum (specs/SPEC.md Block 10,
 the author's option (a)). Step 0 copies the fixed model: run steps 0-8 again
-if you ran them before this commit.
+if you ran them before this commit. [corrected 2026-10-31] The MEDIAN over
+its contacts (the author's choice the same day), still Block 10.
 
 ORDER OF OPERATIONS (paste one line at a time)
 
@@ -68,9 +71,9 @@ conda activate brian_final && python -c "import HPC_main_sweep as S; print(S.N_D
 
 4. freeze patch and prior patch (expect "CHECK OK" and "PATCHED" for the
    freeze patch; "CHECK OK", then "PATCHED: ... Sigma [2, 10]; g_ampa [0.05, 10];
-   g_nmda [0.05, 10]; O_N [0.0001, 1]" for the prior; then "BOXES OK: 15 free
-   axes as in prior_config.tsv; changed from the registry: O_N [0.0001, 1];
-   Sigma [2, 10]; g_ampa [0.05, 10]; g_nmda [0.05, 10]"):
+   g_nmda [0.05, 10]" for the prior; then "BOXES OK: 15 free axes as in
+   prior_config.tsv; changed from the registry: Sigma [2, 10]; g_ampa [0.05, 10];
+   g_nmda [0.05, 10]" (O_N's [0.0001, 1] is the registry box):
 python apply_freeze_patch.py --check && python apply_freeze_patch.py && python apply_prior_patch.py --check && python apply_prior_patch.py && python apply_prior_patch.py --check-applied
 
    To change the prior later: edit prior_config.tsv (status, low, high,
@@ -89,8 +92,8 @@ grep -E '^[[:space:]]*dV/dt' ASD_fun_BD_cpp.py
    astrocytes 0"; before the fix the astrocyte count was above 0), then clean up:
 mkdir -p artifacts && GG_NO_ENV=1 NODETAG=probe CAMPAIGN_TAG=probe_check SEED_BASE=1000 N_TOPOLOGIES=1 C_MAX=120 SIMTIME=2 PBS_NCPUS=2 FREEZE_ENC=$(python apply_prior_patch.py --freeze-list | tr ',=' ':@') bash submit_GG.sh > artifacts/probe_check.log 2>&1; grep -E "topo_00000 done" artifacts/probe_check.log; echo "NaN warnings: neurons $(grep -c "variable 'V' has NaN" artifacts/probe_check.log), astrocytes $(grep -c "Astrocyte's variable" artifacts/probe_check.log)"; rm -rf campaign_probe_check
 
-8. dry run (expect the freeze list, "boxes : O_N [0.0001, 1]; Sigma [2, 10];
-   g_ampa [0.05, 10]; g_nmda [0.05, 10]", "V clamp (t_ref): yes", "conn_prob : U[0.05, 0.4] per
+8. dry run (expect the freeze list, "boxes : Sigma [2, 10]; g_ampa [0.05, 10];
+   g_nmda [0.05, 10]", "V clamp (t_ref): yes", "conn_prob : U[0.05, 0.4] per
    topology", "contact gate : U[0.2, 1] per topology", "Nn=108, Na=108",
    "N_TOPOLOGIES=48", a "[seed_alloc] scan of /davinci-1/home/ldellamea/ANN: ..."
    line, two "[dry run] qsub ... -J 0-434%2" lines and "[dry run] nothing submitted."):
