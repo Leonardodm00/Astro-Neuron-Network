@@ -1,4 +1,4 @@
-# SPEC -- Astro-Neuron-Network (hpc/): refractory hold, refractory audit, LindaColloDUP launch package
+# SPEC -- Astro-Neuron-Network (hpc/): refractory hold, refractory audit, LindaColloDUP and GiuliaGate launch packages
 
 Single source of truth for what the covered code must do. The code follows
 this file; when the two disagree, fix whichever is wrong and record why in the
@@ -22,12 +22,16 @@ its GIT CLONE status and queued-job hold added on top of 4e12a40; Block 4's
 g box patch, conn_prob box, VA/VR values and clone folder, and Block 6's
 two-node split, added on top of 15f82c9; Block 7 and Block 1's GitHub-wide
 check added on top of a811543; Block 6 rewritten as the standard prior range
-calibration on top of dcb52ab)
+calibration on top of dcb52ab; Block 9, Block 6's four-node split, GiuliaGate
+setup and astrocyte outcomes, and the diagnosis of the astrocyte NaN
+(section 8) added on top of fbc20f6)
 
 ## 0. Coverage
 
 - `hpc/refractory_audit/` (the audit and its `checks/`)
 - `hpc/Phenomenological_finalv1/LindaColloDUP/` (launch package and its `checks/`)
+- `hpc/Phenomenological_finalv1/GiuliaGate/` (launch package of Giulia's new
+  campaign, Block 9)
 - `hpc/range_check/` (the standard prior range calibration, Block 6)
 - the seed guard (Block 7): `hpc/Phenomenological_finalv1/seed_alloc.py`, its
   identical copies in `MEAMA/` and `LindaColloDUP/`, its smoke test
@@ -218,6 +222,26 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
     pipeline from the clone's root folder (Block 4), and Block 6's giulia
     setup moves from `Giulia_Astro/` to the new Giulia folder of the clone
     when that is built. The cluster's other copies are no longer checked.
+  - 2026-10-31 [author]: Giulia's new campaign (GiuliaGate, Block 9) runs
+    from its own folder of the clone, `hpc/Phenomenological_finalv1/GiuliaGate/`,
+    with the root pipeline copied in ("They have their own copied and
+    updated version in the clone"), MODE Full. Its prior, answering the open
+    points of section 8: the default cell, every neuron axis at its registry
+    value except Sigma, free in [2, 10] mV; C_Theta fixed; O_beta, O_3K and
+    Omega_5P fixed; the asynchronous release fixed (U_0_ar, U_max,
+    Omega_f_ar); g_ampa and g_nmda in [0.05, 10] nS; conn_prob in [0.05,
+    0.4]; the contact gate drawn per network from U[0.2, 1] ("it's the
+    standard model"; "It is the same as in MEAMA"); 180 s per simulation;
+    the densities as proposed, 1200 neurons and 1200 astrocytes per mm^2 on
+    300 um ("Densities are ok"). The other axes of Giulia's group
+    `synapse_astro` are drawn from the registry boxes as proposed: U_0_sr,
+    Omega_f_sr, Omega_d, alpha_syn, x0, O_G, Omega_G, I_bias, F, U_A, G_T,
+    O_N. 15 free axes in all. This closes "when that is built" in the
+    clone entry above: Block 6's giulia setup is this folder.
+  - 2026-10-31 [author]: GiuliaGate's range check runs on four 48-core
+    jobs ("Can you run the range check over 4 jobs with 48 cores?") and
+    reports astrocyte outcomes ("Add astrocyte outcomes"); the gate is drawn
+    per network, not designed (Block 6).
   - 2026-10-29 [author]: LindaColloDUP runs MODE Neuronal; freezes Cm,
     I_inj, VR, VA, DeltaA, EC50_ampa, EC50_nmda (and the inert alpha_syn,
     O_G, Omega_G); SIMTIME 180 s; RHO_TOTAL 1300 cells/mm^2; everything else
@@ -497,7 +521,8 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   functions, numpy only), `range_check.py` (driver), `range_analysis.py`
   (metrics, labels, summaries), `range_plots.py` (figures only),
   `submit_range_check.sh` (the PBS job), `launch_range_check.sh` (login node:
-  one setup as three PBS jobs on two 48-core nodes),
+  one setup as three PBS jobs on two 48-core nodes, or five on four with
+  NODES=4),
   `smoke_test_range_check.py`, `README_RANGE_CHECK.txt`.
 - Notation. For a setup with sweep group G and freeze list Phi:
   F = (j_1, ..., j_dr), the indices of G minus Phi (`resolve_sweep_group`,
@@ -601,10 +626,36 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   - mean y(corners), the main effects, the 20 largest interactions, the five
   lowest- and highest-rate corners, the interior bins where more than half
   the runs are silent or above 20 Hz, the Spearman list.
+- Full mode (2026-10-31; a level folder whose `job_args.json` has mode Full
+  and Na > 0, Na the density-resolved count): per run, from the astrocyte
+  events `spk_A_t`, `spk_A_i` of the npz (threshold crossings C > C_osc of
+  the astrocyte group) in the same window: astro rate = events in the window
+  / (Na (T - t_skip)); astro active fraction = astrocytes with at least one
+  event in the window; and the run's gate p (`stoa_gate_p` of the sidecar;
+  NaN when absent). Outcomes y_astro = log10(astro rate + 0.001 Hz) and
+  astro_silent = 1[astro active fraction < 0.1]. `corner_effects.csv` adds
+  E_j(y_astro) and E_j(astro_silent); `interior_bins.csv` adds the astro
+  rate quartiles and the share astro-silent; `interior_spearman.csv` adds
+  Spearman rho of each dimension with y_astro; the summary adds the
+  astrocyte shares, quartiles, curvature, main effects, astro-silent bins
+  (more than half) and Spearman list. Runs without astrocyte metrics leave
+  these NaN; a table without any (Neuronal setups) is unchanged.
+  `gate_networks.csv` (only when some run carries a gate): one row per
+  network (level folder, topology) with its p, conn_prob, number of runs,
+  median y and, in Full mode, median y_astro and share astro-silent; dy =
+  the network's median y minus the median of those over the networks of its
+  folder (dy_astro likewise), which removes the conn_prob level a folder
+  shares. The summary gives Spearman rho of p with dy and with dy_astro over
+  the networks (at least 3 with spread, else "too few networks"). The gate
+  is drawn per topology, not designed, so it is read across networks only.
 - Plots (`range_plots.py DIR`): `corner_effects.png` (main effects on y and
   on the shares), `interior_bins.png` (one panel per dimension: median rate
   per bin with the interquartile band on one shared scale, shares per bin),
   `rate_distributions.png` (log rate of corners, centre points, interior).
+  Full mode: a third panel of `corner_effects.png` (effects on y_astro and
+  astro_silent), `interior_bins_astro.png` (median astro rate per bin with
+  its interquartile band, share astro-silent), and a second panel of
+  `rate_distributions.png` (y_astro).
 - Job script (`submit_range_check.sh`, 48 cores, walltime 24 h, `-k eo`):
   SETUP = lcdup | giulia (else exit 2). lcdup: LIB_DIR default
   `/davinci-1/home/ldellamea/ANN/Astro-Neuron-Network/hpc/Phenomenological_finalv1/LindaColloDUP`
@@ -612,9 +663,26 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   default `Cm,I_inj,VA=-48,DeltaA,VR=-58.2,EC50_ampa,EC50_nmda,alpha_syn,O_G,Omega_G`
   or FREEZE_ENC decoded, `:` for `,` and `@` for `=`; `--conn_prob_lo 0.01
   --conn_prob_hi 0.5`; `--Nn 115` overridden by the density, so Nn = 159);
-  refuses a LIB_DIR without both box markers. giulia: LIB_DIR default
-  `Phenomenological/Main/Giulia_Astro`, LIKE = the first
-  `campaign_cadex_hhgap_v5/sweep_*/job_args.json` there (none: exit 2).
+  refuses a LIB_DIR without both box markers. giulia (2026-10-31; until then
+  `Phenomenological/Main/Giulia_Astro` with LIKE from its
+  `campaign_cadex_hhgap_v5`): LIB_DIR default
+  `/davinci-1/home/ldellamea/ANN/Astro-Neuron-Network/hpc/Phenomenological_finalv1/GiuliaGate`
+  (Block 9), no LIKE. Before conda it refuses (exit 2) a LIB_DIR without
+  `apply_prior_patch.py` or `prior_config.tsv`, or whose `HPC_main_sweep.py`
+  lacks `def _apply_freeze(` or `--stoa_gate_lo`; with CHECK_ONLY=1 and a
+  `python3` on PATH it also runs `apply_prior_patch.py --check-applied`
+  (failure: exit 2). After the environment check, with
+  `$CONDA_PREFIX/bin/python`: `--check-applied` (failure: exit 2), the
+  freeze list from `--freeze-list` unless FREEZE_ENC is given, and the
+  conn_prob and gate boxes from `--topology conn_prob` and `--topology
+  stoa_gate_p` (each value must be a number, else exit 2; an empty freeze
+  list: exit 2). Settings: `--mode Full --sweep_group tripartite --freeze
+  <list> --density 1200 --density_astro 1200 --c_max 300 --Nn 115 --Na 115
+  --conn_rule flat --conn_prob_lo/hi <TSV> --stoa_gate_lo/hi <TSV>
+  --seed_stoa_gate 71`, the geometry and seeds as lcdup (`--dpi 100`).
+  CORNER_LEVELS and INTERIOR_LEVELS may separate their levels with `:`
+  (decoded to spaces); every level must be a non-negative integer (else
+  exit 2). The banner prints the freeze list.
   EXTRA (space-separated) ends every call. PHASES = all (default) | corners |
   interior | none: corners at levels CORNER_LEVELS (default `0 1`) with
   `--rc-corner-topologies CORNER_TOPOS` (8) `--rc-corner-budget
@@ -645,16 +713,46 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   INTERIOR_RUNS, RC_SIMTIME, EXTRA, FREEZE_ENC, CONDA_ENV. A refused job 1:
   exit 3, nothing else submitted; job 2: exit 3 and the `qdel` line for job
   1; job 3: exit 3 and the manual command. DRYRUN=1 prints the three qsub
-  lines and submits nothing.
+  lines and submits nothing. NODES = 2 (default, the above) | 4 (else exit
+  2; 2026-10-31): four compute jobs, `rc_corners_a` and `rc_corners_b`
+  (Q_CORNERS; PHASES=corners with CORNER_LEVELS=0 and 1), `rc_interior_a`
+  and `rc_interior_b` (Q_INTERIOR; PHASES=interior with INTERIOR_LEVELS =
+  0..H-1 and H..B-1 joined by `:`, B = BINS (default 7, at least 2, else
+  exit 2), H = ceil(B/2)), then `rc_analysis` with `-W
+  depend=afterany:<the four jobs>`; with NODES=4 a set CORNER_LEVELS or
+  INTERIOR_LEVELS exits 2. A refused compute job k > 1: exit 3 and the
+  `qdel` line for the jobs already submitted. DRYRUN=1 prints N + 1 qsub
+  lines (N compute jobs).
 - LindaColloDUP sizes: dr = 13, d = 14, so the full factorial: per conn
   level 8,192 corners + 256 centre points = 8 x 48 x 22 = 8,448 runs (16,896
   in all, conn_prob 0.01 and 0.5); interior 7 levels of 2,352 cells
   (7 x 48 x 7), 16,464 runs, conn_prob = 0.045 + 0.07 L.
+- GiuliaGate sizes (Block 9): dr = 15, d = 16 > 14, so a 2^(16-2) fraction,
+  N_c = 16,384, resolution 8 in the sandbox; per conn level 8,192 corners +
+  256 centre points = 8 x 48 x 22 = 8,448 runs at conn_prob 0.05 and 0.4;
+  interior 7 levels of 2,352 cells, conn_prob = 0.075 + 0.05 L. Gate p per
+  topology: 16 corner networks and 49 interior networks.
 - Custom code: the fraction's generator search (`range_design.py`
   docstring: pyDOE3 1.6.2's `fracfact_by_res(n, 5)` is not resolution V for
   n = 14 or 23, checked 2026-10-30), the labels and the effect contrasts.
-- Test oracles (`smoke_test_range_check.py`, R1-R10; 65 checks with Brian2,
-  58 and 1 skipped with `--no-sim`): R1 the fraction for the 37-D root (the
+- Test oracles (`smoke_test_range_check.py`, R1-R11 and R6b; 87 checks with
+  Brian2, 76 and 2 skipped with `--no-sim`; 65 and 58 before 2026-10-31).
+  Added 2026-10-31: R6b end to end in Full mode on a patched GiuliaGate copy
+  (12 neurons, 6 astrocytes: Na = 6, astrocyte metrics and one gate p in its
+  box in runs.csv, astrocyte columns in the corner effects,
+  `gate_networks.csv`); R7 also plants astrocyte events (0.05 Hz and 0.4 Hz
+  with B at its lower and upper bound, times p / 0.6 per network) and
+  recovers E_B(y_astro) = 0.884 for a planted 0.892 with |E_A(y_astro)| =
+  0.002, and the gate Spearman over 12 networks, 0.986; R9 the giulia setup
+  (freeze list and both boxes from the TSV, Full, tripartite, 1200/1200 on
+  300 um; `:` level lists; an unpatched copy and a missing TSV exit 2 before
+  any `range_check.py` call); R10 NODES=4 (queues, levels, the dependency on
+  all four, BINS=5, NODES=3, a level list with NODES=4, a refused third
+  submission, the dry run, giulia on four nodes, an unpatched copy refused
+  by the precheck); R11 the GiuliaGate design (the 15 free axes of the TSV,
+  the 16-dimension fraction of resolution >= 5, 8,192 corners at conn_prob
+  0.05, 2,352 interior cells at 0.075, Sigma linear [2, 10], g_ampa and
+  g_nmda log [0.05, 10], every fixed axis at its TSV value). R1 the fraction for the 37-D root (the
   36-D root until 2026-10-31)
   pipeline (resolution 8 here, floor 7; no aliased main/two-axis pair in a
   Gram check; balanced; the two levels together are the design; every vector
@@ -676,9 +774,13 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   bounds in all combinations, the same number of random cells of the 7-bin
   grid, a fraction keeping every main effect and two-axis interaction when
   2^d > 16,384, two 48-core jobs with a 24 h walltime then the analysis job,
-  the standard for every setup), the two setups and the 20 s runs; inferred
-  for T_c = 8, T_i = 7, the centre points, the seeds, t_skip = 2 s, the
-  reporting cut-offs and the queue assignment.
+  the standard for every setup), the two setups and the 20 s runs; yes
+  2026-10-31 for four 48-core jobs for GiuliaGate, the astrocyte outcomes,
+  the gate drawn per network, and the giulia setup = GiuliaGate (section 4);
+  inferred for T_c = 8, T_i = 7, the centre points, the seeds, t_skip = 2 s,
+  the reporting cut-offs, the queue assignment, the four-node split (corner
+  levels on intel, interior halves on cpu), the astrocyte definitions (rate
+  floor 0.001 Hz, astro-silent below 0.1) and the per-network gate analysis.
 - Status: smoke-tested 2026-10-30 in the sandbox (36-D root pipeline,
   freeze-patched copy, 37-D `Giulia/` copy; both phases with the exact
   LindaColloDUP settings on 159 neurons: corners at conn_prob 0.5, interior
@@ -689,7 +791,11 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   this design at the author's request. The R8 failure on davinci of
   2026-10-30 (an exported `module` function reaching the job) was fixed by
   the sealed environment, now used by R9 and R10; it passed on davinci at
-  1757d3e.
+  1757d3e. Smoke-tested 2026-10-31 in the sandbox after the four-node split,
+  the giulia setup and the astrocyte outcomes: 87 passed (76 + 2 skipped
+  with `--no-sim`). Skipped: davinci. The astrocyte outcomes of a real
+  GiuliaGate run carry no information until section 8's astrocyte NaN is
+  fixed (R6b checks the plumbing only).
 
 ### Block 7: the seed guard across ~/ANN
 
@@ -841,6 +947,116 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   `MEAMA/launch_MEAMA.sh` dry run on a mock folder: the guard's scan, intel
   and cpu at 48 cores, walltime 300:00:00. Skipped: davinci.
 
+### Block 9: GiuliaGate launch package (Giulia's new campaign)
+
+- Purpose (decided 2026-10-31, section 4): launch Giulia's new campaign on
+  davinci from `hpc/Phenomenological_finalv1/GiuliaGate/` in the clone:
+  MODE Full on the root pipeline (Block 8, with Block 1's hold), neurons at
+  the default cell, the astrocyte contact gate drawn per network, 15 free
+  axes.
+- Modules: `prior_config.tsv` (the prior), `apply_prior_patch.py` (its only
+  reader; standard library), `apply_freeze_patch.py` (Block 4's, a byte
+  copy), `launch_GG.sh` (login node), `submit_GG.sh` (PBS worker),
+  `seed_alloc.py` (Block 7's, a byte copy), `smoke_test_gg.py`,
+  `APPLY_GG.txt`, `.gitignore` (the pipeline copies, `campaign_*/`,
+  `artifacts/`, the patchers' backups). The pipeline files are copied in
+  from the root folder (`APPLY_GG.txt` step 0) and patched in place.
+- `prior_config.tsv`: ASCII, LF, tab-separated; `#` lines are comments; the
+  header `axis group unit status low high value scale registry giulia_copy
+  meaning`; one row per registry axis (37) plus `conn_prob` and
+  `stoa_gate_p` (group `topology`). status `free` (low < high, natural
+  units; value `-`) or `fixed` (a number in value; low, high `-`). scale is
+  derived, not read: `log` iff low > 0 and high/low >= 10 (the rule of
+  `HPC_main_sweep.py`), else `lin`. `apply_prior_patch.py` refuses (exit 1,
+  nothing written) a TSV that does not list exactly those axes once each, a
+  status other than free or fixed, a free row without 0 < high - low, a
+  fixed row without a number, DeltaT, VT, gL, I_Theta or omega_I (outside
+  `tripartite`, so the freeze list cannot move them) not fixed at the
+  registry value, a topology box outside 0 <= low <= high <= 1, and a file
+  with CR bytes.
+- `apply_prior_patch.py` modes: none: every free axis whose `PARAM_BOUNDS`
+  row differs from the TSV gets the TSV box, the row marked
+  `[GiuliaGate box 2026-10-31] registry (lo, hi)`; timestamped backup,
+  temporary file, re-read, compile, restore on failure; a second run prints
+  `ALREADY APPLIED` and writes nothing; a file patched to other boxes is
+  refused (copy it in again). `--check` (validate, print what would change);
+  `--check-applied` (exit 0 iff every free row equals its TSV box; prints
+  `BOXES OK: 15 free axes ...; changed from the registry: ...`);
+  `--freeze-list` (every fixed axis of `tripartite`, `NAME=VALUE` as written
+  in the TSV, comma-separated); `--topology NAME` (`LOW HIGH`);
+  `--self-test` (12 checks). Options `--tsv`, `--file`, `--nominal`.
+- Decided values (section 4). Free (15): Sigma [2, 10] mV (lin); U_0_sr
+  [0.1, 1]; Omega_f_sr [0.1, 4.5] 1/s; Omega_d [0.1, 4.5] 1/s; alpha_syn
+  [0.1, 1]; g_ampa, g_nmda [0.05, 10] nS; x0 [0.05, 0.5]; O_G [0.1, 10]
+  1/(uM s); Omega_G [0.001, 0.1] 1/s; I_bias [0.3, 1] uM (lin); F [0.1, 10]
+  uM/s; U_A [0.1, 0.9] (lin); G_T [50, 1000] mM; O_N [0.03, 3] 1/(uM s); log
+  unless marked lin; the registry boxes except Sigma (registry [3, 15]) and
+  g_ampa, g_nmda (registry [0.01, 5]). Fixed at the registry nominals:
+  gbarA 0.9 nS, delta_gA 0.135 nS, tauA 200 ms, VA -48 mV, DeltaA 5 mV, VR
+  -58.2 mV, I_inj 4 pA, Cm 17.25 pF, DeltaT 2 mV, VT -51 mV, gL 1.15 nS,
+  EC50_ampa 8.6 mM, EC50_nmda 3 mM, U_0_ar 0.003, U_max 0.5 1/ms,
+  Omega_f_ar 1.42857 1/s, O_beta 1 uM/s, O_3K 4.5 uM/s, Omega_5P 0.1 1/s,
+  I_Theta 0.3 uM, omega_I 0.05 uM, C_Theta 0.5 uM. Topology: conn_prob
+  [0.05, 0.4], stoa_gate_p [0.2, 1].
+- Launcher (`launch_GG.sh`): reads the freeze list, the boxes changed from
+  the registry and both topology boxes through `apply_prior_patch.py`
+  (python3 on the login node); refuses (exit 2) a missing pipeline file,
+  worker, patcher or TSV, a missing python3, a copy without `--freeze`, a
+  copy failing `--check-applied`, a topology value that is not a number;
+  (exit 3) SIZING_CONFIRMED != 1, REFRACTORY_CLAMP neither yes nor no;
+  (exit 4) a model with other than one dV/dt line, REFRACTORY_CLAMP not
+  matching it, a density <= 0, a topology box outside 0 <= LOW <= HIGH <= 1,
+  a freeze list that is not `NAME[=NUMBER]` items, an existing
+  `campaign_<tag>` folder (not in a dry run); (exit 5) no seed range from
+  `seed_alloc.py` or an allocator without `--scan-tree`. Settings: MODE
+  Full, SWEEP_GROUP tripartite, CONN_RULE flat, C_MAX 300 um, SIMTIME 180 s,
+  DENSITY 1200 and DENSITY_ASTRO 1200 per mm^2 (Nn = Na = 108),
+  N_TOPOLOGIES_WORKER 48 (an estimate), K_PARAMS 1, WALLTIME 24 h, TARGET
+  10^6, HEADROOM_PCT 200, QUEUES intel:48:2 and cpu:48:2, CAMPAIGN_TAG
+  `cadex_hhgap_clamp_v1`, CONDA_ENV `brian_final`; ntasks per queue =
+  ceil(TARGET w_q / sum w x HEADROOM / (N_TOPOLOGIES_WORKER x ncpus x k)),
+  w_q = ncpus x concurrency (435 per queue with the defaults). The seed
+  guard as Block 7 (SEED_SCAN_TREE default the cluster's ANN). `qsub -v`
+  carries REPO_DIR, NODETAG, SEED_BASE, CONDA_ENV, LAUNCH_ID, CAMPAIGN_TAG,
+  N_TOPOLOGIES, N_PARAMS_PER_WORKER, C_MAX, SIMTIME, DENSITY, DENSITY_ASTRO,
+  MODE, SWEEP_GROUP, FREEZE_ENC (`:` for `,`, `@` for `=`), CONN_RULE,
+  CONN_PERIODIC, CONN_PROB_LO/HI, STOA_GATE_LO/HI. A launch writes
+  `campaign_<tag>/PROVENANCE_<launch id>.txt` with the settings and the
+  sha256 of the pipeline files, the TSV, the patcher, both scripts and the
+  allocator. DRYRUN=1 prints the qsub lines and submits nothing.
+- Worker (`submit_GG.sh`, `#PBS -N gg_campaign`, `-k eo`): refuses (exit 2)
+  no NODETAG, no FREEZE_ENC, a REPO_DIR without `HPC_main_sweep.py` or
+  `apply_prior_patch.py`, a copy without `--freeze`, a SEED_BASE that is not
+  a non-negative integer, a failed `conda activate` or environment check,
+  and a copy failing `--check-applied` (run with the environment's python,
+  `$CONDA_PREFIX/bin/python`; with GG_NO_ENV=1 the ambient `python`, for the
+  probe). Calls `HPC_main_sweep.py` with the injected settings, NN = NA =
+  115 (overridden by the densities), displ_bias 20, topology_mode wallach,
+  gj_dist 200, gj_max_dist 150, stoa_cutoff 70, stoa_sigma 200,
+  seed_stoa_gate 71, seeds 50 / 39 / 35 / 60, dpi 150, `--seed_master
+  SEED_BASE + PBS_ARRAY_INDEX`, then `--rebuild_manifest_only`.
+- Test oracles (`smoke_test_gg.py`, G1-G8; 32 passed and 1 skipped without
+  `--sim`, 35 with it): G1 the TSV (self-test, the 39 rows, 15 free axes,
+  the scale rule); G2 the patches on a fresh copy (PATCHED with Sigma,
+  g_ampa, g_nmda; ALREADY APPLIED; BOXES OK; compiles; 3 marked rows); G3
+  the patched module (N_DIMS 37; tripartite minus the freeze list = the 15
+  TSV axes; their boxes; LOG_PARAMS); G4 refusals (a TSV edited after
+  patching; DeltaT off the registry); G5 the launcher's dry run (banner,
+  two qsub lines with every injected value; refusals); G6 the worker with a
+  stub python (`--check-applied` first; the arguments; refusals); G7 bytes;
+  G8 the real worker on a tiny Full network (2 runs ok, the gate p in every
+  sidecar, no neuron NaN warning; it prints the astrocyte NaN warnings).
+- Confirmed: yes 2026-10-31 for the prior, the folder, MODE Full, 180 s,
+  the densities and the gate (section 4); inferred for the sizing
+  (N_TOPOLOGIES_WORKER 48 from MEAMA's measured 22.5 min per topology at
+  ~3,300 synapses and 200 s, scaled to ~2,600 synapses and 180 s: ~16 min,
+  so ~13 h per task; not measured), the tag, TARGET and HEADROOM (as
+  MEAMA), the queues and the probe.
+- Status: smoke-tested 2026-10-31 in the sandbox (35 passed with `--sim`).
+  Skipped: davinci. Blocked for the campaign by section 8's astrocyte NaN:
+  in G8 and in every Full run at nominal parameters the astrocytes go
+  non-finite within about 30 ms.
+
 ### 5.1 Projects and where their model runs
 
 The tester can check only what is in the repository. The cluster folders
@@ -850,7 +1066,7 @@ author, is the record for them.
 
 | project | campaign family (job name) | model file it runs | in the repository | how it gets the clamp |
 |---|---|---|---|---|
-| Giulia's simulations | `campaign_cadex_hhgap_*` (`asn_campaign`) | `Phenomenological/Main/Giulia_Astro/ASD_fun_BD_cpp.py` (worker `lib_dir` = launch folder) (inferred) | `hpc/Phenomenological_finalv1/Giulia/` (relationship to `Giulia_Astro/` unresolved) | repository copy: Block 1; cluster copy: Block 5 |
+| Giulia's simulations | `campaign_cadex_hhgap_*` (`asn_campaign`) | `Phenomenological/Main/Giulia_Astro/ASD_fun_BD_cpp.py` (worker `lib_dir` = launch folder) (inferred) [corrected 2026-10-31: the new campaign, `cadex_hhgap_clamp_v1` (`gg_campaign`), runs the root pipeline copied into `Astro-Neuron-Network/hpc/Phenomenological_finalv1/GiuliaGate/` in the clone, Block 9] | `hpc/Phenomenological_finalv1/Giulia/` (relationship to `Giulia_Astro/` unresolved); the new campaign's launch package `GiuliaGate/` (Block 9) | repository copy: Block 1; cluster copy: Block 5; GiuliaGate copies the clamped root file (step 0), and its launcher refuses a mismatch with `REFRACTORY_CLAMP` |
 | rho1300 family, the 100-electrode project (confirmed 2026-10-30; 637 neurons, `C_MAX` 700 um in `submit_sweep_mixed.sh`) | `campaign_cadex_rho1300v*` (`asn_campaign`) | `Phenomenological/Main/ASD_fun_BD_cpp.py` (inferred) | root pipeline `hpc/Phenomenological_finalv1/` (the cluster copy may drift) | repository copy: Block 1; cluster copy: Block 5 |
 | MEAMA | `campaign_meama_rho1600_*` (`meama_campaign`) | `Phenomenological/MEAMA/ASD_fun_BD_cpp.py`, 37-D | launch code only (`hpc/Phenomenological_finalv1/MEAMA/`); the 37-D model is not in the repository [corrected 2026-10-31: the 37-D model is the root pipeline, Block 8; the cluster's copy is the same file without the hold] | Block 5 |
 | LindaColloDUP | `campaign_lcdup15_*` (`lcdup_campaign`) | `Phenomenological/LindaColloDUP/ASD_fun_BD_cpp.py`, copied from `MEAMA/` [corrected 2026-10-31: copied from the clone's root folder, Block 8, already clamped] [corrected 2026-10-30: `Astro-Neuron-Network/hpc/Phenomenological_finalv1/LindaColloDUP/ASD_fun_BD_cpp.py` in the git clone, copied from `MEAMA/` and ignored by git; Block 5 sees it as an ordinary file, not GIT CLONE, since it is untracked] | launch package (Block 4); the model file is not in the repository | inherits it from a clamped `MEAMA/` copy, or Block 4's `apply_refractory_clamp.py` (step 5a); its launcher refuses a mismatch with `REFRACTORY_CLAMP`. On a copy clamped by Block 5, step 5a prints `ALREADY CLAMPED` with exit 0 for `--check` and the patch, and the launcher reads the file as clamped (sandbox, 2026-10-30) |
@@ -881,6 +1097,9 @@ campaign's `job_args.json` `lib_dir`).
 | `qsub -v SETUP=...,LIB_DIR=...,OUT=... submit_range_check.sh` | Block 6 on a setup, one node | the setup's folder on davinci | hours (not timed on davinci) |
 | `SETUP=lcdup bash launch_range_check.sh` (first with `DRYRUN=1`) | Block 6 on a setup: corners and interior on two nodes, then the analysis job | the setup's folder on davinci; `qsub` | seconds to submit; the jobs: 352 (corners) and 343 (interior) runs per worker, about 11 h per node at the sandbox core's speed (not timed on davinci; `claude/Prior_Range_Calibration_Standard.md` section 6) |
 | `python3 range_check.py --rc-phase corners --rc-level 0 --rc-out X --rc-design-only <settings>` | Block 6: a level's design, nothing run | the setup's folder | seconds |
+| `NODES=4 SETUP=giulia bash launch_range_check.sh` (first with `DRYRUN=1`) | Block 6 on GiuliaGate: corners split by conn_prob level on two intel nodes, interior split in two on two cpu nodes, then the analysis job | the GiuliaGate folder after `APPLY_GG.txt` steps 0-4; `qsub` | seconds to submit; the jobs about 1-2, 9-10, 4 and 6-7 h (estimate from MEAMA's davinci throughput, not measured) |
+| `python3 smoke_test_gg.py` (`--sim` adds G8) | Block 9 | the repository; G8 needs Brian2 and a C++ compiler | 30 s; about 1 min with `--sim` |
+| `SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes DRYRUN=1 bash launch_GG.sh` | Block 9 dry run | the GiuliaGate folder after steps 0-4 | seconds |
 
 ## 7. Not executable in the sandbox
 
@@ -924,7 +1143,9 @@ campaign's `job_args.json` `lib_dir`).
 - Block 6's `giulia` setup reads `LIB_DIR` = `Phenomenological/Main/Giulia_Astro`
   and its settings from that folder's `campaign_cadex_hhgap_v5`, both outside
   the clone; it is replaced by the new Giulia folder's own settings when that
-  folder is built (section 4, raised 2026-10-31).
+  folder is built (section 4, raised 2026-10-31). [closed 2026-10-31] The
+  giulia setup is GiuliaGate and reads its prior from `prior_config.tsv`
+  (Block 6).
 - Where this project's decision log lives (raised 2026-10-29).
 - The cluster folder of each project in section 5.1 (inferred paths) and that
   Block 5's report lists them all as CLAMPED (raised 2026-10-30).
@@ -933,7 +1154,51 @@ campaign's `job_args.json` `lib_dir`).
   them under this spec (raised 2026-10-29, still open). [closed 2026-10-31]
   They are the root pipeline now (Block 8).
 - Astrocyte variables ending NaN in Full runs at nominal parameters: a
-  separate failure, not investigated (raised 2026-10-29).
+  separate failure, not investigated (raised 2026-10-29). [diagnosed
+  2026-10-31; sandbox, root pipeline at fbc20f6 via `HPC_single_run.py`,
+  108 + 108 cells, conn_prob 0.225, gate 0.6, seed 7, every astrocyte
+  recorded at every 0.05 ms step] Mechanism: an astrocyte's `Y_extra` is the
+  sum of `Y_A` over its contacts (`Y_extra_post = Y_A_pre : mole (summed)`
+  in `Synapse_to_astro`); each presynaptic spike adds rho Y_T r_Sr to `Y_A`
+  (rho Y_T = 0.005 x 6000 mM = 30 mM), which clears with tau 30 ms, so
+  during the onset burst `Y_extra` reached 0.1-1.3 M. The receptor equation
+  dGamma_A/dt = O_N (Y_bias + spill_over Y_extra)^n (1 - Gamma_A) - Omega_N
+  (1 + zeta C/(C + K_KC)) Gamma_A is linear in Gamma_A with decay rate
+  lambda_A = O_N (Y_bias + spill_over Y_extra)^n + Omega_N (1 + zeta C/(C +
+  K_KC)); the group's explicit RK4 is stable for lambda_A dt < 2.785, so,
+  with n = 1, dt = 0.05 ms and Y_bias = 0, only while spill_over Y_extra <
+  2.785 / (dt O_N): 186 mM at the nominal O_N = 0.3 /(uM s), 18.6 mM at
+  O_N's upper bound 3. Past it Gamma_A oscillated with growing amplitude
+  (x15-20 per step) to -inf (float32, the group's dtype) at 26.7 ms in the
+  first astrocyte, then NaN, and the NaN spread through `I_coupling_tot`
+  (gap junctions) to all 108 astrocytes within 2.5 ms. Effect: for the rest
+  of the run no astrocyte event (C > C_osc is false for NaN) and so no
+  gliotransmitter release; the neurons stay finite (no NaN path leads back
+  to them) and run without astrocyte feedback. At nominal parameters every
+  Full run is affected, MEAMA's campaigns included (same files, Block 8;
+  not checked on their data). The project's reference implementation drives
+  the astrocyte with the mean over its synapses, `Y_S_post =
+  Y_S_pre/N_incoming : mmolar (summed)` (Stimberg et al. 2019, Computational
+  Glioscience ch. 18, p. 498; project knowledge), where this model sums.
+  Candidate fix, tested in scratch copies (not committed): (a) the mean,
+  `Y_extra_post = Y_A_pre/N_incoming : mole (summed)`; (b) Gamma_A advanced
+  once per step by its exact solution for Y_extra and C held over the step
+  (the Rush-Larsen update), Gamma_A <- Gamma_inf + (Gamma_A - Gamma_inf)
+  exp(-lambda_A dt) with Gamma_inf = O_N (Y_bias + spill_over Y_extra)^n /
+  lambda_A, as a `run_regularly` before the state update, Gamma_A removed
+  from the RK4 system. Results (5 s at nominal; 3 s at a high-drive corner:
+  O_N 3, U_0_sr 1, g_ampa = g_nmda = 10 nS, Omega_d 4.5 /s, x0 0.5,
+  conn_prob 0.4, gate 1): unchanged model, NaN from 27 ms and 0 astrocyte
+  events; (a) alone finite at nominal but NaN from 7 ms at the corner
+  (Y_extra up to 29.9 mM, beyond the 24.8 mM bound at O_N = 3); (b) alone
+  finite in both, Y_extra up to 6 M; (a) + (b) finite in both, Y_extra up
+  to 30 mM, Gamma_A in [0, 1], one calcium event per astrocyte in 5 s (C
+  peaking at 0.6-0.9 uM about 2 s in). Decision pending with the author;
+  until then Full-mode astrocyte outcomes carry no information. Also for
+  the author: with either drive Gamma_A stays near saturation (mean 0.85-0.9)
+  once the network is active, since O_N spill_over Y_extra >> Omega_N for
+  Y_extra in the mM range, so O_N moves the astrocyte little; a calibration
+  question for the receptor and for `spill_over`.
 - The legacy Izhikevich model in the top-level `ASN_fun_pheno.py` has a 2 ms
   refractory period and no hold: during it the quadratic term can carry v
   past the threshold with no reset, as in the CAdEx runaway. Not used by any
@@ -961,10 +1226,25 @@ campaign's `job_args.json` `lib_dir`).
   patch for El, t_ref, gl_ref and the frozen VT and gL rows, or the
   registry cell), Sigma, I_inj, the boxes, the gate box, the culture size,
   the folder and the tag. The launch package and its block follow the
-  decisions.
+  decisions. [closed 2026-10-31] Decided (section 4): the registry cell,
+  Sigma free in [2, 10] mV, I_inj fixed at 4 pA, the boxes, the gate box
+  [0.2, 1], 300 um at 1200 + 1200 per mm^2, the GiuliaGate folder, the tag
+  `cadex_hhgap_clamp_v1`; the launch package is Block 9
+  (`campaign_config.tsv` and `CONFIG_SHEET.md` removed, `prior_config.tsv`
+  read by `apply_prior_patch.py`).
 - Topology-level axes other than conn_prob (the contact gate of the new
   Giulia setup) are not design dimensions of Block 6 yet: with a gate box in
   EXTRA each topology draws its gate from the prior (raised 2026-10-30).
+  [2026-10-31] The giulia setup reads the gate box from `prior_config.tsv`;
+  the gate stays drawn per network as in the campaign (decided), and its
+  effect is read across networks (`gate_networks.csv`).
+- `HPC_single_run.py`'s standalone command line maps its 30 flags onto the
+  first 30 slots of the 37-D vector by position: slots 1, 4, 12, 13 and 16
+  carry the old names (`--g_AHP`, `--Tau_Ca`, `--g_na`, `--g_kd`,
+  `--alpha_Ca`) of what are now gbarA, tauA, DeltaT, VT and delta_gA, and
+  slots 30-36 (gL, VA, DeltaA, VR, I_inj, Cm, O_N) have no flag. The sweep
+  does not use it (it builds run_args from the vector); only standalone
+  single runs are affected (raised 2026-10-31).
 - Block 6 for the 37-D setups: the driver uses only `main`, `sample_theta`,
   `resolve_sweep_group`, `_apply_freeze`, `_resolve_n_workers`,
   `NOMINAL_PARAMS`, `PARAM_BOUNDS_THETA`, `natural_to_theta`,
