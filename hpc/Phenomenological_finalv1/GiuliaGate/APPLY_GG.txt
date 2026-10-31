@@ -30,8 +30,10 @@ DECIDED 2026-10-31 (by the author; operations doc section 2):
     except Sigma, free in [2, 10] mV (linear)
   synapses: U_0_ar, U_max, Omega_f_ar (the asynchronous release) fixed;
     g_ampa and g_nmda free in [0.05, 10] nS; EC50_ampa, EC50_nmda fixed
-  astrocytes: O_beta, O_3K, Omega_5P and C_Theta fixed; I_bias, F, U_A, G_T,
-    O_N free in the registry boxes
+  astrocytes: O_beta, O_3K, Omega_5P and C_Theta fixed; I_bias, F, U_A, G_T
+    free in the registry boxes; O_N free in [0.0001, 1] 1/(uM s) (log; decided
+    after the fix below: the receptor then spans its whole curve, and O_N <= 1
+    keeps it inside RK4's stability bound)
   conn_prob U[0.05, 0.4] per network; the contact gate p U[0.2, 1] per network
     (as MEAMA); 180 s per simulation; 1200 neurons and 1200 astrocytes per
     mm^2 on a 300 um well (108 + 108)
@@ -43,6 +45,10 @@ parameters too, and stay so: no astrocyte events, no gliotransmission. The
 neurons are unaffected. A fix is proposed and waits for the author's decision.
 Until it is in, the range check's astrocyte outcomes and the campaign's
 astrocyte axes carry no information: do not launch step 9 before it.
+[FIXED 2026-10-31] The root model now drives each astrocyte with the MEAN of
+the glutamate over its contacts instead of the sum (specs/SPEC.md Block 10,
+the author's option (a)). Step 0 copies the fixed model: run steps 0-8 again
+if you ran them before this commit.
 
 ORDER OF OPERATIONS (paste one line at a time)
 
@@ -62,9 +68,9 @@ conda activate brian_final && python -c "import HPC_main_sweep as S; print(S.N_D
 
 4. freeze patch and prior patch (expect "CHECK OK" and "PATCHED" for the
    freeze patch; "CHECK OK", then "PATCHED: ... Sigma [2, 10]; g_ampa [0.05, 10];
-   g_nmda [0.05, 10]" for the prior; then "BOXES OK: 15 free axes as in
-   prior_config.tsv; changed from the registry: Sigma [2, 10]; g_ampa [0.05, 10];
-   g_nmda [0.05, 10]"):
+   g_nmda [0.05, 10]; O_N [0.0001, 1]" for the prior; then "BOXES OK: 15 free
+   axes as in prior_config.tsv; changed from the registry: O_N [0.0001, 1];
+   Sigma [2, 10]; g_ampa [0.05, 10]; g_nmda [0.05, 10]"):
 python apply_freeze_patch.py --check && python apply_freeze_patch.py && python apply_prior_patch.py --check && python apply_prior_patch.py && python apply_prior_patch.py --check-applied
 
    To change the prior later: edit prior_config.tsv (status, low, high,
@@ -79,21 +85,20 @@ python smoke_test_gg.py | tail -1
 grep -E '^[[:space:]]*dV/dt' ASD_fun_BD_cpp.py
 
 7. probe, about 1-2 min on the login node: 2 tiny Full runs through the real
-   worker (expect "topo_00000 done: 2 ok" and 0 NaN warnings for the neurons;
-   the astrocyte count is above 0 until the fix of the KNOWN PROBLEM is in,
-   0 after it), then clean up:
+   worker (expect "topo_00000 done: 2 ok" and "NaN warnings: neurons 0,
+   astrocytes 0"; before the fix the astrocyte count was above 0), then clean up:
 mkdir -p artifacts && GG_NO_ENV=1 NODETAG=probe CAMPAIGN_TAG=probe_check SEED_BASE=1000 N_TOPOLOGIES=1 C_MAX=120 SIMTIME=2 PBS_NCPUS=2 FREEZE_ENC=$(python apply_prior_patch.py --freeze-list | tr ',=' ':@') bash submit_GG.sh > artifacts/probe_check.log 2>&1; grep -E "topo_00000 done" artifacts/probe_check.log; echo "NaN warnings: neurons $(grep -c "variable 'V' has NaN" artifacts/probe_check.log), astrocytes $(grep -c "Astrocyte's variable" artifacts/probe_check.log)"; rm -rf campaign_probe_check
 
-8. dry run (expect the freeze list, "boxes : Sigma [2, 10]; g_ampa [0.05, 10];
-   g_nmda [0.05, 10]", "V clamp (t_ref): yes", "conn_prob : U[0.05, 0.4] per
+8. dry run (expect the freeze list, "boxes : O_N [0.0001, 1]; Sigma [2, 10];
+   g_ampa [0.05, 10]; g_nmda [0.05, 10]", "V clamp (t_ref): yes", "conn_prob : U[0.05, 0.4] per
    topology", "contact gate : U[0.2, 1] per topology", "Nn=108, Na=108",
    "N_TOPOLOGIES=48", a "[seed_alloc] scan of /davinci-1/home/ldellamea/ANN: ..."
    line, two "[dry run] qsub ... -J 0-434%2" lines and "[dry run] nothing submitted."):
 SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes DRYRUN=1 bash launch_GG.sh
 
    BEFORE STEP 9: the prior range calibration on FOUR nodes, from the
-   range_check folder of the clone (README_RANGE_CHECK.txt there), once the
-   astrocyte fix is in (KNOWN PROBLEM above): the 16,384 corners of the box
+   range_check folder of the clone (README_RANGE_CHECK.txt there), with the
+   fixed model (KNOWN PROBLEM above): the 16,384 corners of the box
    (resolution-8 fraction of the 16 dimensions) split by conn_prob level over
    two intel nodes, the 7-bin interior (16,464 cells) split over two cpu
    nodes, and the analysis, with the astrocyte outcomes. It reads the prior
@@ -120,8 +125,7 @@ python -c "import json,glob; f=sorted(glob.glob('campaign_cadex_hhgap_clamp_v1/s
     doc section 5): 48 topologies fit 20 h below ~1,500 s each and 24 h below
     ~1,800 s; a walltime kill loses only the topology in progress. Then the
     job error logs carrying Brian2's NaN warnings (Brian2 writes to stderr,
-    so the .e files; expect 0 for the neurons, and 0 for the astrocytes once
-    the fix is in):
+    so the .e files; expect 0 for the neurons and 0 for the astrocytes):
 grep -h "topo_.* done:" ~/gg_campaign.o* | tail -5
 echo "neurons $(grep -l "variable 'V' has NaN" ~/gg_campaign.e* 2>/dev/null | wc -l), astrocytes $(grep -l "Astrocyte's variable" ~/gg_campaign.e* 2>/dev/null | wc -l)"
 

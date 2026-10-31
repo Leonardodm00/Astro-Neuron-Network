@@ -10,8 +10,9 @@ folder; no cluster, no qsub; no simulation unless --sim.
      with 0 < low < high; its scale column follows the rule of
      HPC_main_sweep.py (log iff low > 0 and high/low >= 10)
   G2 patches on the copy: apply_freeze_patch.py PATCHED; apply_prior_patch.py
-     --check CHECK OK, then PATCHED with Sigma, g_ampa and g_nmda; a second run
-     ALREADY APPLIED; --check-applied BOXES OK; the patched file compiles
+     --check CHECK OK, then PATCHED with Sigma, g_ampa, g_nmda and O_N (the
+     boxes that differ from the registry); a second run ALREADY APPLIED;
+     --check-applied BOXES OK; the patched file compiles, 4 rows marked
   G3 the patched module: N_DIMS 37; tripartite minus the freeze list = the 15
      free axes of the TSV; their PARAM_BOUNDS = the TSV boxes; LOG_PARAMS
      follows the rule (Sigma, I_bias, U_A linear, the other 12 log)
@@ -33,8 +34,9 @@ folder; no cluster, no qsub; no simulation unless --sim.
   G7 bytes: every file of the package pure ASCII, LF only
   G8 (--sim; Brian2 and a C++ compiler, 2-4 min) the real worker on a tiny
      Full network (APPLY_GG.txt step 7: 2 runs of 2 s on a 120 um well):
-     "topo_00000 done: 2 ok", the gate p in its box in every sidecar, and the
-     count of NaN warnings of the neurons and of the astrocytes, printed
+     "topo_00000 done: 2 ok", the gate p in its box in every sidecar, and no
+     NaN warning for the neurons or the astrocytes (before Block 10, the
+     summed astrocyte drive gave 4 astrocyte warnings here)
 
 Run:  python3 smoke_test_gg.py | tail -1          (about 30 s)
       python3 smoke_test_gg.py --sim | tail -1    (also G8)
@@ -54,7 +56,7 @@ PIPELINE = ('HPC_main_sweep.py', 'HPC_single_run.py', 'ASD_fun_BD_cpp.py', 'aggr
             'burst_metrics.py', 'burst_plots.py', 'synapse_pdist.csv')
 PACKAGE = ('launch_GG.sh', 'submit_GG.sh', 'apply_prior_patch.py', 'apply_freeze_patch.py', 'seed_alloc.py',
            'prior_config.tsv', 'smoke_test_gg.py', 'APPLY_GG.txt', '.gitignore')
-CHANGED = {'Sigma': (2.0, 10.0), 'g_ampa': (0.05, 10.0), 'g_nmda': (0.05, 10.0)}
+CHANGED = {'Sigma': (2.0, 10.0), 'g_ampa': (0.05, 10.0), 'g_nmda': (0.05, 10.0), 'O_N': (0.0001, 1.0)}
 LINEAR = {'Sigma', 'I_bias', 'U_A'}
 RESULTS = {'passed': 0, 'failed': 0, 'skipped': 0}
 
@@ -141,12 +143,13 @@ def g2(tmp):
     check(r1.returncode == 0 and 'PATCHED' in r1.stdout, 'apply_freeze_patch.py: PATCHED')
     check(r2.returncode == 0 and 'CHECK OK' in r2.stdout, 'apply_prior_patch.py --check: CHECK OK')
     check(r3.returncode == 0 and 'PATCHED' in r3.stdout and all(n in r3.stdout for n in CHANGED),
-          'apply_prior_patch.py: PATCHED, with Sigma, g_ampa, g_nmda')
+          'apply_prior_patch.py: PATCHED, with %s' % ', '.join(CHANGED))
     check(r4.returncode == 0 and 'ALREADY APPLIED' in r4.stdout, 'a second run: ALREADY APPLIED, nothing written')
     check(r5.returncode == 0 and 'BOXES OK: 15 free axes' in r5.stdout, '--check-applied: BOXES OK: 15 free axes')
     r6 = run([sys.executable, '-m', 'py_compile', 'HPC_main_sweep.py'], cwd=lib)
     n_mark = open(os.path.join(lib, 'HPC_main_sweep.py')).read().count('[GiuliaGate box 2026-10-31]')
-    check(r6.returncode == 0 and n_mark == 3, 'the patched file compiles; 3 rows carry the GiuliaGate mark')
+    check(r6.returncode == 0 and n_mark == len(CHANGED),
+          'the patched file compiles; %d rows carry the GiuliaGate mark' % len(CHANGED))
     return lib
 
 
@@ -294,9 +297,9 @@ def g8(tmp):
           'two sidecars, the gate p in [0.2, 1] in each')
     n_v = len(re.findall(r"variable 'V' has NaN", out))
     n_a = len(re.findall(r"Astrocyte's variable '\w+' has NaN", out))
-    print('    NaN warnings: neurons %d, astrocytes %d (the astrocyte NaN of specs/SPEC.md section 8 shows here '
-          'until it is fixed)' % (n_v, n_a))
-    check(n_v == 0, 'no NaN warning for the neurons')
+    print('    NaN warnings: neurons %d, astrocytes %d' % (n_v, n_a))
+    # before Block 10 (2026-10-31) the summed astrocyte drive gave 4 astrocyte warnings here
+    check(n_v == 0 and n_a == 0, 'no NaN warning for the neurons or the astrocytes (Block 10)')
 
 
 def main():

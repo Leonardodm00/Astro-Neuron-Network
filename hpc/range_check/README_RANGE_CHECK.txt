@@ -86,10 +86,11 @@ BEFORE SUBMITTING (davinci)
      box and the gate box from prior_config.tsv itself and checks the boxes
      (apply_prior_patch.py --check-applied); the launcher's precheck does the
      same on the login node. Nothing to pass in EXTRA.
-  4. Giulia, Full mode: the astrocytes go non-finite about 27 ms into a
-     run at nominal parameters with the model of 2026-10-31 (specs/SPEC.md
-     section 8); until that is fixed the astrocyte outcomes are all
-     astro-silent and the astrocyte axes look inert.
+  4. Giulia, Full mode: the astrocytes went non-finite about 27 ms into a
+     run at nominal parameters with the model before 2026-10-31 (specs/SPEC.md
+     section 8). Fixed on 2026-10-31 (Block 10: each astrocyte is driven by
+     the mean of the glutamate over its contacts): GiuliaGate's step 0 must
+     copy the fixed model before the range check runs.
 
 ON DAVINCI, from ~/ANN/Astro-Neuron-Network/hpc/range_check after git pull:
   conda activate brian_final && python smoke_test_range_check.py --no-sim | tail -1

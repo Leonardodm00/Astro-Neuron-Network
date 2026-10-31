@@ -45,6 +45,6 @@ omega_I	astro	uM	fixed	-	-	0.05	-	nominal 0.05; box [0.01, 0.5] log	fixed 0.05	s
 C_Theta	astro	uM	fixed	-	-	0.5	-	nominal 0.5; box [0.1, 2] log	free [0.1, 2]	astrocyte Ca2+ threshold for gliotransmitter exocytosis (and for an astrocyte event)
 U_A	astro	1	free	0.1	0.9	-	lin	nominal 0.6; box [0.1, 0.9] lin	free [0.1, 0.9]	gliotransmitter release probability
 G_T	astro	mM	free	50	1000	-	log	nominal 200; box [50, 1000] log	free [50, 1000]	total gliotransmitter in the astrocyte
-O_N	astro	1/(uM*s)	free	0.03	3	-	log	nominal 0.3; box [0.03, 3] log	free [0.03, 3]	astrocyte mGluR glutamate binding rate (neuron-to-astrocyte coupling)
+O_N	astro	1/(uM*s)	free	0.0001	1	-	log	nominal 0.3; box [0.03, 3] log	free [0.03, 3]	astrocyte mGluR glutamate binding rate (neuron-to-astrocyte coupling)
 conn_prob	topology	1	free	0.05	0.4	-	lin	MEAMA [0.1, 0.6]; LindaColloDUP [0.01, 0.5]	free [0.05, 0.6]	flat rule: each directed neuron pair wired with this probability, one draw per network
 stoa_gate_p	topology	1	free	0.2	1	-	lin	MEAMA [0.2, 1.0]	absent (p = 1)	contact gate: each viable contact (a synapse and its nearest astrocyte within stoa_cutoff) kept with this probability, one draw per network; uptake and gliotransmission gated together
