@@ -1881,14 +1881,17 @@ def Synapse_to_astro(synapse, Astro, connections,
     """
     Build the glutamate-spillover link from synapses onto astrocytes.
 
-    Y_extra of astrocyte k is the MEAN of Y_A over the synapses linked to it
-    (Y_A_pre / N_incoming, summed), as in Stimberg et al. 2019 (Computational
-    Glioscience ch. 18, `Y_S_post = Y_S_pre/N_incoming`). Decided by the author
-    on 2026-10-31 (specs/SPEC.md Block 10). Until then it was the SUM over the
-    links, which reached 0.1-1.3 M during bursts and drove dGamma_A/dt past the
-    stability bound of RK4 at dt = 0.05 ms: Gamma_A diverged and the NaN spread
-    to every astrocyte through the gap junctions (specs/SPEC.md section 8).
-    An astrocyte with no link keeps Y_extra = 0.
+    Y_extra of astrocyte k is the MEDIAN of Y_A over the synapses linked to it
+    (for an even number of links, the mean of the two middle values), updated
+    at the start of every time step by astro_median_function (below); an
+    astrocyte with no link keeps Y_extra = 0. Decided by the author on
+    2026-10-31 (specs/SPEC.md Block 10): first the mean (Y_A_pre / N_incoming,
+    summed, as in Stimberg et al. 2019, Computational Glioscience ch. 18), then
+    the median. Until then it was the SUM over the links, which reached
+    0.1-1.3 M during bursts and drove dGamma_A/dt past the stability bound of
+    RK4 at dt = 0.05 ms: Gamma_A diverged and the NaN spread to every
+    astrocyte through the gap junctions (specs/SPEC.md section 8).
+    The Synapses object returned carries the links only (no model).
 
     Two `topology_mode` rules are supported when `connections is True`:
 
@@ -1923,14 +1926,11 @@ def Synapse_to_astro(synapse, Astro, connections,
         Swapped pairs ready to be passed to `Astro_to_Syn` (which needs
         (i_astrocyte, j_synapse)).
     """
+    # The links only: Y_extra is the median over them (Block 10), written by the
+    # run_regularly operation added at the end of this function.
     Syn_Astro = Synapses(synapse, Astro,
-                         model='''
-                         # neurotransmitter concentration in the extracellular space:
-                         # the mean over this astrocyte's links (Block 10)
-                         Y_extra_post = Y_A_pre / N_incoming : mole (summed)
-                         ''',
+                         model='',
                          namespace=synapse.namespace,
-                         method='rk4',
                          name='ecs_syn_to_astro')
 
     # Errors NOT swallowed (Report 3 §A.2).
@@ -1980,7 +1980,94 @@ def Synapse_to_astro(synapse, Astro, connections,
             "[Source, Target]."
         )
 
+    # neurotransmitter concentration seen by each astrocyte: the median of Y_A
+    # over its links, at the start of every step (Block 10)
+    Astro.namespace['astro_median_Y_A'] = astro_median_function(synapse, Syn_Astro, len(Astro))
+    Astro.run_regularly('Y_extra = astro_median_Y_A(i, t)', when='start',
+                        name='Astrocyte_Y_extra_median')
     return Syn_Astro, Connections_list
+
+
+# Custom: Brian2 aggregates a synaptic variable onto its target only as a sum
+# (the "(summed)" flag); it has no median. Checked: Brian2 2.11 summed
+# variables, network_operation (Python, not available in cpp_standalone).
+# So the median is a user-defined Brian2 Function with a C++ implementation
+# for cpp_standalone, which reads the synapses' Y_A and the link indices from
+# the standalone arrays (names taken from the device at build time), and a
+# NumPy implementation for the runtime device (tests). Both give, for each
+# astrocyte k with links, the median of Y_A over the synapses linked to k
+# (numpy.median convention: the mean of the two middle values for an even
+# count), and 0 for an astrocyte without a link. Checked by
+# smoke_test_astro_drive.py (both implementations against known values).
+_ASTRO_MEDIAN_CPP = '''
+#include <vector>
+#include <algorithm>
+static std::vector< std::vector<int> > _astro_median_links;
+static std::vector<double> _astro_median_cache;
+static double _astro_median_t = -1.0;
+static bool _astro_median_ready = false;
+double astro_median_Y_A(const int k, const double t)
+{
+    if (!_astro_median_ready) {
+        const size_t n_links = brian::%(pre)s.size();
+        _astro_median_links.assign(%(n)d, std::vector<int>());
+        for (size_t s = 0; s < n_links; s++)
+            _astro_median_links[brian::%(post)s[s]].push_back(brian::%(pre)s[s]);
+        _astro_median_cache.assign(%(n)d, 0.0);
+        _astro_median_ready = true;
+    }
+    if (t != _astro_median_t) {
+        std::vector<double> buf;
+        for (int a = 0; a < %(n)d; a++) {
+            const std::vector<int>& L = _astro_median_links[a];
+            const size_t m = L.size();
+            if (m == 0) { _astro_median_cache[a] = 0.0; continue; }
+            buf.resize(m);
+            for (size_t q = 0; q < m; q++) buf[q] = brian::%(ya)s[L[q]];
+            const size_t h = m / 2;
+            std::nth_element(buf.begin(), buf.begin() + h, buf.end());
+            const double upper = buf[h];
+            if (m %% 2 == 1) _astro_median_cache[a] = upper;
+            else _astro_median_cache[a] = 0.5 * (upper + *std::max_element(buf.begin(), buf.begin() + h));
+        }
+        _astro_median_t = t;
+    }
+    return _astro_median_cache[k];
+}
+'''
+
+
+def astro_median_function(synapse, links, n_astro):
+    """Brian2 Function astro_median_Y_A(k, t) -> mole: the median of
+    synapse.Y_A over the links of `links` (a Synapses object from `synapse` to
+    the astrocytes) onto astrocyte k; 0 for an astrocyte without a link.
+
+    The C++ implementation (cpp_standalone) builds the per-astrocyte index
+    lists once, from the link arrays, and recomputes all medians once per time
+    value t (the first call of a step); the other calls of the step read the
+    cache. The NumPy implementation (runtime device) computes the same with
+    numpy.median. `n_astro` is the size of the astrocyte group.
+    """
+    dev = get_device()
+    names = dict(ya=dev.get_array_name(synapse.variables['Y_A'], access_data=False),
+                 pre=dev.get_array_name(links.variables['_synaptic_pre'], access_data=False),
+                 post=dev.get_array_name(links.variables['_synaptic_post'], access_data=False),
+                 n=int(n_astro))
+
+    def _median_numpy(k, t):
+        y = np.asarray(synapse.variables['Y_A'].get_value(), dtype=np.float64)
+        src = np.asarray(links.variables['_synaptic_pre'].get_value())
+        tgt = np.asarray(links.variables['_synaptic_post'].get_value())
+        out = np.zeros(int(n_astro))
+        for a in np.unique(tgt):
+            out[a] = np.median(y[src[tgt == a]])
+        return out[np.asarray(k)] * mole
+
+    f = Function(_median_numpy, arg_units=[1, second], return_unit=mole,
+                 arg_types=['integer', 'float'], return_type='float', stateless=False)
+    f.implementations.add_implementation('cpp', {'support_code': _ASTRO_MEDIAN_CPP % names},
+                                         name='astro_median_Y_A')
+    return f
 
 
 def Astro_to_Syn(Glio_release, synapse, connections):
