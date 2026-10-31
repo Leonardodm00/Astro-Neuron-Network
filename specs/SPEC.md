@@ -211,6 +211,13 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
     36-D root pipeline is retired (last on `main` at c06363b). The
     independent tester runs on this version once the model's equations are
     specified and confirmed, as a night run (decided 2026-10-31).
+  - 2026-10-31 [author]: every campaign runs from the git clone on davinci,
+    so what runs is in the repository ("we will run from the cloned repo in
+    the cluster thus what i run is in the repo"). Nothing is copied in from
+    a cluster folder outside the clone: LindaColloDUP's step 0 copies the
+    pipeline from the clone's root folder (Block 4), and Block 6's giulia
+    setup moves from `Giulia_Astro/` to the new Giulia folder of the clone
+    when that is built. The cluster's other copies are no longer checked.
   - 2026-10-29 [author]: LindaColloDUP runs MODE Neuronal; freezes Cm,
     I_inj, VR, VA, DeltaA, EC50_ampa, EC50_nmda (and the inert alpha_syn,
     O_G, Omega_G); SIMTIME 180 s; RHO_TOTAL 1300 cells/mm^2; everything else
@@ -326,7 +333,11 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   2026-10-30, not copied from `MEAMA/`, whose copy cannot scan other
   folders). Deployed on davinci in this same folder of the git clone
   (decided 2026-10-30, section 4), with the 7 pipeline files copied in from
-  the cluster's 37-D `MEAMA/`, which is not in the repository. `.gitignore` (anchored patterns) keeps the copies, their
+  the cluster's 37-D `MEAMA/`, which is not in the repository [corrected
+  2026-10-31: copied from the clone's root folder `hpc/Phenomenological_finalv1/`
+  (Block 8; section 4, run from the clone): `HPC_main_sweep.py` and
+  `HPC_single_run.py` equal `MEAMA/`'s, `ASD_fun_BD_cpp.py` is `MEAMA/`'s with
+  the hold]. `.gitignore` (anchored patterns) keeps the copies, their
   backups (`*.bak-*`, `*.crlf_bak`), `campaign_*/` and `artifacts/` out of
   git; `git clean -x` would delete them.
 - `launch_LCDUP.sh` settings (environment variable = default): MODE =
@@ -406,7 +417,12 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   from the cluster's own 37-D files (the author's zip of `MEAMA/`, Block 8):
   steps 2-7 as written: both patches CHECK OK and PATCHED, smoke test 41
   passed (with T9), CLAMPED, probe 2 ok with 0 NaN warnings and the gate
-  declared inert, dry run with Nn=159.
+  declared inert, dry run with Nn=159. [2026-10-31] Step 0 from the clone's
+  root folder (section 4), on a scratch copy of the clone: `git status`
+  empty after the copy; both patches PATCHED; smoke test 41 passed; step 5a
+  `ALREADY CLAMPED` with exit 0 twice; probe 2 ok with the clamped dV/dt
+  line and 0 NaN warnings; dry run with Nn=159, the freeze list and
+  `V clamp (t_ref): yes`; Block 6's precheck OK on the folder.
 
 ### Block 5: clamp_cadex_copies, the cluster-wide clamp
 
@@ -837,7 +853,7 @@ author, is the record for them.
 | Giulia's simulations | `campaign_cadex_hhgap_*` (`asn_campaign`) | `Phenomenological/Main/Giulia_Astro/ASD_fun_BD_cpp.py` (worker `lib_dir` = launch folder) (inferred) | `hpc/Phenomenological_finalv1/Giulia/` (relationship to `Giulia_Astro/` unresolved) | repository copy: Block 1; cluster copy: Block 5 |
 | rho1300 family, the 100-electrode project (confirmed 2026-10-30; 637 neurons, `C_MAX` 700 um in `submit_sweep_mixed.sh`) | `campaign_cadex_rho1300v*` (`asn_campaign`) | `Phenomenological/Main/ASD_fun_BD_cpp.py` (inferred) | root pipeline `hpc/Phenomenological_finalv1/` (the cluster copy may drift) | repository copy: Block 1; cluster copy: Block 5 |
 | MEAMA | `campaign_meama_rho1600_*` (`meama_campaign`) | `Phenomenological/MEAMA/ASD_fun_BD_cpp.py`, 37-D | launch code only (`hpc/Phenomenological_finalv1/MEAMA/`); the 37-D model is not in the repository [corrected 2026-10-31: the 37-D model is the root pipeline, Block 8; the cluster's copy is the same file without the hold] | Block 5 |
-| LindaColloDUP | `campaign_lcdup15_*` (`lcdup_campaign`) | `Phenomenological/LindaColloDUP/ASD_fun_BD_cpp.py`, copied from `MEAMA/` [corrected 2026-10-30: `Astro-Neuron-Network/hpc/Phenomenological_finalv1/LindaColloDUP/ASD_fun_BD_cpp.py` in the git clone, copied from `MEAMA/` and ignored by git; Block 5 sees it as an ordinary file, not GIT CLONE, since it is untracked] | launch package (Block 4); the model file is not in the repository | inherits it from a clamped `MEAMA/` copy, or Block 4's `apply_refractory_clamp.py` (step 5a); its launcher refuses a mismatch with `REFRACTORY_CLAMP`. On a copy clamped by Block 5, step 5a prints `ALREADY CLAMPED` with exit 0 for `--check` and the patch, and the launcher reads the file as clamped (sandbox, 2026-10-30) |
+| LindaColloDUP | `campaign_lcdup15_*` (`lcdup_campaign`) | `Phenomenological/LindaColloDUP/ASD_fun_BD_cpp.py`, copied from `MEAMA/` [corrected 2026-10-31: copied from the clone's root folder, Block 8, already clamped] [corrected 2026-10-30: `Astro-Neuron-Network/hpc/Phenomenological_finalv1/LindaColloDUP/ASD_fun_BD_cpp.py` in the git clone, copied from `MEAMA/` and ignored by git; Block 5 sees it as an ordinary file, not GIT CLONE, since it is untracked] | launch package (Block 4); the model file is not in the repository | inherits it from a clamped `MEAMA/` copy, or Block 4's `apply_refractory_clamp.py` (step 5a); its launcher refuses a mismatch with `REFRACTORY_CLAMP`. On a copy clamped by Block 5, step 5a prints `ALREADY CLAMPED` with exit 0 for `--check` and the patch, and the launcher reads the file as clamped (sandbox, 2026-10-30) |
 
 After each relaunch, Block 3's CODE section, run on the new campaign
 folders, must report CLAMPED for each (it reads the model file named by the
@@ -902,6 +918,13 @@ campaign's `job_args.json` `lib_dir`).
   outside git until the author sends them; versioning them in a separate
   repository folder, matched to a campaign through the sha256 values in its
   PROVENANCE file, would bring them under this spec (raised 2026-10-30).
+  [2026-10-31] They are now copies of the tracked root files (step 0),
+  changed only by the tracked patchers; the PROVENANCE file's sha256 values
+  tie a campaign to them.
+- Block 6's `giulia` setup reads `LIB_DIR` = `Phenomenological/Main/Giulia_Astro`
+  and its settings from that folder's `campaign_cadex_hhgap_v5`, both outside
+  the clone; it is replaced by the new Giulia folder's own settings when that
+  folder is built (section 4, raised 2026-10-31).
 - Where this project's decision log lives (raised 2026-10-29).
 - The cluster folder of each project in section 5.1 (inferred paths) and that
   Block 5's report lists them all as CLAMPED (raised 2026-10-30).

@@ -18,8 +18,9 @@
 # competing constants. Unlike MEAMA, CONN_PROB_LO/HI and the freeze list are
 # forwarded too.
 #
-# The folder is self-contained: the pipeline (HPC_main_sweep.py etc., the
-# 37-D copy from the cluster's MEAMA/ folder, patched with
+# The folder is self-contained: the pipeline (HPC_main_sweep.py etc., copies
+# of the clone's 37-D root files since 2026-10-31, earlier of the cluster's
+# MEAMA/ folder, patched with
 # apply_freeze_patch.py and apply_box_patch.py), the seed ledger and the
 # campaign output all live in the folder that holds this script. Since
 # 2026-10-30 that folder is hpc/Phenomenological_finalv1/LindaColloDUP/ of the

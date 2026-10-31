@@ -2,9 +2,10 @@ LindaColloDUP -- neurons-only campaign (MODE=Neuronal), set up from MEAMA
 ==========================================================================
 Folder (decided 2026-10-30): this folder of the git clone on davinci,
   /davinci-1/home/ldellamea/ANN/Astro-Neuron-Network/hpc/Phenomenological_finalv1/LindaColloDUP/
-The launch package comes with git. The pipeline is copied in from the
-cluster's MEAMA/ folder (step 0) and stays out of git (.gitignore), as do the
-campaigns. Never run "git clean -x" in the clone: it deletes ignored files.
+The launch package comes with git. The pipeline is copied in from the clone's
+own hpc/Phenomenological_finalv1/ folder (step 0) and the patched copies stay
+out of git (.gitignore), as do the campaigns. Never run "git clean -x" in the
+clone: it deletes ignored files.
 Full procedure and the reasons behind each setting:
 project doc claude/LindaColloDUP_Campaign_Operations.md
 
@@ -20,13 +21,15 @@ THIS FOLDER (repository path hpc/Phenomenological_finalv1/LindaColloDUP/)
   .gitignore                 keeps the pipeline copies, campaign_*/ and artifacts/ out of git
   checks/                    sandbox checks behind the settings (not needed on davinci)
 
-NOT IN GIT: the pipeline. It is copied from the cluster's MEAMA/ folder (the
-37-D version) in step 0. Since 2026-10-31 the same version is also on GitHub,
-at hpc/Phenomenological_finalv1/ with the clamp already in ASD_fun_BD_cpp.py
-(specs/SPEC.md Block 8); step 0 still copies from MEAMA/, so this campaign
-runs MEAMA's files. Not seed_alloc.py: since
-2026-10-30 the package's own copy comes with git (MEAMA's cannot check other
-folders; a git pull replaces a copy taken from MEAMA/ by an earlier step 0).
+NOT IN GIT: the patched pipeline copies. Step 0 copies the 7 pipeline files
+from the clone's root folder hpc/Phenomenological_finalv1/, the 37-D version
+with the contact gate and the clamp (specs/SPEC.md Block 8). Decided
+2026-10-31: every campaign runs from the clone, and nothing is copied in from
+outside it. Until then step 0 copied from the cluster's MEAMA/ folder:
+HPC_main_sweep.py and HPC_single_run.py are the same files there, and
+ASD_fun_BD_cpp.py differs by the clamp only. Not seed_alloc.py: since
+2026-10-30 the package's own copy comes with git (a git pull replaces a copy
+taken from MEAMA/ by an earlier step 0).
 
 DECIDED 2026-10-30 (operations doc, section 2): VA -48 mV and VR -58.2 mV (the
 registry values), I_inj 4.0 pA, conn_prob U[0.01, 0.5], g_ampa and g_nmda
@@ -38,10 +41,11 @@ The launch (step 8) waits for the range check, which needs steps 0-5a done
 
 ORDER OF OPERATIONS (paste one line at a time)
 
-0. update the clone and copy the 37-D pipeline from MEAMA/ (expect the 7
-   copied files in the listing next to the package files, and NO output from
-   git status: the copies are ignored):
-cd ~/ANN/Astro-Neuron-Network && git pull && cd hpc/Phenomenological_finalv1/LindaColloDUP && cp ~/ANN/Phenomenological/MEAMA/{HPC_main_sweep.py,HPC_single_run.py,ASD_fun_BD_cpp.py,aggregate_sweep.py,burst_metrics.py,burst_plots.py,synapse_pdist.csv} . && ls && git status --short .
+0. update the clone and copy the 37-D pipeline from the clone's root folder
+   (expect the 7 copied files in the listing next to the package files, and
+   NO output from git status: the copies are ignored). Run it again if an
+   earlier step 0 copied from MEAMA/; steps 2-7 then follow again:
+cd ~/ANN/Astro-Neuron-Network && git pull && cd hpc/Phenomenological_finalv1/LindaColloDUP && cp ../{HPC_main_sweep.py,HPC_single_run.py,ASD_fun_BD_cpp.py,aggregate_sweep.py,burst_metrics.py,burst_plots.py,synapse_pdist.csv} . && ls && git status --short .
 
 1. nothing to unpack: the package files arrived with git pull in step 0.
 
@@ -55,10 +59,10 @@ conda activate brian_final && python -c "import HPC_main_sweep as S; print(S.N_D
    "PATCHED" for each patch, then "RESULT: 41 passed, 0 failed"):
 python apply_freeze_patch.py --check && python apply_freeze_patch.py && python apply_box_patch.py --check && python apply_box_patch.py && python smoke_test_freeze.py | tail -3
 
-5a. CLAMP (expect "SELF-TEST: PASS", "CHECK OK", "CLAMPED").
-    If MEAMA/ was clamped first with clamp_cadex_copies.py (hpc/refractory_audit/),
-    the copy from step 0 is already clamped and 5a prints "ALREADY CLAMPED ... nothing
-    written" twice, exit 0: that is correct, go on to step 6.
+5a. CLAMP. The copy from step 0 is the clone's root file, already clamped, so
+    expect "SELF-TEST: PASS", then "ALREADY CLAMPED ... nothing written" twice,
+    exit 0: that is correct, go on to step 6. A copy without the hold (an older
+    step 0 from an unclamped MEAMA/) prints "CHECK OK" and "CLAMPED" instead.
 python apply_refractory_clamp.py --self-test | tail -1 && python apply_refractory_clamp.py --check && python apply_refractory_clamp.py
 5b. (not used since 2026-10-30) without the clamp: skip 5a and use REFRACTORY_CLAMP=no in steps 7-8.
 
