@@ -950,7 +950,18 @@ campaign's `job_args.json` `lib_dir`).
   gate), which today exists only in the cluster's `Giulia_Astro/` (decided
   2026-10-30; files to come from the cluster). [2026-10-31] MEAMA's gate
   version is the default now (Block 8); whether `Giulia_Astro/` runs the
-  same code is known only once its files arrive.
+  same code is known only once its files arrive. [2026-10-31] Superseded by
+  the decision to run everything from the clone (section 4): Giulia's new
+  campaign runs the root pipeline. Its configuration is proposed in
+  `hpc/Phenomenological_finalv1/GiuliaGate/` (`prior_config.tsv`,
+  `campaign_config.tsv`, rendered in `CONFIG_SHEET.md`; read by no code
+  yet): Giulia's design (Full; neurons fixed; the 22 axes of her group
+  `synapse_astro` drawn) plus the contact gate and the hold. Open for the
+  author: the cell (Giulia's Gorski adaptive-spiking cell, which needs a
+  patch for El, t_ref, gl_ref and the frozen VT and gL rows, or the
+  registry cell), Sigma, I_inj, the boxes, the gate box, the culture size,
+  the folder and the tag. The launch package and its block follow the
+  decisions.
 - Topology-level axes other than conn_prob (the contact gate of the new
   Giulia setup) are not design dimensions of Block 6 yet: with a gate box in
   EXTRA each topology draws its gate from the prior (raised 2026-10-30).
