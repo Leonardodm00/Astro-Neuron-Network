@@ -64,7 +64,7 @@ SWEEP_GROUP="${SWEEP_GROUP:-neuron_synapse}"
 CONN_RULE="${CONN_RULE:-flat}"
 CONN_PERIODIC="${CONN_PERIODIC:-0}"
 CONN_PROB_LO="${CONN_PROB_LO:-0.01}"
-CONN_PROB_HI="${CONN_PROB_HI:-0.5}"
+CONN_PROB_HI="${CONN_PROB_HI:-0.4}"   # as launch_LCDUP.sh (0.5 until 2026-11-02)
 STOA_GATE_LO="${STOA_GATE_LO:-1.0}"
 STOA_GATE_HI="${STOA_GATE_HI:-1.0}"
 FREEZE="$(printf '%s' "$FREEZE_ENC" | tr ':@' ',=')"

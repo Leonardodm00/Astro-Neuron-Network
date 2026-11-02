@@ -89,14 +89,17 @@ FREEZE="${FREEZE:-Cm,I_inj,VA=-48,DeltaA,VR=-58.2,EC50_ampa,EC50_nmda,alpha_syn,
 CONN_RULE="${CONN_RULE:-flat}"
 CONN_PERIODIC="${CONN_PERIODIC:-0}"
 CONN_PROB_LO="${CONN_PROB_LO:-0.01}" # conn_prob ~ U[LO, HI], one draw per topology (decided 2026-10-30)
-CONN_PROB_HI="${CONN_PROB_HI:-0.5}"
+CONN_PROB_HI="${CONN_PROB_HI:-0.4}"  # 0.5 until 2026-11-02; lowered after the range check (decided 2026-11-02)
 STOA_GATE_LO="${STOA_GATE_LO:-1.0}"  # astrocyte contact gate: off (no astrocytes)
 STOA_GATE_HI="${STOA_GATE_HI:-1.0}"
 
-# --- Queues: "name:ncpus:concurrency" (as MEAMA on davinci) --------------------
+# --- Queues: "name:ncpus:concurrency" -------------------------------------------
+# Decided 2026-11-02: one cfd node (AMD EPYC, 192 cores) and four 48-core cpu
+# nodes at once. Until then as MEAMA: intel:48:2 and cpu:48:2. The target is
+# split by ncpus x concurrency (192 each here: half the simulations per queue).
 QUEUES=(
-    "intel:48:2"
-    "cpu:48:2"
+    "cfd:192:1"
+    "cpu:48:4"
 )
 # ===========================================================================
 
@@ -319,6 +322,7 @@ mkdir -p "${REPO_DIR}/campaign_${CAMPAIGN_TAG}"
     echo "conn_prob      : U[${CONN_PROB_LO}, ${CONN_PROB_HI}] (${CONN_RULE})"
     echo "g boxes        : ${G_BOXES}"
     echo "sizing         : N_TOPOLOGIES=${N_TOPOLOGIES_WORKER} k=${K_PARAMS} walltime ${WALLTIME}"
+    echo "queues         : ${QUEUES[*]}"
     echo "jobs           :${QDEL_IDS}"
     echo "sha256         :"
     ( cd "$REPO_DIR" && sha256sum HPC_main_sweep.py HPC_single_run.py ASD_fun_BD_cpp.py \

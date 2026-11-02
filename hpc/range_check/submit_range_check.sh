@@ -28,6 +28,8 @@
 #         APPLY_LCDUP.txt steps 0-5a (pipeline copied, freeze and box patches,
 #         clamp); the LindaColloDUP settings of launch_LCDUP.sh, written out
 #         below (13 free axes + conn_prob: a full factorial of 16,384 corners).
+#         conn_prob stays [0.01, 0.5], the box calibrated on davinci on
+#         2026-10-31; the campaign's box is [0.01, 0.4] since 2026-11-02.
 # giulia: LIB_DIR=~/ANN/Astro-Neuron-Network/hpc/Phenomenological_finalv1/GiuliaGate,
 #         Giulia's new campaign in the git clone (decided 2026-10-31), set up
 #         with APPLY_GG.txt steps 0-4. Its prior_config.tsv is the only source of

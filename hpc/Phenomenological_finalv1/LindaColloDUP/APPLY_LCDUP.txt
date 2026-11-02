@@ -34,6 +34,8 @@ taken from MEAMA/ by an earlier step 0).
 DECIDED 2026-10-30 (operations doc, section 2): VA -48 mV and VR -58.2 mV (the
 registry values), I_inj 4.0 pA, conn_prob U[0.01, 0.5], g_ampa and g_nmda
 [0.01, 10] nS, and the clamp (step 5a, then REFRACTORY_CLAMP=yes in steps 7-8).
+DECIDED 2026-11-02, after the range check: conn_prob U[0.01, 0.4], and the
+queues one cfd node (192 cores) and four 48-core cpu nodes at once.
 Without the clamp, a neuron driven above VT during its refractory period runs
 away to NaN and never spikes again (operations doc, section 3).
 The launch (step 8) waits for the range check, which needs steps 0-5a done
@@ -72,12 +74,16 @@ python apply_refractory_clamp.py --self-test | tail -1 && python apply_refractor
 mkdir -p artifacts && LCDUP_NO_ENV=1 NODETAG=probe CAMPAIGN_TAG=probe_check SEED_BASE=1000 N_TOPOLOGIES=1 C_MAX=120 SIMTIME=2 PBS_NCPUS=2 FREEZE_ENC=Cm:I_inj:VA@-48:DeltaA:VR@-58.2:EC50_ampa:EC50_nmda:alpha_syn:O_G:Omega_G bash submit_LCDUP.sh > artifacts/probe_check.log 2>&1; grep -E "dV/dt \(model|topo_00000 done" artifacts/probe_check.log; echo "NaN warnings: $(grep -c 'has NaN' artifacts/probe_check.log)"; rm -rf campaign_probe_check
 
 7. dry run (expect Nn=159, the freeze list with VA=-48 and VR=-58.2,
-   "conn_prob      : U[0.01, 0.5] per topology",
+   "conn_prob      : U[0.01, 0.4] per topology",
    "g boxes        : g_ampa [0.01, 10.0] nS; g_nmda [0.01, 10.0] nS",
    "V clamp (t_ref): yes", a "[seed_alloc] scan of /davinci-1/home/ldellamea/ANN:
    ..." line counting the campaign folders and ledgers found under ANN,
-   "Seed guard     : this folder and every launch folder under ...", two
-   "[dry run] qsub ... -J 0-651%2" lines and "[dry run] nothing submitted."):
+   "Seed guard     : this folder and every launch folder under ...",
+   "cfd    :  163 tasks  (<= 1 at once, 192c)" with its qsub line
+   "-q cfd -l select=1:ncpus=192,walltime=24:00:00 ... -J 0-162%1",
+   "cpu    :  652 tasks  (<= 4 at once,  48c)" with
+   "-q cpu -l select=1:ncpus=48,walltime=24:00:00 ... -J 0-651%4", and
+   "[dry run] nothing submitted."):
 SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes DRYRUN=1 bash launch_LCDUP.sh
 
    BEFORE STEP 8 (decided 2026-10-30): the prior range calibration on two
@@ -90,6 +96,8 @@ SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes DRYRUN=1 bash launch_LCDUP.sh
 cd ~/ANN/Astro-Neuron-Network/hpc/range_check && DRYRUN=1 SETUP=lcdup bash launch_range_check.sh
 cd ~/ANN/Astro-Neuron-Network/hpc/range_check && SETUP=lcdup bash launch_range_check.sh
    Launch the campaign once its results have been discussed.
+   [done] ~/ANN/range_check/lcdup_20261031T053658Z (submitted 2026-10-31),
+   discussed on 2026-11-02: conn_prob lowered to 0.4 (DECIDED above).
 
 8. launch (keep the "stop all: qdel ..." line; the launch also writes
    campaign_<tag>/PROVENANCE_<launch id>.txt):
