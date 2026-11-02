@@ -1067,6 +1067,11 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   `--freeze-list` (every fixed axis of `tripartite`, `NAME=VALUE` as written
   in the TSV, comma-separated); `--topology NAME` (`LOW HIGH`);
   `--self-test` (12 checks). Options `--tsv`, `--file`, `--nominal`.
+  [corrected 2026-11-02] The self-test writes no file: it compiles the
+  patched fixture in memory (`compile`). Until then it compiled a temporary
+  file in the system temp folder, so py_compile wrote its `.pyc` into that
+  folder's `__pycache__`; on davinci's login node that directory belongs to
+  another user, and the self-test crashed with PermissionError (G1).
 - Decided values (section 4). Free (15): Sigma [2, 10] mV (lin); U_0_sr
   [0.1, 1]; Omega_f_sr [0.1, 4.5] 1/s; Omega_d [0.1, 4.5] 1/s; alpha_syn
   [0.1, 1]; g_ampa, g_nmda [0.05, 10] nS; x0 [0.05, 0.5]; O_G [0.1, 10]
@@ -1122,7 +1127,9 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   seed_stoa_gate 71, seeds 50 / 39 / 35 / 60, dpi 150, `--seed_master
   SEED_BASE + PBS_ARRAY_INDEX`, then `--rebuild_manifest_only`.
 - Test oracles (`smoke_test_gg.py`, G1-G8; 32 passed and 1 skipped without
-  `--sim`, 35 with it): G1 the TSV (self-test, the 39 rows, 15 free axes,
+  `--sim`, 35 with it [corrected 2026-11-02: 33 and 1 skipped, 36 with
+  `--sim`; G1 adds the self-test with TMPDIR's `__pycache__` made unusable,
+  which must still pass]): G1 the TSV (self-test, the 39 rows, 15 free axes,
   the scale rule); G2 the patches on a fresh copy (PATCHED with Sigma,
   g_ampa, g_nmda [and O_N since 2026-10-31]; ALREADY APPLIED; BOXES OK;
   compiles; 3 marked rows [4 since 2026-10-31]) [corrected 2026-10-31,
