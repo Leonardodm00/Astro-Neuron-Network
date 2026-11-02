@@ -28,7 +28,8 @@ setup and astrocyte outcomes, and the diagnosis of the astrocyte NaN
 and GiuliaGate's O_N box added on top of 04dcaac; Block 10 rewritten for
 the median drive, the registry's O_N box [0.0001, 1] (MEAMA's box, the
 default) and the decision on the earlier simulations added on top of
-823a9ac)
+823a9ac; LindaColloDUP's conn_prob box and queues (2026-11-02) added on top
+of f397e29)
 
 ## 0. Coverage
 
@@ -291,6 +292,13 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
     are deleted with the unclamped campaigns (the entry of 2026-10-30 above;
     where they are: `claude/Unclamped_Campaigns_Inventory.md`); nothing run
     with the summed drive is pooled with the reruns.
+  - 2026-11-02 [author]: after the range check (Block 6, on davinci at
+    `~/ANN/range_check/lcdup_20261031T053658Z/`), LindaColloDUP's conn_prob
+    box is U[0.01, 0.4] ("Let's lower the connection probability to 0.4");
+    0.4 lies inside the calibrated box [0.01, 0.5]. The campaign runs on
+    one cfd node and four 48-core cpu nodes at once ("1 cdf and 4 x 48 core
+    in the cpu queue", read here as `cfd:192:1`, a cfd node having 192
+    cores, and `cpu:48:4`). Block 4.
   - 2026-10-29 [author]: LindaColloDUP runs MODE Neuronal; freezes Cm,
     I_inj, VR, VA, DeltaA, EC50_ampa, EC50_nmda (and the inert alpha_syn,
     O_G, Omega_G); SIMTIME 180 s; RHO_TOTAL 1300 cells/mm^2; everything else
@@ -419,9 +427,16 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   Cm,I_inj,VA=-48,DeltaA,VR=-58.2,EC50_ampa,EC50_nmda,alpha_syn,O_G,Omega_G
   (VA and VR written out at the registry nominals, so a changed registry
   cannot move them); CONN_RULE = flat; CONN_PERIODIC = 0; CONN_PROB_LO/HI =
-  0.01/0.5; STOA_GATE_LO/HI = 1.0/1.0; N_TOPOLOGIES_WORKER = 32; K_PARAMS = 1;
+  0.01/0.5 [corrected 2026-11-02: 0.01/0.4, section 4; the worker's fallback
+  default follows]; STOA_GATE_LO/HI = 1.0/1.0; N_TOPOLOGIES_WORKER = 32; K_PARAMS = 1;
   WALLTIME = 24:00:00; TARGET = 1000000; HEADROOM_PCT = 200; CAMPAIGN_TAG =
-  lcdup15_rho1300_neur_n01; CONDA_ENV = brian_final; DRYRUN = 0. The g boxes
+  lcdup15_rho1300_neur_n01; CONDA_ENV = brian_final; DRYRUN = 0. QUEUES (an
+  array in the script, `name:ncpus:concurrency`; added 2026-11-02, section
+  4): `cfd:192:1` and `cpu:48:4`, until then `intel:48:2` and `cpu:48:2` as
+  MEAMA. Per queue q, w_q = ncpus x concurrency and ntasks_q =
+  ceil((TARGET w_q / sum w) x HEADROOM_PCT/100 / (N_TOPOLOGIES_WORKER x
+  ncpus x K_PARAMS)): 163 cfd tasks (`-J 0-162%1`) and 652 cpu tasks
+  (`-J 0-651%4`) with the defaults. The PROVENANCE file records the queues. The g boxes
   are not launcher settings: they live in the folder's `HPC_main_sweep.py`
   after `apply_box_patch.py`; the launcher prints them (`g boxes : ...`) and
   writes them into the PROVENANCE file.
@@ -475,12 +490,17 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   nS; g_nmda [0.01, 10.0] nS`, two qsub lines `-J 0-651%2`); the worker
   probe of `APPLY_LCDUP.txt` step 6 (NaN warnings 0 when clamped; its
   `job_args.json` records 13 free axes, conn_prob 0.01-0.5, both g boxes,
-  VA -48, VR -58.2, I_inj 4.0).
+  VA -48, VR -58.2, I_inj 4.0). [corrected 2026-11-02] The dry run prints
+  `conn_prob : U[0.01, 0.4] per topology` and the qsub lines `-q cfd -l
+  select=1:ncpus=192,walltime=24:00:00 ... -J 0-162%1` and `-q cpu -l
+  select=1:ncpus=48,walltime=24:00:00 ... -J 0-651%4`; the probe's
+  `job_args.json` records conn_prob 0.01-0.4.
 - Data flow: launches campaigns from the patched folder copies.
 - Confirmed: yes 2026-10-29 for the settings the author decided (freeze
   list, SIMTIME, RHO_TOTAL, the rest as MEAMA); yes 2026-10-30 for
   REFRACTORY_CLAMP = yes, VA = -48 mV and VR = -58.2 mV, I_inj = 4.0 pA,
-  conn_prob U[0.01, 0.5], the g boxes [0.01, 10] nS and the clone folder.
+  conn_prob U[0.01, 0.5], the g boxes [0.01, 10] nS and the clone folder;
+  yes 2026-11-02 for conn_prob U[0.01, 0.4] and the queues.
 - Status: smoke-tested 2026-10-30 in the sandbox on a fresh folder built
   from the package files and a stand-in for the `MEAMA/` copy (the
   repository's root 36-D files, whose registry rows equal `MEAMA/`'s; the
@@ -496,6 +516,13 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   `ALREADY CLAMPED` with exit 0 twice; probe 2 ok with the clamped dV/dt
   line and 0 NaN warnings; dry run with Nn=159, the freeze list and
   `V clamp (t_ref): yes`; Block 6's precheck OK on the folder.
+  [2026-11-02] After the box and queue change, on a fresh copy of the clone:
+  steps 0-7 as written: both patches PATCHED, smoke test 41 passed, step 5a
+  `ALREADY CLAMPED` with exit 0, probe 2 ok with 0 NaN warnings and conn_prob
+  0.01-0.4 in its `job_args.json`, dry run with `U[0.01, 0.4]`, cfd 163
+  tasks (`-J 0-162%1`, 192 cores) and cpu 652 tasks (`-J 0-651%4`, 48
+  cores); Block 6's smoke test 76 passed with `--no-sim`. Skipped: davinci,
+  the cfd queue's limits (walltime, cores) and its per-core speed.
 
 ### Block 5: clamp_cadex_copies, the cluster-wide clamp
 
