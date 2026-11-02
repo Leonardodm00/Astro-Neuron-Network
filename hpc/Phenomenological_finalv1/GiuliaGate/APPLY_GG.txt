@@ -80,7 +80,7 @@ python apply_freeze_patch.py --check && python apply_freeze_patch.py && python a
    value only), then step 0 (a fresh copy) and step 4 again. A copy patched to
    other boxes is refused ("REFUSED ... copy the file in again").
 
-5. smoke test of the package, about 30 s (expect "RESULT: 32 passed, 0 failed, 1 skipped"):
+5. smoke test of the package, about 30 s (expect "RESULT: 33 passed, 0 failed, 1 skipped"):
 python smoke_test_gg.py | tail -1
 
 6. the model holds V during t_ref (expect the dV/dt line ending in

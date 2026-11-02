@@ -355,16 +355,15 @@ def self_test():
 
 
 def _compiles(text):
-    fd, tmp = tempfile.mkstemp(suffix='.py')
+    # In memory: the self-test writes no file. Until 2026-11-02 this compiled a
+    # temporary file in the system temp folder, and py_compile wrote the .pyc
+    # into that folder's __pycache__, which on a shared login node can belong
+    # to another user (PermissionError on davinci, specs/SPEC.md Block 9).
     try:
-        with os.fdopen(fd, 'w') as f:
-            f.write(text)
-        py_compile.compile(tmp, doraise=True)
+        compile(text, '<patched HPC_main_sweep.py>', 'exec')
         return True
-    except py_compile.PyCompileError:
+    except (SyntaxError, ValueError):
         return False
-    finally:
-        os.remove(tmp)
 
 
 def main(argv=None):

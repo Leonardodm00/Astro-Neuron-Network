@@ -5,7 +5,8 @@ a fresh copy of this folder, with the pipeline copied in from the clone's root
 folder and patched as APPLY_GG.txt steps 0-4 do it. Touches nothing in this
 folder; no cluster, no qsub; no simulation unless --sim.
 
-  G1 prior_config.tsv: apply_prior_patch.py --self-test PASS; the TSV lists the
+  G1 prior_config.tsv: apply_prior_patch.py --self-test PASS, also with an
+     unusable TMPDIR/__pycache__ (it writes no file); the TSV lists the
      37 axes of the registry plus conn_prob and stoa_gate_p; 15 free axes, each
      with 0 < low < high; its scale column follows the rule of
      HPC_main_sweep.py (log iff low > 0 and high/low >= 10)
@@ -117,7 +118,19 @@ def module_facts(lib, freeze):
 def g1(tmp):
     print('\n[G1] prior_config.tsv')
     r = run([sys.executable, os.path.join(HERE, 'apply_prior_patch.py'), '--self-test'])
-    check(r.returncode == 0 and 'SELF-TEST: PASS' in r.stdout, 'apply_prior_patch.py --self-test: PASS')
+    if not check(r.returncode == 0 and 'SELF-TEST: PASS' in r.stdout, 'apply_prior_patch.py --self-test: PASS'):
+        print(r.stdout[-1500:], r.stderr[-1500:])
+    # The self-test must write no file. On davinci (2026-11-02) it crashed writing the .pyc of a temporary
+    # file into the system temp folder's __pycache__, which belonged to another user. Here TMPDIR's
+    # __pycache__ is a plain file, so any such write fails for any user, root included.
+    bad_tmp = os.path.join(tmp, 'tmp_unusable_pycache')
+    os.makedirs(bad_tmp)
+    open(os.path.join(bad_tmp, '__pycache__'), 'w').close()
+    r = run([sys.executable, os.path.join(HERE, 'apply_prior_patch.py'), '--self-test'],
+            env=dict(os.environ, TMPDIR=bad_tmp))
+    if not check(r.returncode == 0 and 'SELF-TEST: PASS' in r.stdout,
+                 'the self-test writes no file: PASS with an unusable TMPDIR/__pycache__'):
+        print(r.stdout[-1500:], r.stderr[-1500:])
     rows = read_tsv(os.path.join(HERE, 'prior_config.tsv'))
     axes = [x['axis'] for x in rows]
     code = ('import sys, json\nsys.path.insert(0, %r)\nimport HPC_main_sweep as S\n'
