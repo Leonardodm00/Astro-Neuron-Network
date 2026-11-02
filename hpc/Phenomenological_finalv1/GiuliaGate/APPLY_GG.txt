@@ -40,6 +40,8 @@ DECIDED 2026-10-31 (by the author; operations doc section 2):
     (as MEAMA); 180 s per simulation; 1200 neurons and 1200 astrocytes per
     mm^2 on a 300 um well (108 + 108)
   15 free axes in all; the range check on four nodes before the launch.
+DECIDED 2026-11-02, after the range check: the campaign runs on five 48-core
+  intel nodes and four 48-core cpu nodes at once (intel:48:5, cpu:48:4).
 
 KNOWN PROBLEM, 2026-10-31 (specs/SPEC.md section 8): with the model as it is,
 the astrocytes go non-finite (NaN) about 27 ms into a Full run, at nominal
@@ -96,7 +98,9 @@ mkdir -p artifacts && GG_NO_ENV=1 NODETAG=probe CAMPAIGN_TAG=probe_check SEED_BA
    g_nmda [0.05, 10]", "V clamp (t_ref): yes", "conn_prob : U[0.05, 0.4] per
    topology", "contact gate : U[0.2, 1] per topology", "Nn=108, Na=108",
    "N_TOPOLOGIES=48", a "[seed_alloc] scan of /davinci-1/home/ldellamea/ANN: ..."
-   line, two "[dry run] qsub ... -J 0-434%2" lines and "[dry run] nothing submitted."):
+   line, "intel  :  483 tasks  (<= 5 at once,  48c)" with "-J 0-482%5",
+   "cpu    :  386 tasks  (<= 4 at once,  48c)" with "-J 0-385%4", and
+   "[dry run] nothing submitted."):
 SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes DRYRUN=1 bash launch_GG.sh
 
    BEFORE STEP 9: the prior range calibration on FOUR nodes, from the
@@ -114,6 +118,8 @@ cd ~/ANN/Astro-Neuron-Network/hpc/range_check && DRYRUN=1 NODES=4 SETUP=giulia b
 cd ~/ANN/Astro-Neuron-Network/hpc/range_check && NODES=4 SETUP=giulia bash launch_range_check.sh
    Send back calibration_summary.txt and the png files; launch the campaign
    once they have been discussed.
+   [done] ~/ANN/range_check/giulia_20261102T092309Z (submitted 2026-11-02),
+   discussed the same day (operations doc, section 6b).
 
 9. launch (keep the "stop all: qdel ..." line; the launch also writes
    campaign_<tag>/PROVENANCE_<launch id>.txt):
