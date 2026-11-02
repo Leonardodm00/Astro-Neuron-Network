@@ -30,7 +30,8 @@ the median drive, the registry's O_N box [0.0001, 1] (MEAMA's box, the
 default) and the decision on the earlier simulations added on top of
 823a9ac; LindaColloDUP's conn_prob box and queues (2026-11-02) added on top
 of f397e29; GiuliaGate's queues and its range-check findings (2026-11-02)
-added on top of 3188be6)
+added on top of 3188be6; t_ref 3 ms, the quiet-corner check and the SIC
+candidates (2026-11-02) added on top of 4430a47)
 
 ## 0. Coverage
 
@@ -293,6 +294,9 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
     are deleted with the unclamped campaigns (the entry of 2026-10-30 above;
     where they are: `claude/Unclamped_Campaigns_Inventory.md`); nothing run
     with the summed drive is pooled with the reruns.
+  - 2026-11-02 [author]: the neuron's refractory period is 3 ms
+    ("cell_t_ref this must be 3 ms, just take note"); the root model has it
+    (Block 1), the legacy `Giulia/` copy has 5 ms.
   - 2026-11-02 [author]: GiuliaGate's campaign runs on five 48-core intel
     nodes and four 48-core cpu nodes at once ("the submission of 5 x 48
     intel and 4 x 48 cpu"): QUEUES intel:48:5 and cpu:48:4 (Block 9), after
@@ -319,6 +323,10 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
 - Change: the dV/dt line ends with ` (unless refractory)`; four comment lines
   above it. Nothing else.
 - Inputs / outputs: unchanged (same parameters in; spike trains out).
+- Refractory period (decided 2026-11-02, section 4): t_ref = 3 ms,
+  `Params_NN['t_ref']` in the root `ASD_fun_BD_cpp.py`, not a sweep axis.
+  The repository's legacy `Giulia/ASD_fun_BD_cpp.py` has 5 ms (Gorski 2021)
+  and runs no rerun.
 - Library calls relied on: Brian2 equation flag `unless refractory`;
   `NeuronGroup(threshold='V > VD', reset='V = VR; gA += delta_gA', refractory=t_ref)`.
 - Custom code: none.
@@ -1461,6 +1469,39 @@ campaign's `job_args.json` `lib_dir`).
   share of the range check is mostly a calcium plateau, which a crossing
   count reads as silence. Decision pending with the author (launch as is,
   or narrow O_N and I_bias towards the oscillating range first).
+  [2026-11-02] Why the astrocytes miss the neurons: their only pathway is
+  U_0 = (1 - Gamma_S) U_0_sr + alpha_syn Gamma_S (the SIC parameters G_sic,
+  tau_sic_r, tau_sic are defined but used in no equation), and release is
+  depletion-limited at network rates (single synapse, nominal, Poisson
+  input, 55 s: U_0_sr 0.1 -> 1 multiplies the synchronous release per
+  second by 4.5, 1.8, 1.07 at 2, 10, 30 Hz, for Y_T 6000 or 600 mM).
+  Where they do act (sandbox, 108 + 108 cells, seed 7, 60 s, gate 1): in
+  a quiet corner (Sigma 3 mV, conn_prob 0.10, g_ampa = g_nmda = 0.3 nS,
+  U_0_sr 0.1, O_N 1e-4, O_G 10, Omega_G 0.001, G_T 1000, U_A 0.9) the
+  neuron rate is 0.52-1.82 Hz per 10 s window with alpha_syn 1 against
+  0.08-0.12 Hz with alpha_syn 0.1 (= U_0_sr, no effect), the astrocytes
+  oscillating (one event each per 10 s, C above C_Theta 4 % of the time);
+  with conn_prob 0.05 and g 0.1 nS, 0.1 Hz either way. So the effect
+  exists in a corner set jointly by several axes, which the range check
+  (main effects and two-axis interactions only) cannot show.
+- A slow inward current (SIC) pathway from astrocytes to neurons (raised
+  2026-11-02, the author asked how confident an implementation would be).
+  Candidates from a survey (project knowledge, PubMed, ModelDB): (a) De
+  Pitta & Brunel 2016, the origin of G_sic, tau_sic_r, tau_sic: a
+  double-exponential kernel driven by G_A, voltage-independent, in mV for a
+  current-based LIF (`astrocyte_models.py`, `synapse()`, branch
+  `sic=='double-exp'`, in project knowledge); (b) an extrasynaptic NMDA
+  conductance with Mg block driven by G_A, dm/dt = alpha G_A (1 - m) -
+  beta m, I = B(V) g m (V - E_NMDA) (Vuillaume et al. 2021, Brian2 code
+  on ModelDB 266794; its parameter values not re-checked here), the closer
+  fit to the conductance-based CAdEx. Target from a full text in project
+  knowledge: PPN, 1 mM Mg: 43.3 +- 10 pA, rise 220.1 +- 33.1 ms, decay tau
+  706 +- 161 ms, 0.09 +- 0.05 per minute, in 40 % of the neurons (Kovacs &
+  Pal 2017, Front Cell Neurosci 11:16). Open: which neurons an astrocyte reaches (one SIC per
+  astrocyte-neuron pair, not per synapse), the SIC rate against the
+  astrocytes' release rate (one per 10 s when oscillating, none in the
+  plateau), and g calibrated to the pA targets. Not specified or
+  implemented.
 - The legacy Izhikevich model in the top-level `ASN_fun_pheno.py` has a 2 ms
   refractory period and no hold: during it the quadratic term can carry v
   past the threshold with no reset, as in the CAdEx runaway. Not used by any
