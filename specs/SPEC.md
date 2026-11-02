@@ -29,7 +29,8 @@ and GiuliaGate's O_N box added on top of 04dcaac; Block 10 rewritten for
 the median drive, the registry's O_N box [0.0001, 1] (MEAMA's box, the
 default) and the decision on the earlier simulations added on top of
 823a9ac; LindaColloDUP's conn_prob box and queues (2026-11-02) added on top
-of f397e29)
+of f397e29; GiuliaGate's queues and its range-check findings (2026-11-02)
+added on top of 3188be6)
 
 ## 0. Coverage
 
@@ -292,6 +293,10 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
     are deleted with the unclamped campaigns (the entry of 2026-10-30 above;
     where they are: `claude/Unclamped_Campaigns_Inventory.md`); nothing run
     with the summed drive is pooled with the reruns.
+  - 2026-11-02 [author]: GiuliaGate's campaign runs on five 48-core intel
+    nodes and four 48-core cpu nodes at once ("the submission of 5 x 48
+    intel and 4 x 48 cpu"): QUEUES intel:48:5 and cpu:48:4 (Block 9), after
+    its range check (`~/ANN/range_check/giulia_20261102T092309Z/`, section 8).
   - 2026-11-02 [author]: after the range check (Block 6, on davinci at
     `~/ANN/range_check/lcdup_20261031T053658Z/`), LindaColloDUP's conn_prob
     box is U[0.01, 0.4] ("Let's lower the connection probability to 0.4");
@@ -1103,10 +1108,13 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   Full, SWEEP_GROUP tripartite, CONN_RULE flat, C_MAX 300 um, SIMTIME 180 s,
   DENSITY 1200 and DENSITY_ASTRO 1200 per mm^2 (Nn = Na = 108),
   N_TOPOLOGIES_WORKER 48 (an estimate), K_PARAMS 1, WALLTIME 24 h, TARGET
-  10^6, HEADROOM_PCT 200, QUEUES intel:48:2 and cpu:48:2, CAMPAIGN_TAG
+  10^6, HEADROOM_PCT 200, QUEUES intel:48:2 and cpu:48:2 [corrected
+  2026-11-02: intel:48:5 and cpu:48:4, section 4], CAMPAIGN_TAG
   `cadex_hhgap_clamp_v1`, CONDA_ENV `brian_final`; ntasks per queue =
   ceil(TARGET w_q / sum w x HEADROOM / (N_TOPOLOGIES_WORKER x ncpus x k)),
-  w_q = ncpus x concurrency (435 per queue with the defaults). The seed
+  w_q = ncpus x concurrency (435 per queue with the defaults) [corrected
+  2026-11-02: 483 intel tasks, `-J 0-482%5`, and 386 cpu tasks, `-J
+  0-385%4`; the PROVENANCE file records the queues]. The seed
   guard as Block 7 (SEED_SCAN_TREE default the cluster's ANN). `qsub -v`
   carries REPO_DIR, NODETAG, SEED_BASE, CONDA_ENV, LAUNCH_ID, CAMPAIGN_TAG,
   N_TOPOLOGIES, N_PARAMS_PER_WORKER, C_MAX, SIMTIME, DENSITY, DENSITY_ASTRO,
@@ -1431,6 +1439,28 @@ campaign's `job_args.json` `lib_dir`).
   in the repository (raised 2026-10-31). [closed 2026-10-31] The earlier
   simulations are to be eliminated (section 4), so they are not checked;
   the three copies stay as they are and run no rerun.
+- GiuliaGate's range check (raised 2026-11-02; davinci,
+  `~/ANN/range_check/giulia_20261102T092309Z/`, all 33,360 runs, the
+  author's paste of `calibration_summary.txt`): (1) none of the astrocyte
+  and gliotransmission axes (I_bias, F, U_A, G_T, O_N, O_G, Omega_G,
+  alpha_syn) moves the neurons: main effects on the log10 neuron rate
+  <= 0.002 and interior Spearman |rho| <= 0.015, also on bursting, and the
+  contact gate p has rho 0.002 with the network median rate (65 networks);
+  (2) astrocyte events: 47.4 % of the interior runs are astro-silent (fewer
+  than 10 % of the astrocytes with a crossing of C_osc in [2 s, 20 s]),
+  and more drive gives fewer events (interior Spearman with the log10
+  astro rate: O_N -0.375, I_bias -0.277, Omega_d -0.134, conn_prob -0.102;
+  O_N's bins 3-6 astro-silent). Sandbox probe (root model, nominal, 108 +
+  108 cells, conn_prob 0.225, gate 0.6, seed 7, 20 s, window [2 s, 20 s]):
+  at O_N 0.0001 all 108 astrocytes oscillate slowly (one new crossing each
+  in the window, above C_osc for 64 % of it, back below by 20 s; C mean
+  0.31 uM); at O_N 0.01 and 1, 103 and 106 of 108 sit in a plateau (above
+  C_osc for more than 90 % of the window, the median astrocyte for all of
+  it; C mean 0.42 and 0.45 uM, below C_Theta 0.5 uM), the unlinked
+  astrocytes included. So the astro-silent
+  share of the range check is mostly a calcium plateau, which a crossing
+  count reads as silence. Decision pending with the author (launch as is,
+  or narrow O_N and I_bias towards the oscillating range first).
 - The legacy Izhikevich model in the top-level `ASN_fun_pheno.py` has a 2 ms
   refractory period and no hold: during it the quadratic term can carry v
   past the threshold with no reset, as in the CAdEx runaway. Not used by any
