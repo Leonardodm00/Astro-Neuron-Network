@@ -25,7 +25,7 @@ EC50_ampa	synapse	mmole	fixed	-	-	8.6	-	nominal 8.6; box [2, 150] log	fixed 8.6	
 EC50_nmda	synapse	mmole	fixed	-	-	3	-	nominal 3; box [0.5, 50] log	fixed 3	NMDA receptor half-activation glutamate concentration
 U_0_ar	synapse	1	fixed	-	-	0.003	-	nominal 0.003; box [0.0001, 0.05] log	free [0.0001, 0.05]	asynchronous release: per-spike increment of the release rate toward U_max
 U_max	synapse	1/ms	fixed	-	-	0.5	-	nominal 0.5; box [0.1, 1] log	free [0.1, 1]	asynchronous release: ceiling of the per-vesicle release rate
-U_0_sr	synapse	1	free	0.1	1	-	log	nominal 0.15; box [0.1, 1] log	free [0.1, 1]	synchronous release probability (baseline)
+U_0_sr	synapse	1	free	0.01	0.7	-	log	nominal 0.15; box [0.01, 0.7] log (was [0.1, 1] until 2026-11-03)	free [0.1, 1]	synchronous release probability (baseline)
 Omega_f_sr	synapse	1/s	free	0.1	4.5	-	log	nominal 2; box [0.1, 4.5] log	free [0.1, 4.5]	facilitation decay rate, synchronous release
 Omega_f_ar	synapse	1/s	fixed	-	-	1.42857	-	nominal 1.42857; box [0.1, 4.5] log	free [0.1, 4.5]	asynchronous release: decay rate of the release rate
 Omega_d	synapse	1/s	free	0.1	4.5	-	log	nominal 2; box [0.1, 4.5] log	free [0.1, 4.5]	recovery rate of the vesicle pool (depression)

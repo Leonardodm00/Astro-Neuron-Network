@@ -31,7 +31,8 @@ default) and the decision on the earlier simulations added on top of
 823a9ac; LindaColloDUP's conn_prob box and queues (2026-11-02) added on top
 of f397e29; GiuliaGate's queues and its range-check findings (2026-11-02)
 added on top of 3188be6; t_ref 3 ms, the quiet-corner check and the SIC
-candidates (2026-11-02) added on top of 4430a47)
+candidates (2026-11-02) added on top of 4430a47; U_0_sr's box [0.01, 0.7]
+(2026-11-03) added on top of 6204b40)
 
 ## 0. Coverage
 
@@ -308,6 +309,16 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
     one cfd node and four 48-core cpu nodes at once ("1 cdf and 4 x 48 core
     in the cpu queue", read here as `cfd:192:1`, a cfd node having 192
     cores, and `cpu:48:4`). Block 4.
+  - 2026-11-03 [author]: U_0_sr's box is [0.01, 0.7], log-uniform ("let's
+    lower the U_0_sr range to [0.01 and 0.7]"; it was [0.1, 1]), set as
+    the registry's row 7 (Block 8) and in GiuliaGate's prior table
+    (Block 9), so every setup draws from it; it reaches a campaign through
+    a fresh copy of the root pipeline (GiuliaGate's APPLY_GG.txt steps 0-8,
+    LindaColloDUP's APPLY_LCDUP.txt, MEAMA from the clone), not a folder
+    already copied. log10(0.7/0.01) = 1.85, so the axis stays log (the rule
+    of Block 8); the nominal 0.15 lies inside. The range checks of
+    LindaColloDUP and GiuliaGate covered [0.1, 1]; [0.01, 0.1) is new to
+    the calibration (Block 6).
   - 2026-10-29 [author]: LindaColloDUP runs MODE Neuronal; freezes Cm,
     I_inj, VR, VA, DeltaA, EC50_ampa, EC50_nmda (and the inert alpha_syn,
     O_G, Omega_G); SIMTIME 180 s; RHO_TOTAL 1300 cells/mm^2; everything else
@@ -1095,7 +1106,9 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   1/(uM s), log (registry [0.03, 3]; section 4). [corrected 2026-10-31,
   later] The registry box is [0.0001, 1] too (Block 8), so O_N is drawn
   from the registry box and the prior patch changes three rows: Sigma,
-  g_ampa, g_nmda. Fixed at the registry nominals:
+  g_ampa, g_nmda. [corrected 2026-11-03] U_0_sr [0.01, 0.7], log, in the
+  table and in the registry (section 4), so the patch still changes three
+  rows. Fixed at the registry nominals:
   gbarA 0.9 nS, delta_gA 0.135 nS, tauA 200 ms, VA -48 mV, DeltaA 5 mV, VR
   -58.2 mV, I_inj 4 pA, Cm 17.25 pF, DeltaT 2 mV, VT -51 mV, gL 1.15 nS,
   EC50_ampa 8.6 mM, EC50_nmda 3 mM, U_0_ar 0.003, U_max 0.5 1/ms,

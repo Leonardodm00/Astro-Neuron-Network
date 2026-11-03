@@ -398,7 +398,8 @@ PARAM_BOUNDS = np.array([
     (10.0,   2000.0),   # 4  tauA       [ms]   adaptation time constant tau_A          (log)
     (1e-4,   0.05),     # 5  U_0_ar     [dimensionless]  async release prob
     (0.1,    1.0),      # 6  U_max      [1/ms]
-    (0.1,    1.0),      # 7  U_0_sr     [dimensionless]
+    (0.01,   0.7),      # 7  U_0_sr     [dimensionless]  (log). Was (0.1, 1.0) until 2026-11-03
+                        #                       (author; specs/SPEC.md section 4).
     (0.1,    4.5),      # 8  Omega_f_sr [1/s]
     (0.1,    4.5),      # 9  Omega_f_ar [1/s]
     (0.1,    4.5),      # 10 Omega_d    [1/s]
