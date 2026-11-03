@@ -32,7 +32,8 @@ default) and the decision on the earlier simulations added on top of
 of f397e29; GiuliaGate's queues and its range-check findings (2026-11-02)
 added on top of 3188be6; t_ref 3 ms, the quiet-corner check and the SIC
 candidates (2026-11-02) added on top of 4430a47; U_0_sr's box [0.01, 0.7]
-(2026-11-03) added on top of 6204b40)
+(2026-11-03) added on top of 6204b40; the SIC decision and its open
+choices (2026-11-03) added on top of 004ed7b)
 
 ## 0. Coverage
 
@@ -319,6 +320,15 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
     of Block 8); the nominal 0.15 lies inside. The range checks of
     LindaColloDUP and GiuliaGate covered [0.1, 1]; [0.01, 0.1) is new to
     the calibration (Block 6).
+  - 2026-11-03 [author]: the astrocytes also act on the neurons
+    postsynaptically: a slow inward current (SIC) through extrasynaptic
+    NMDA receptors on the postsynaptic neuron, gated by the astrocyte's
+    gliotransmitter G_A ("Apply the SIC with the NMDA extrasynaptic model on
+    the post synaptic neuron"); the presynaptic route (Gamma_S in U_0)
+    stays. The range check's null result for the astrocyte axes is read as
+    a main-effect (single-axis) result, not as evidence against an
+    astrocyte effect ("do not worry"). The block is specified after the
+    author's choices on the plan (section 8).
   - 2026-10-29 [author]: LindaColloDUP runs MODE Neuronal; freezes Cm,
     I_inj, VR, VA, DeltaA, EC50_ampa, EC50_nmda (and the inert alpha_syn,
     O_G, Omega_G); SIMTIME 180 s; RHO_TOTAL 1300 cells/mm^2; everything else
@@ -1514,7 +1524,21 @@ campaign's `job_args.json` `lib_dir`).
   astrocyte-neuron pair, not per synapse), the SIC rate against the
   astrocytes' release rate (one per 10 s when oscillating, none in the
   plateau), and g calibrated to the pA targets. Not specified or
-  implemented.
+  implemented. [corrected 2026-11-03] (b)'s values re-checked in its code
+  (ModelDB 266794, read 2026-11-02): alpha 0.072 per (mM ms) and beta
+  0.0066 per ms, the synaptic NMDA rates; g 0.6 nS per synapse object
+  standing for 50 spines; its astrocyte releases on every step while
+  C > C_Theta (no refractory clause, unlike Stimberg et al. 2019).
+  Kovacs & Pal measured at -60 mV holding, room temperature, 0-100 % rise
+  and a single-exponential decay; Csemer et al. 2023 (mouse neocortex,
+  -60 mV, magnesium-free, in project knowledge): 88.2 +- 8.1 pA, rise
+  206 +- 12 ms, decay tau 754 +- 144 ms. Decided 2026-11-03 (section 4):
+  (b), on the postsynaptic neuron. Plan proposed in chat 2026-11-03,
+  pending the author's choices: the reach rule (proposed: each neuron to
+  its nearest astrocyte within 70 um of the soma; alternatives: the
+  astrocytes of its input synapses, or one per synapse); the calibration
+  target (proposed: Kovacs & Pal at 1 mM Mg); g_sic fixed first or a
+  registry axis; Full mode only, off by default.
 - The legacy Izhikevich model in the top-level `ASN_fun_pheno.py` has a 2 ms
   refractory period and no hold: during it the quadratic term can carry v
   past the threshold with no reset, as in the CAdEx runaway. Not used by any
