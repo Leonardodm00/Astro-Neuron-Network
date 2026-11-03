@@ -1507,6 +1507,10 @@ campaign's `job_args.json` `lib_dir`).
   with conn_prob 0.05 and g 0.1 nS, 0.1 Hz either way. So the effect
   exists in a corner set jointly by several axes, which the range check
   (main effects and two-axis interactions only) cannot show.
+  [corrected 2026-11-03] Not only in a quiet corner: at the registry
+  nominal point they abolish the network's pause-rebound epochs (next
+  item but one, the presynaptic-route study); "depletion-limited" holds
+  for the steady release at network rates, not for low-rate epochs.
 - A slow inward current (SIC) pathway from astrocytes to neurons (raised
   2026-11-02, the author asked how confident an implementation would be).
   Candidates from a survey (project knowledge, PubMed, ModelDB): (a) De
@@ -1610,3 +1614,52 @@ campaign's `job_args.json` `lib_dir`).
   gliotransmission, gap junctions, the contact gate) and the rest of the
   sweep loop get spec entries, confirmed with the author, before the
   independent tester runs on Block 8 (decided 2026-10-31).
+- [2026-11-03] The per-run seed is never applied. `HPC_main_sweep._worker_entry`
+  (and `HPC_single_run.py`) build the binary, then call `device.seed(seed_run)`
+  before `device.run(run_args=...)`. In Brian2 cpp_standalone `device.seed()`
+  only appends a line to `main()` at build time (2.11.0,
+  `devices/cpp_standalone/device.py`, `seed()` -> `main_queue`), so after
+  `device.build()` it does nothing: every run starts from the build seed
+  `seed_device` (50), and the recorded `seed_run` / `noise_mode='fresh'` are not
+  what ran. With K_PARAMS 1 (GiuliaGate, LindaColloDUP, MEAMA) each binary runs
+  once, so runs differ in noise only once their states consume random numbers
+  differently (Binomial_fun draws nothing when floor(x_S/x0) = 0 or uar dt = 0);
+  with several vectors per binary (Block 6) a chunk replays one stream; two runs
+  with the same vector are always bit-identical. The sandbox probes' "seed 7"
+  ran on seed 50. Checked [SANDBOX]: a minimal 10-neuron network (seeds 1 and 2
+  after the build: identical traces); two GiuliaGate-sandbox OFF runs with seed_run
+  656262075 and 1192758640: the same 32,326 spikes. Candidate fix, verified there,
+  not applied: `device.insert_code('main', ...)` just before `net.run` reseeds
+  every generator from an environment variable the worker sets before each
+  `device.run` (distinct seeds give distinct streams, equal seeds equal ones,
+  values initialised before it stay frozen, unset gives the old stream). Not
+  checked: whether the build-time draws (V(0), bias_unit) are the same in every
+  network of a campaign. Decision pending with the author.
+- [2026-11-03] The presynaptic route alone (the author: "just see how the model
+  behaves with just the pre-synaptic" route), sandbox study on the GiuliaGate
+  setting (108 + 108 cells, 20 s; scripts and tables outside the repository).
+  Exact ablation: a twin run with O_G = 0 (Gamma_S = 0, so U_0 = U_0_sr bit for
+  bit), same topology, parameters and seed; smoke checks 8/8 (twins identical
+  until the first release; Gamma_S of linked synapses equals an independent
+  solution from the release times, up to float32 rounding of the slow decay).
+  Joint prior sample, 24 vectors on 8 networks: astrocytes released in 20; the 4
+  without release had O_N <= 1.1e-3 and I_bias <= 0.61. Every first release came
+  0.78-1.63 s after the start, about one release per astrocyte in 20 s (3.3 % of
+  2,092 events after 5 s). One release saturates Gamma_S (peak = 1 - exp(-E),
+  E = O_G rho_e G_T U_A / Omega_e; E > 3 in 79 % of the prior; 1/Omega_G > 20 s
+  in 85 %). Mean rate changed by -2 % to +14 % (|delta log10 r| > the 0.0026 floor
+  of 8 fresh-seed controls in 13 of 24, sign = sign(alpha_syn - U_0_sr) in 13 of
+  13); CV of ISIs fell beyond its floor in 2 of 24 (-0.42, -0.24). Corners around
+  the nominal point, 2 fresh seeds each: nominal (U_0_sr 0.15, alpha_syn 1) rate
+  +13 % / +25 %, CV of ISIs 1.25 / 1.62 -> 0.58 / 0.59, synchrony 0.55 / 0.68 ->
+  0.37 / 0.39, the OFF twin's pauses with rebound bursts gone; U_0_sr 0.5 ->
+  alpha_syn 1: +0.5 %; release-decreasing (U_0_sr 0.6, alpha_syn 0.1): -3 %;
+  silent astrocytes: identical runs; weak network (0.1 Hz): +15 % / +27 %; strong
+  network (96 Hz): +0.2 %. Single synapse at the nominal kinetics (Omega_d =
+  Omega_f_sr = 2/s, Poisson): U_0 0.15 -> 0.97 multiplies the release per spike
+  by 3.4 / 1.5 / 1.2 / 1.07 / 0.99 at 1 / 5 / 10 / 20 / 40 Hz, PPR at 50 ms 1.53
+  -> 0.13 (facilitating -> depressing, as De Pitta et al. 2011, PLoS Comput Biol
+  7:e1002293). Reading: the route acts as a switch set jointly by the release
+  (O_N, I_bias, activity), the switched fraction (gate, release share) and the
+  facilitation removed (U_0_sr small, alpha_syn large), and it changes the
+  network only where activity has low-rate epochs.
