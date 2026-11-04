@@ -10,8 +10,9 @@ and the output it produces:
 ```
 MEAMA/
   HPC_main_sweep.py, HPC_single_run.py, ASD_fun_BD_cpp.py   pipeline (patched:
-                                                              37-D registry,
-                                                              O_N, contact gate)
+                                                              38-D registry,
+                                                              O_N, g_sic,
+                                                              contact gate)
   aggregate_sweep.py, burst_metrics.py, burst_plots.py      aggregation
   seed_alloc.py                                             disjoint seed ranges
   synapse_pdist.csv                                         Sholl bouton placement
@@ -52,9 +53,10 @@ depends on where `MEAMA/` sits relative to any other checkout.
 ```bash
 cd /davinci-1/home/ldellamea/ANN/Phenomenological/MEAMA
 
-# 0. prerequisites (the O_N port + contact gate must already be in place)
-python -c "import HPC_main_sweep as S; assert S.N_DIMS==37; \
-           assert len(S.resolve_sweep_group('tripartite'))==32; print('prereqs OK')"
+# 0. prerequisites (the O_N port, the g_sic axis and the contact gate must
+#    already be in place; 37-D / 32 axes before 2026-11-04, SPEC Block 12)
+python -c "import HPC_main_sweep as S; assert S.N_DIMS==38; \
+           assert len(S.resolve_sweep_group('tripartite'))==33; print('prereqs OK')"
 
 # 1. size it  (~2-4 h wall; 6 configs x 2 topologies x 12 workers x 3 params)
 bash launch_bench.sh

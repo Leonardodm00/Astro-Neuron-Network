@@ -4,12 +4,16 @@
 #
 # Self-contained correctness checks for two coupled 2026-08 changes:
 #
-#   (1) O_N registry port (Giulia table): the run_args registry is 37-D, with
+#   (1) O_N registry port (Giulia table): the run_args registry is 38-D
+#       since 2026-11-04 (37-D before g_sic), with
 #       O_N (astrocyte mGluR glutamate-binding rate) at index 36, bounds
 #       [0.0001, 1.0] (log; [0.03, 3.0] until 2026-10-31, specs/SPEC.md
-#       Block 10), nominal 0.3; I_bias capped at [0.3, 1.0]; and a new
+#       Block 10), nominal 0.3; g_sic (SIC conductance per pair, SPEC
+#       Block 12) at index 37, bounds [4, 400] nS (log), nominal 40.6 nS;
+#       I_bias capped at [0.3, 1.0]; and a
 #       'tripartite' sweep group = neuron(9) + synapse(14) + the Giulia astro
-#       table (I_Theta / omega_I frozen at nominal) = 32 run_args axes.
+#       table (I_Theta / omega_I frozen at nominal) = 33 run_args axes
+#       (32 before g_sic).
 #
 #   (2) Astrocyte contact gate: per topology, every VIABLE synapse->astrocyte
 #       link is retained i.i.d. with probability stoa_gate_p in [0, 1], drawn
@@ -65,26 +69,32 @@ def _args(mode='Full', group='tripartite', rule='flat',
 
 
 def t1_registry(S):
-    print('\n[T1] 37-D registry: O_N port + Giulia astro table')
-    check(S.N_DIMS == 37, f'N_DIMS == 37 (got {S.N_DIMS})')
+    print('\n[T1] 38-D registry: O_N port, g_sic axis + Giulia astro table')
+    check(S.N_DIMS == 38, f'N_DIMS == 38 (got {S.N_DIMS})')
     check(S.PARAM_NAMES[36] == 'O_N', 'O_N is registry index 36')
     check(S.PARAM_UNITS[36] == '1/(uM*s)', 'O_N units 1/(uM*s)')
     check(abs(S.NOMINAL_PARAMS[36] - 0.3) < 1e-12, 'O_N nominal 0.3')
     check(tuple(S.PARAM_BOUNDS[36]) == (0.0001, 1.0), 'O_N bounds [0.0001, 1.0] (decided 2026-10-31)')
     check(36 in S.LOG_PARAMS, 'O_N is a log axis (4-decade span)')
+    check(S.PARAM_NAMES[37] == 'g_sic', 'g_sic is registry index 37 (SPEC Block 12)')
+    check(S.PARAM_UNITS[37] == 'nS', 'g_sic units nS')
+    check(abs(S.NOMINAL_PARAMS[37] - 40.6) < 1e-12, 'g_sic nominal 40.6 nS')
+    check(tuple(S.PARAM_BOUNDS[37]) == (4.0, 400.0), 'g_sic bounds [4, 400] nS (decided 2026-11-04)')
+    check(37 in S.LOG_PARAMS, 'g_sic is a log axis (2-decade span)')
     k_ib = S.PARAM_NAMES.index('I_bias')
     check(tuple(S.PARAM_BOUNDS[k_ib]) == (0.3, 1.0),
           'I_bias capped at [0.3, 1.0] (Giulia table)')
     idx = S.resolve_sweep_group('tripartite')
     names = {S.PARAM_NAMES[i] for i in idx}
-    check(len(idx) == 32, f'tripartite has 32 free axes (got {len(idx)})')
+    check(len(idx) == 33, f'tripartite has 33 free axes (got {len(idx)})')
     check('O_N' in names, 'tripartite sweeps O_N')
+    check('g_sic' in names, 'tripartite sweeps g_sic')
     check('I_Theta' not in names and 'omega_I' not in names,
           'tripartite freezes I_Theta and omega_I')
     check(not names & {'DeltaT', 'VT', 'gL'},
           'tripartite keeps the Bucket-A freeze')
     all_idx = S.resolve_sweep_group('all')
-    check(len(all_idx) == 34, f"'all' now has 34 free axes (got {len(all_idx)})")
+    check(len(all_idx) == 35, f"'all' now has 35 free axes (got {len(all_idx)})")
     # theta <-> natural round trip must hold on the widened registry
     th = S.natural_to_theta(S.NOMINAL_PARAMS.copy())
     back = S.theta_to_natural(th)
@@ -161,8 +171,8 @@ def t3_axis_declaration(S):
     check('stoa_gate_p' in d['consumed_axes'], 'Full: gate declared CONSUMED')
     check(d['n_topology_level_swept'] == 2,
           'flat + gate: exactly 2 topology-level swept axes (conn_prob, gate)')
-    check(d['n_swept'] == 32 + 2,
-          f"tripartite/flat/gated: n_swept == 34 (got {d['n_swept']})")
+    check(d['n_swept'] == 33 + 2,
+          f"tripartite/flat/gated: n_swept == 35 (got {d['n_swept']})")
 
     d = S.build_axis_declaration(_args(gate_lo=0.7, gate_hi=0.7),
                                  S.resolve_sweep_group('tripartite'))

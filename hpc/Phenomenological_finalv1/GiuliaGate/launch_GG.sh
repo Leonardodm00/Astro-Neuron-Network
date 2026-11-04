@@ -2,8 +2,9 @@
 ##########################################################################
 # launch_GG.sh -- GiuliaGate campaign launcher (login node).
 #
-# Giulia's design on the 37-D default pipeline (decided 2026-10-31): MODE
-# Full, neurons fixed at the default cell, 15 free axes (prior_config.tsv),
+# Giulia's design on the 38-D default pipeline (decided 2026-10-31; 37-D
+# until g_sic, 2026-11-04): MODE Full, neurons fixed at the default cell,
+# 16 free axes (prior_config.tsv; 15 before g_sic),
 # the astrocyte contact gate drawn per network, the refractory hold.
 # Derived from LindaColloDUP/launch_LCDUP.sh. Run from anywhere:
 #
@@ -96,7 +97,7 @@ DENSITY_ASTRO="${DENSITY_ASTRO:-1200}"   # astrocytes/mm^2 (Na = Nn, decided Jun
 CAMPAIGN_TAG="${CAMPAIGN_TAG:-cadex_hhgap_clamp_v1}"
 CONDA_ENV="${CONDA_ENV:-brian_final}"
 MODE="Full"                          # the gate and the astrocytes are read only in Full mode
-SWEEP_GROUP="tripartite"             # minus the freeze list of prior_config.tsv: 15 free axes
+SWEEP_GROUP="tripartite"             # minus the freeze list of prior_config.tsv: 16 free axes
 CONN_RULE="${CONN_RULE:-flat}"
 CONN_PERIODIC="${CONN_PERIODIC:-0}"
 
@@ -262,6 +263,7 @@ for q in "${QUEUES[@]}"; do
     VARS="${VARS},CONN_RULE=${CONN_RULE},CONN_PERIODIC=${CONN_PERIODIC}"
     VARS="${VARS},CONN_PROB_LO=${CONN_PROB_LO},CONN_PROB_HI=${CONN_PROB_HI}"
     VARS="${VARS},STOA_GATE_LO=${STOA_GATE_LO},STOA_GATE_HI=${STOA_GATE_HI}"
+    VARS="${VARS},ROADMAP_N_TASKS=${ntasks}"     # array size, for the roadmap marker
 
     if [ "$DRYRUN" = "1" ]; then
         if [ "$ntasks" -gt 1 ]; then

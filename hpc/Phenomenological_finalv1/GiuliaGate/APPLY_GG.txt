@@ -1,5 +1,6 @@
 GiuliaGate -- Giulia's new campaign (MODE=Full): neurons fixed at the default
-cell, astrocytes with the contact gate, on the 37-D default pipeline
+cell, astrocytes with the contact gate, on the 38-D default pipeline (37-D
+until 2026-11-04)
 ==========================================================================
 Folder (decided 2026-10-31): this folder of the git clone on davinci,
   /davinci-1/home/ldellamea/ANN/Astro-Neuron-Network/hpc/Phenomenological_finalv1/GiuliaGate/
@@ -42,6 +43,14 @@ DECIDED 2026-10-31 (by the author; operations doc section 2):
   15 free axes in all; the range check on four nodes before the launch.
 DECIDED 2026-11-02, after the range check: the campaign runs on five 48-core
   intel nodes and four 48-core cpu nodes at once (intel:48:5, cpu:48:4).
+DECIDED 2026-11-04 (specs/SPEC.md section 4, Blocks 12 and 13): the
+  astrocytes act on the neurons through a slow inward current (SIC), always
+  on in Full mode; its conductance per astrocyte-neuron pair, g_sic, is a
+  free axis, [4, 400] nS (log; nominal 40.6 nS), so 16 free axes in all;
+  the SIC pairs are the Voronoi neighbours with no distance cap; every
+  astrocyte starts from its driven state (no synchronous release at the
+  start of a run); the range check runs again, with all of it, before the
+  launch (20 s per run, as before; 17 design dimensions).
 
 KNOWN PROBLEM, 2026-10-31 (specs/SPEC.md section 8): with the model as it is,
 the astrocytes go non-finite (NaN) about 27 ms into a Full run, at nominal
@@ -63,6 +72,10 @@ read back after the run (a mismatch stops the sweep with exit 3), and the
 pre-run draws are seeded per topology. Step 0 copies the fixed pipeline: run
 steps 0-8 again before the launch. Never repeat step 0 into the folder of a
 campaign that is running: it keeps its copies.
+[CHANGED 2026-11-04] The SIC, the g_sic axis and the astrocyte start
+(specs/SPEC.md Blocks 12 and 13; the decisions above). Step 0 copies them:
+run steps 0-8 again, then the range check (BEFORE STEP 9) again. Expected
+outputs below are those of this version (38-D, 16 free axes).
 
 ORDER OF OPERATIONS (paste one line at a time)
 
@@ -77,21 +90,22 @@ cd ~/ANN/Astro-Neuron-Network && git pull && cd hpc/Phenomenological_finalv1/Giu
 2. byte check of the package files (expect "0 CR 0 non-ASCII" seven times):
 python3 -c "import sys;[print(p, open(p,'rb').read().count(b'\r'), 'CR', sum(b>127 for b in open(p,'rb').read()), 'non-ASCII') for p in sys.argv[1:]]" launch_GG.sh submit_GG.sh apply_prior_patch.py apply_freeze_patch.py seed_alloc.py prior_config.tsv smoke_test_gg.py
 
-3. environment and registry (expect "37"):
+3. environment and registry (expect "38"):
 conda activate brian_final && python -c "import HPC_main_sweep as S; print(S.N_DIMS)"
 
 4. freeze patch and prior patch (expect "CHECK OK" and "PATCHED" for the
    freeze patch; "CHECK OK", then "PATCHED: ... Sigma [2, 10]; g_ampa [0.05, 10];
-   g_nmda [0.05, 10]" for the prior; then "BOXES OK: 15 free axes as in
+   g_nmda [0.05, 10]" for the prior; then "BOXES OK: 16 free axes as in
    prior_config.tsv; changed from the registry: Sigma [2, 10]; g_ampa [0.05, 10];
-   g_nmda [0.05, 10]" (O_N's [0.0001, 1] is the registry box):
+   g_nmda [0.05, 10]" (O_N's [0.0001, 1] and g_sic's [4, 400] are the
+   registry boxes):
 python apply_freeze_patch.py --check && python apply_freeze_patch.py && python apply_prior_patch.py --check && python apply_prior_patch.py && python apply_prior_patch.py --check-applied
 
    To change the prior later: edit prior_config.tsv (status, low, high,
    value only), then step 0 (a fresh copy) and step 4 again. A copy patched to
    other boxes is refused ("REFUSED ... copy the file in again").
 
-5. smoke test of the package, about 30 s (expect "RESULT: 33 passed, 0 failed, 1 skipped"):
+5. smoke test of the package, about 30 s (expect "RESULT: 34 passed, 0 failed, 1 skipped"):
 python smoke_test_gg.py | tail -1
 
 6. the model holds V during t_ref (expect the dV/dt line ending in
@@ -118,7 +132,8 @@ SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes DRYRUN=1 bash launch_GG.sh
    BEFORE STEP 9: the prior range calibration on FOUR nodes, from the
    range_check folder of the clone (README_RANGE_CHECK.txt there), with the
    fixed model (KNOWN PROBLEM above): the 16,384 corners of the box
-   (resolution-8 fraction of the 16 dimensions) split by conn_prob level over
+   (resolution-8 fraction of the 17 dimensions since g_sic; 16 before) split
+   by conn_prob level over
    two intel nodes, the 7-bin interior (16,464 cells) split over two cpu
    nodes, and the analysis, with the astrocyte outcomes. It reads the prior
    from this folder's prior_config.tsv; steps 0-4 must be done. First the dry
@@ -132,13 +147,15 @@ cd ~/ANN/Astro-Neuron-Network/hpc/range_check && NODES=4 SETUP=giulia bash launc
    once they have been discussed.
    [done] ~/ANN/range_check/giulia_20261102T092309Z (submitted 2026-11-02),
    discussed the same day (operations doc, section 6b).
+   [2026-11-04] Run it again, with the SIC, g_sic and the astrocyte start
+   (same two commands, after steps 0-8 of this version).
 
 9. launch (keep the "stop all: qdel ..." line; the launch also writes
    campaign_<tag>/PROVENANCE_<launch id>.txt):
 mkdir -p artifacts && SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes bash launch_GG.sh 2>&1 | tee artifacts/launch_cadex_hhgap_clamp_v1_$(date -u +%Y%m%dT%H%M%SZ).log
 
 10. once the first task has started: free axes, freeze list, population
-    (expect "free 15", the freeze list, "Nn 108 Na 108 mode Full simtime 180.0
+    (expect "free 16", the freeze list, "Nn 108 Na 108 mode Full simtime 180.0
     gate 0.2 1.0"):
 python -c "import json,glob; f=sorted(glob.glob('campaign_cadex_hhgap_clamp_v1/sweep_*/job_args.json'))[0]; d=json.load(open(f)); print(f); print('free', len(d['_active_param_names']), d['_active_param_names']); print('freeze', d['freeze']); print('Nn', d['Nn'], 'Na', d['Na'], 'mode', d['mode'], 'simtime', d['simtime'], 'gate', d['stoa_gate_lo'], d['stoa_gate_hi'])"
 

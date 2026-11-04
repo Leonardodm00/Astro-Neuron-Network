@@ -75,6 +75,7 @@ PARAM_NAMES = [
     'I_inj',                                     # 34    Neuron  (swept per-neuron bias SCALE)
     'Cm',                                        # 35    Neuron  (SWEPT membrane capacitance; tau_m axis, gl frozen)
     'O_N',                                       # 36    Astrocyte (mGluR glutamate-binding rate; ported from the Giulia run)
+    'g_sic',                                     # 37    Astrocyte->neuron SIC conductance per pair (SPEC Block 12)
 ]
 
 PARAM_UNITS = [
@@ -95,6 +96,7 @@ PARAM_UNITS = [
     'pA',
     'pF',
     '1/(uM*s)',
+    'nS',
 ]
 
 # Nominal parameter vector.  Each entry is used as the default when the
@@ -137,6 +139,7 @@ NOMINAL_PARAMS = np.array([
     4.0,        # 34 I_inj          pA    (per-neuron bias SCALE; mid of [1,7.5])
     17.25,      # 35 Cm             pF    (SWEPT; nominal tau_m=15 ms at gl=1.15 nS)
     0.3,        # 36 O_N            1/(uM*s)  astrocyte mGluR glutamate-binding rate (De Pitta default; Giulia table)
+    40.6,       # 37 g_sic          nS    SIC conductance per pair (SPEC Block 12; calibrated to Kovacs & Pal 2017)
 ])
 
 # =============================================================================
@@ -153,7 +156,7 @@ SYNAPSE_PARAMS = ['EC50_ampa', 'EC50_nmda', 'U_0_ar', 'U_max', 'U_0_sr',
                   'Omega_f_sr', 'Omega_f_ar', 'Omega_d', 'alpha_syn',
                   'g_ampa', 'g_nmda', 'x0', 'O_G', 'Omega_G']
 ASTRO_PARAMS   = ['O_beta', 'O_3K', 'Omega_5P', 'I_bias', 'F', 'I_Theta',
-                  'omega_I', 'C_Theta', 'U_A', 'G_T', 'O_N']
+                  'omega_I', 'C_Theta', 'U_A', 'G_T', 'O_N', 'g_sic']
 
 
 def _grp_idx(names):
@@ -628,9 +631,9 @@ def build_topology(Nn, Na, c_max,
         StoA_viable_i / StoA_viable_j : the PRE-GATE ("viable") StoA pair list.
         SIC_i, SIC_j (n_sic,) int32 -- astrocyte and neuron index of each
                     slow-inward-current pair (SPEC Block 12): Voronoi
-                    neighbours in the joint tessellation, capped at
-                    `gj_max_dist` um, in both topology modes; empty in
-                    Neuronal mode. Not thinned by the contact gate.
+                    neighbours in the joint tessellation, no distance cap,
+                    in both topology modes; empty in Neuronal mode. Not
+                    thinned by the contact gate.
 
     Astrocyte contact gate (stoa_gate_p). For each fixed topology, every viable
     (synapse, astrocyte) pair produced by the topology rule is RETAINED
@@ -858,10 +861,10 @@ def build_topology(Nn, Na, c_max,
 
     # -- Slow-inward-current pairs (SPEC Block 12) ----------------------------
     # Every (astrocyte, neuron) whose cells share a border in the joint
-    # Voronoi tessellation, capped at gj_max_dist um, in both topology modes.
+    # Voronoi tessellation, with no distance cap, in both topology modes.
     # No random draw; independent of the synapses and of the contact gate.
     from ASD_fun_BD_cpp import sic_pairs
-    SIC_i, SIC_j = sic_pairs(N_pos, A_pos, max_dist=gj_max_dist)
+    SIC_i, SIC_j = sic_pairs(N_pos, A_pos, max_dist=np.inf)   # no cap (author, 2026-11-04)
 
     topo = dict(
         N_pos=N_pos,
@@ -910,6 +913,15 @@ def sic_record_keys(mode, n_sic_pairs, sic_scheme):
     return {}
 
 
+def astro_ic_record_keys(mode, astro_ic_scheme):
+    """The astrocyte-initial-state key of a run's records (SPEC Block 13):
+    {'astro_ic': scheme} in Full mode, {} (absent) under Neuronal. A Full-mode
+    record without it started from the quiescent state."""
+    if mode == 'Full':
+        return {'astro_ic': str(astro_ic_scheme)}
+    return {}
+
+
 def save_topology(topo: dict, out_dir: str) -> str:
     """Save topology arrays so the run can be reproduced or inspected."""
     path = os.path.join(out_dir, 'topology.npz')
@@ -923,7 +935,7 @@ def save_topology(topo: dict, out_dir: str) -> str:
 # =============================================================================
 
 def build_and_run(topo: dict, args, params: np.ndarray, sic=None,
-                  record=None) -> dict:
+                  record=None, astro_ic='driven') -> dict:
     """
     Build the cpp_standalone network from pre-computed topology arrays,
     compile, run once, and return the harvested spike data.
@@ -933,7 +945,7 @@ def build_and_run(topo: dict, args, params: np.ndarray, sic=None,
     topo : dict
         Output of `build_topology`.
     args : argparse.Namespace
-    params : np.ndarray  shape (37,)
+    params : np.ndarray  shape (38,)
     sic : None or False
         None (what main() passes): the slow inward current is on in Full mode
         (SPEC Block 12). False: off -- the SIC-off twin of a demonstration or
@@ -943,8 +955,14 @@ def build_and_run(topo: dict, args, params: np.ndarray, sic=None,
         (sic_demo.py): 'neurons' (indices) with 'dt_ms' -> V, and I_sic and
         r_sic_tot when the SIC is on, of those neurons; 'all_dt_ms' -> I_sic
         and r_sic_tot of every neuron (SIC on) and, in Full mode, C of every
-        astrocyte and G_A of every release unit. Returned under 'record' in
-        plain units: t in s, V in mV, I in pA, C and G_A in uM.
+        astrocyte and G_A of every release unit, and the release times
+        (rel_t, rel_i). Returned under 'record' in plain units: t in s, V in
+        mV, I in pA, C and G_A in uM.
+    astro_ic : 'driven' (what main() uses) or 'quiescent'
+        SPEC Block 13. 'driven': every astrocyte starts from the driven state
+        for this run's parameters (astro_driven_ics, through run_args).
+        'quiescent': the build-time isolated state of before, kept for the
+        comparison of the tests only.
 
     Returns
     -------
@@ -955,6 +973,9 @@ def build_and_run(topo: dict, args, params: np.ndarray, sic=None,
     if sic not in (None, False):
         raise ValueError('build_and_run: sic must be None (on in Full mode) or False, '
                          'got %r' % (sic,))
+    if astro_ic not in ('driven', 'quiescent'):
+        raise ValueError("build_and_run: astro_ic must be 'driven' or 'quiescent', got %r"
+                         % (astro_ic,))
     # ── Brian2 device setup (must precede start_scope and group creation) ────
     from brian2 import (
         set_device, get_device, devices, start_scope,
@@ -991,6 +1012,8 @@ def build_and_run(topo: dict, args, params: np.ndarray, sic=None,
         Neuronal_Network, Astrocyte_Group, Gliotransmission,
         Synapse_to_astro, Astro_to_Syn,
         Astro_to_Neuron_SIC, SIC_SCHEME,          # SPEC Block 12
+        astro_driven_ics, astro_ic_phases,        # SPEC Block 13
+        ASTRO_IC_SCHEME, ASTRO_IC_PARAMS,
     )
 
     # ── Binomial_fun (BINV: inverse-transform sampling) ────────────────────────
@@ -1172,6 +1195,8 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
             if args.mode == 'Full':
                 net.add(StateMonitor(Astro, 'C', record=True, dt=all_dt, name='Rec_astro_C'))
                 net.add(StateMonitor(GT, 'G_A', record=True, dt=all_dt, name='Rec_GA'))
+        if args.mode == 'Full':
+            net.add(SpikeMonitor(GT, name='Rec_release'))     # gliotransmitter releases
 
     # Run seed (SPEC Block 11): after the last initial value, before net.run().
     seed_holder = None
@@ -1235,6 +1260,20 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
             net['Gliot_release'].G_T:     params[29] * mmole,
             net['Astrocyte'].O_N:         params[36] / umole / second,
         })
+        if sic_on:                       # SPEC Block 12: the SIC conductance, axis 37
+            run_args[net['Neuron'].g_sic] = params[37] * nS
+        if astro_ic == 'driven':         # SPEC Block 13: the driven initial state
+            linked = np.zeros(args.Na, dtype=bool)
+            linked[np.unique(np.asarray(topo['StoA_j'], dtype=np.int64))] = True
+            a_par = {n: float(params[PARAM_NAMES.index(n)]) for n in ASTRO_IC_PARAMS}
+            ics, _ = astro_driven_ics(a_par, linked,
+                                      astro_ic_phases(args.Na, net_seeds['seed_ic_astro']))
+            run_args.update({
+                net['Astrocyte'].Gamma_A: ics['Gamma_A'],
+                net['Astrocyte'].I:       ics['I'] * umole,
+                net['Astrocyte'].C:       ics['C'] * umole,
+                net['Astrocyte'].h:       ics['h'],
+            })
 
     # ── Execute ───────────────────────────────────────────────────────────────
     print(f'[pass 2] Executing binary '
@@ -1277,6 +1316,7 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
         seed_run_applied=(-1 if seed_run is None else seed_run),
         n_sic_pairs=int(n_sic_pairs), sic_scheme=SIC_SCHEME,   # Block 12
         sic_on=bool(sic_on),
+        astro_ic=(ASTRO_IC_SCHEME if astro_ic == 'driven' else 'quiescent'),   # Block 13
         **({'record': _harvest_record(net, sic_on)} if record is not None else {}),
     )
 
@@ -1299,6 +1339,9 @@ def _harvest_record(net, sic_on):
         out['t_all'] = np.asarray(m.t / second)
         out['I_sic_all'] = np.asarray(m.I_sic / pA, dtype=np.float32)
         out['r_sic_all'] = np.asarray(m.r_sic_tot, dtype=np.float32)
+    if 'Rec_release' in names:
+        out['rel_t'] = np.asarray(net['Rec_release'].t / second)
+        out['rel_i'] = np.asarray(net['Rec_release'].i, dtype=np.int32)
     if 'Rec_astro_C' in names:
         out['t_astro'] = np.asarray(net['Rec_astro_C'].t / second)
         out['C'] = np.asarray(net['Rec_astro_C'].C / umole, dtype=np.float32)
@@ -2293,6 +2336,9 @@ def main():
         **{_k: np.array(_v) for _k, _v in
            sic_record_keys(args.mode, results['n_sic_pairs'],
                            results['sic_scheme']).items()},
+        # SPEC Block 13: the astrocytes' initial state (absent under Neuronal)
+        **{_k: np.array(_v) for _k, _v in
+           astro_ic_record_keys(args.mode, results['astro_ic']).items()},
     )
     print(f'[data]  Spike data saved → {npz_path}')
 

@@ -16,7 +16,8 @@ WHAT THIS PROVES
         - swept / consumed / fixed / inert are mutually consistent;
         - conn_prob is INERT (and fixed) under weibull, CONSUMED under flat;
         - the kernel axes are the mirror image;
-        - the 11 astrocyte axes are declared INERT under mode=Neuronal when
+        - the 12 astrocyte axes (g_sic included since 2026-11-04) are
+          declared INERT under mode=Neuronal when
           they were swept (SWEEP_GROUP=all), and FIXED when they were not
           (SWEEP_GROUP=neuron_synapse);
         - neuron_synapse resolves to 23 axes, not 24.
@@ -228,8 +229,8 @@ def t4_axis_declaration(verbose=False):
     check(d['n_swept'] == 26, f"n_swept == 26 (got {d['n_swept']})")
     # Astro axes were NOT swept here, so they are fixed, not inert.
     astro_fixed = [n for n in S._ASTRO_FREE if n in d['fixed_axes']]
-    check(len(astro_fixed) == 11,   # 11 since the O_N port (2026-08; was 10)
-          f'neuron_synapse: all 11 astro axes FIXED at nominal '
+    check(len(astro_fixed) == 12,   # 12 since g_sic (2026-11-04); 11 since the O_N port (2026-08; was 10)
+          f'neuron_synapse: all 12 astro axes FIXED at nominal '
           f'(got {len(astro_fixed)})')
     check(not any(n in d['inert_axes'] for n in S._ASTRO_FREE),
           'neuron_synapse: no astro axis marked inert (they were never drawn)')
@@ -254,8 +255,8 @@ def t4_axis_declaration(verbose=False):
     idx_all = S.resolve_sweep_group('all')
     d_all = S.build_axis_declaration(args_all, idx_all)
     astro_inert = [n for n in S._ASTRO_FREE if n in d_all['inert_axes']]
-    check(len(astro_inert) == 11,   # 11 since the O_N port (2026-08; was 10)
-          f'mode=Neuronal + sweep_group=all: all 11 astro axes declared '
+    check(len(astro_inert) == 12,   # 12 since g_sic (2026-11-04); 11 since the O_N port (2026-08; was 10)
+          f'mode=Neuronal + sweep_group=all: all 12 astro axes declared '
           f'INERT (got {len(astro_inert)})')
     check(not any(n in d_all['consumed_axes'] for n in S._ASTRO_FREE),
           'mode=Neuronal + all: no astro axis claimed as consumed')

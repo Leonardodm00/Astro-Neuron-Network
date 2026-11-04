@@ -244,10 +244,11 @@ def t_pipeline():
 
     try:
         S = importlib.import_module('HPC_main_sweep')
-        check(S.N_DIMS == 37, f'registry is 37-D (got {S.N_DIMS})',
-              'if 36, this copy predates the O_N port')
+        check(S.N_DIMS == 38, f'registry is 38-D (got {S.N_DIMS})',
+              'if 37, this copy predates the g_sic axis (SPEC Block 12, '
+              '2026-11-04); if 36, it predates the O_N port')
         n = len(S.resolve_sweep_group('tripartite'))
-        check(n == 32, f"sweep group 'tripartite' has 32 axes (got {n})")
+        check(n == 33, f"sweep group 'tripartite' has 33 axes (got {n})")
         check(hasattr(S, 'stoa_gate_record_keys'),
               'astrocyte contact gate present (stoa_gate_record_keys)')
     except Exception as e:

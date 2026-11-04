@@ -19,7 +19,8 @@
 # forwarded too.
 #
 # The folder is self-contained: the pipeline (HPC_main_sweep.py etc., copies
-# of the clone's 37-D root files since 2026-10-31, earlier of the cluster's
+# of the clone's root files since 2026-10-31 (37-D; 38-D since 2026-11-04),
+# earlier of the cluster's
 # MEAMA/ folder, patched with
 # apply_freeze_patch.py and apply_box_patch.py), the seed ledger and the
 # campaign output all live in the folder that holds this script. Since
@@ -271,6 +272,7 @@ for q in "${QUEUES[@]}"; do
     VARS="${VARS},CONN_RULE=${CONN_RULE},CONN_PERIODIC=${CONN_PERIODIC}"
     VARS="${VARS},CONN_PROB_LO=${CONN_PROB_LO},CONN_PROB_HI=${CONN_PROB_HI}"
     VARS="${VARS},STOA_GATE_LO=${STOA_GATE_LO},STOA_GATE_HI=${STOA_GATE_HI}"
+    VARS="${VARS},ROADMAP_N_TASKS=${ntasks}"     # array size, for the roadmap marker
 
     if [ "$DRYRUN" = "1" ]; then
         if [ "$ntasks" -gt 1 ]; then

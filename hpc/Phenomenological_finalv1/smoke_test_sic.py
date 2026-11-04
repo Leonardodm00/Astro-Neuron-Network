@@ -14,8 +14,9 @@ tessellation (capped at gj_max_dist), always on in Full mode.
       cap removes the far pairs), and a random layout against
       scipy.spatial.Voronoi ridge_points (the cells that share a ridge); order,
       dtype, cap 0 and inf, two cells, no astrocyte, degenerate sets raise
-  S3  the switch in Neuronal_Network (runtime device): Full has r_sic_tot and
-      I_sic by default, sic=False and Neuronal do not, sic=True in Neuronal
+  S3  the switch in Neuronal_Network (runtime device): Full has r_sic_tot,
+      I_sic and the per-neuron g_sic (40.6 nS, registry axis 37) by default,
+      sic=False and Neuronal do not, sic=True in Neuronal
       raises; with the SIC off the neuron equations equal those of the
       library before Block 12 (git show PRE_SIC_COMMIT; skipped without git)
   S4  the SIC kinetics in Brian2 (runtime device, numpy, dt 0.05 ms) against
@@ -31,7 +32,8 @@ tessellation (capped at gj_max_dist), always on in Full mode.
       sees the sum of the previous step); a neuron with no pair has exactly
       0; a release 1 s later gives the same r(t) shifted
   S7  build_topology: Full mode returns SIC_i, SIC_j = sic_pairs(N_pos, A_pos,
-      gj_max_dist), the same in both topology modes and for any contact gate,
+      inf) (no cap, the author's decision of 2026-11-04), the same in both
+      topology modes, for any contact gate and any gj_max_dist,
       deterministic; Neuronal mode returns them empty
   S8  sic_record_keys: Full -> sic_scheme, n_sic_pairs; Neuronal -> absent
   S9  Astro_to_Neuron_SIC refuses a neuron group without r_sic_tot, index
@@ -43,10 +45,11 @@ tessellation (capped at gj_max_dist), always on in Full mode.
       Neuronal mode: the keys absent, SIC_i empty
   S11 SIC off = before Block 12 (cpp_standalone, about 2 min; needs git):
       HPC_single_run.py of PRE_SIC_COMMIT and the current one with the SIC
-      switched off (build_and_run sic=False) give the same spikes, Full mode
-      2 s; so does the current one with the SIC terms in the neuron
-      equations but no SIC drive (r_sic_tot = 0); and Neuronal mode (where
-      the SIC never exists)
+      switched off (build_and_run sic=False) and the astrocytes' initial
+      state of before (astro_ic='quiescent', Block 13) give the same spikes,
+      Full mode 2 s; so does the current one with the SIC terms in the
+      neuron equations but no SIC drive (r_sic_tot = 0); and Neuronal mode
+      (where the SIC never exists)
 
 Run (from this folder):
     python3 smoke_test_sic.py | tail -1            (about 2-3 min, two cores)
@@ -197,6 +200,10 @@ def s2(M):
         check(got == want and len(got) == len(a),
               'random 108 + 108 layout, cap %s um: %d pairs = Voronoi ridge oracle (%d)'
               % (cap, len(got), len(want)))
+    a_def, i_def = M.sic_pairs(N_pos, A_pos)
+    a_inf, i_inf = M.sic_pairs(N_pos, A_pos, max_dist=np.inf)
+    check(np.array_equal(a_def, a_inf) and np.array_equal(i_def, i_inf),
+          'the default is no cap (max_dist = inf): %d pairs' % len(a_def))
     a, i = M.sic_pairs(N_pos, A_pos, max_dist=150.0)
     d = np.hypot(*(A_pos[a] - N_pos[i]).T)
     order_ok = bool(np.all(np.diff(a.astype(np.int64) * 1000 + i) > 0))
@@ -240,12 +247,17 @@ def s3(M, tmp):
     from brian2 import prefs
     prefs.codegen.target = 'numpy'
     Nf = _neuron_eqs(M, 'Full', 'default')
-    check('r_sic_tot' in Nf.variables and 'I_sic' in Nf.variables
-          and 'g_sic' in Nf.namespace, 'Full mode, default: r_sic_tot, I_sic, g_sic present')
+    from brian2 import nS
+    g0 = np.asarray(Nf.g_sic[:] / nS) if 'g_sic' in Nf.variables else np.array([])
+    check('r_sic_tot' in Nf.variables and 'I_sic' in Nf.variables and g0.size == 4
+          and np.all(np.abs(g0 - SPEC['g_sic']) < 1e-9) and 'g_sic' not in Nf.namespace,
+          'Full mode, default: r_sic_tot, I_sic, and g_sic a per-neuron parameter = %s nS '
+          '(registry axis 37; not a namespace constant)' % SPEC['g_sic'])
     Noff = _neuron_eqs(M, 'Full', False)
     Nn = _neuron_eqs(M, 'Neuronal', 'default')
     check('r_sic_tot' not in Noff.variables and 'r_sic_tot' not in Nn.variables
-          and 'g_sic' not in Noff.namespace, 'Full sic=False and Neuronal: no SIC terms')
+          and 'g_sic' not in Noff.variables and 'g_sic' not in Nn.variables,
+          'Full sic=False and Neuronal: no SIC terms')
     try:
         _neuron_eqs(M, 'Neuronal', True)
         raised = False
@@ -424,13 +436,14 @@ def s7(M):
         t4 = _topo(R, topology_mode='distance')
         t5 = _topo(R, gj_max_dist=30.0)
         tn = _topo(R, mode='Neuronal', Na=0)
-    a, i = M.sic_pairs(t1['N_pos'], t1['A_pos'], max_dist=150.0)
+    a, i = M.sic_pairs(t1['N_pos'], t1['A_pos'], max_dist=np.inf)
+    a150, _ = M.sic_pairs(t1['N_pos'], t1['A_pos'], max_dist=150.0)
     check(np.array_equal(t1['SIC_i'], a) and np.array_equal(t1['SIC_j'], i) and len(a) > 0,
-          'Full, wallach: SIC_i, SIC_j = sic_pairs(N_pos, A_pos, 150) (%d pairs)' % len(a))
-    same = all(np.array_equal(t1[k], t[k]) for t in (t2, t3, t4) for k in ('SIC_i', 'SIC_j'))
-    check(same, 'the same pairs on a second build, with the contact gate 0.3, in distance mode')
-    a5, i5 = M.sic_pairs(t5['N_pos'], t5['A_pos'], max_dist=30.0)
-    check(np.array_equal(t5['SIC_i'], a5) and len(a5) < len(a), 'the cap follows gj_max_dist (30 um: %d pairs)' % len(a5))
+          'Full, wallach: SIC_i, SIC_j = sic_pairs(N_pos, A_pos, inf), no cap (%d pairs; %d with a '
+          '150 um cap)' % (len(a), len(a150)))
+    same = all(np.array_equal(t1[k], t[k]) for t in (t2, t3, t4, t5) for k in ('SIC_i', 'SIC_j'))
+    check(same, 'the same pairs on a second build, with the contact gate 0.3, in distance mode, '
+          'and with gj_max_dist 30 um (the cap no longer follows it)')
     check(len(tn['SIC_i']) == 0 and len(tn['SIC_j']) == 0 and tn['SIC_i'].dtype == np.int32,
           'Neuronal: SIC_i, SIC_j empty (int32)')
     return R
@@ -473,17 +486,19 @@ RUN_ARGS = ['--simtime', '2', '--density', '1200', '--density_astro', '1200', '-
 # with its figures switched off: the 3-D topology figure fails at random
 # (SPEC section 8) and would make these checks flaky. variant (current code):
 #   'on'   the pipeline as it is (main() passes no sic: on in Full mode)
-#   'off'  build_and_run(..., sic=False): the neurons without r_sic_tot, no SIC group
+#   'off'  build_and_run(..., sic=False, astro_ic='quiescent'): the neurons without
+#          r_sic_tot, no SIC group, the astrocytes' initial state of before (Block 13)
 #   'zero' the SIC terms in the neuron equations, but an inert group in place of
-#          the SIC synapses, so r_sic_tot stays 0
+#          the SIC synapses, so r_sic_tot stays 0; astro_ic='quiescent'
 DRIVER = r'''
 import sys, functools
 sys.path.insert(0, %(code_dir)r)
 import ASD_fun_BD_cpp as M
 import HPC_single_run as R
 if %(variant)r == 'off':
-    R.build_and_run = functools.partial(R.build_and_run, sic=False)
+    R.build_and_run = functools.partial(R.build_and_run, sic=False, astro_ic='quiescent')
 elif %(variant)r == 'zero':
+    R.build_and_run = functools.partial(R.build_and_run, astro_ic='quiescent')
     from brian2 import Synapses
     def _no_sic(GT, N, connections, params=None):
         return Synapses(GT, N, model='', name='ecs_astro_to_neuron_sic')
@@ -531,12 +546,13 @@ def s10(tmp, d_numpy, M):
         topo = np.load(os.path.join(out, 'topology.npz'))
         res[mode] = z
         if mode == 'Full':
-            check(str(z['sic_scheme']) == M.SIC_SCHEME and int(z['n_sic_pairs']) == len(topo['SIC_i']) > 0,
-                  'Full: sic_scheme %s, n_sic_pairs %d = len(SIC_i) %d > 0'
-                  % (z['sic_scheme'], int(z['n_sic_pairs']), len(topo['SIC_i'])))
+            check(str(z['sic_scheme']) == M.SIC_SCHEME and int(z['n_sic_pairs']) == len(topo['SIC_i']) > 0
+                  and str(z['astro_ic']) == M.ASTRO_IC_SCHEME,
+                  'Full: sic_scheme %s, n_sic_pairs %d = len(SIC_i) %d > 0, astro_ic %s'
+                  % (z['sic_scheme'], int(z['n_sic_pairs']), len(topo['SIC_i']), z['astro_ic']))
         else:
-            check('sic_scheme' not in z.files and 'n_sic_pairs' not in z.files and len(topo['SIC_i']) == 0,
-                  'Neuronal: no SIC keys, SIC_i empty')
+            check('sic_scheme' not in z.files and 'n_sic_pairs' not in z.files and 'astro_ic' not in z.files
+                  and len(topo['SIC_i']) == 0, 'Neuronal: no SIC or astro_ic keys, SIC_i empty')
     return res
 
 

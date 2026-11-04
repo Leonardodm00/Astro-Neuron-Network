@@ -97,8 +97,8 @@ from HPC_single_run import (                                         # noqa: E40
     # SPEC Block 11: per-network seeds and the per-run seed applied in main()
     derive_network_seeds, validate_run_seed, install_run_seed, check_run_seed,
     SeedNotAppliedError, RNG_SCHEME, RUN_SEED_HOLDER,
-    # SPEC Block 12: the SIC keys of the records
-    sic_record_keys,
+    # SPEC Block 12: the SIC keys of the records; Block 13: the astrocyte IC key
+    sic_record_keys, astro_ic_record_keys,
 )
 
 # ---------------------------------------------------------------------------
@@ -126,8 +126,12 @@ if 'O_N' not in PARAM_NAMES:                         # stale 36-D registry -> re
     PARAM_NAMES.append('O_N')
     PARAM_UNITS.append('1/(uM*s)')
     NOMINAL_PARAMS = np.append(NOMINAL_PARAMS, 0.3)   # idx 36 O_N nominal (De Pitta default; Giulia table)
-assert len(PARAM_NAMES) == len(PARAM_UNITS) == NOMINAL_PARAMS.shape[0] == 37, \
-    "registry must be 37-D (names/units/nominal); check HPC_single_run.py"
+if 'g_sic' not in PARAM_NAMES:                       # stale 37-D registry -> repair (SPEC Block 12)
+    PARAM_NAMES.append('g_sic')
+    PARAM_UNITS.append('nS')
+    NOMINAL_PARAMS = np.append(NOMINAL_PARAMS, 40.6)  # idx 37 g_sic nominal (calibrated, Kovacs & Pal 2017)
+assert len(PARAM_NAMES) == len(PARAM_UNITS) == NOMINAL_PARAMS.shape[0] == 38, \
+    "registry must be 38-D (names/units/nominal); check HPC_single_run.py"
 
 # ---------------------------------------------------------------------------
 # FREEZE OVERRIDE  (Doorn / Bucket-A refit — 2026-06)
@@ -443,10 +447,13 @@ PARAM_BOUNDS = np.array([
                         #                       until 2026-10-31: with the median drive of specs/SPEC.md
                         #                       Block 10 this box spans the receptor's curve at nominal
                         #                       activity and stays below RK4's bound (O_N < ~2.2).
+    (4.0,    400.0),    # 37 g_sic      [nS]  SIC conductance per astrocyte-neuron pair (log): a decade
+                        #                       either side of the calibrated 40.6 nS (author, 2026-11-04;
+                        #                       specs/SPEC.md Block 12). Read only in Full mode.
 ], dtype=np.float64)
 
 N_DIMS = PARAM_BOUNDS.shape[0]
-assert PARAM_BOUNDS.shape == (37, 2)
+assert PARAM_BOUNDS.shape == (38, 2)
 
 # =============================================================================
 # Log parametrisation:  sampling coordinate  +  storage / inference coordinate
@@ -767,9 +774,10 @@ def rebuild_manifest(out_dir) -> dict:
             pass
 
     manifest = {
-        'manifest_version':                 5,        # v1=14-D HH; v2=30-D HH; v3=34-D CAdEx;
+        'manifest_version':                 6,        # v1=14-D HH; v2=30-D HH; v3=34-D CAdEx;
                                                       # v4=+axis_declaration, rule-dependent conn keys
                                                       # v5=37-D (+O_N), +stoa contact gate axis
+                                                      # v6=38-D (+g_sic), the SIC and driven astro ICs
         'n_dims':                           int(N_DIMS),
         'updated_at':                       time.strftime('%Y-%m-%dT%H:%M:%S'),
         'job_id':                           os.environ.get('PBS_JOBID', ''),
@@ -904,7 +912,9 @@ def _worker_entry(pack: dict) -> list:
     from ASD_fun_BD_cpp import (Neuronal_Network, Astrocyte_Group,
                                 Gliotransmission, Synapse_to_astro,
                                 Astro_to_Syn,
-                                Astro_to_Neuron_SIC, SIC_SCHEME)   # Block 12
+                                Astro_to_Neuron_SIC, SIC_SCHEME,   # Block 12
+                                astro_driven_ics, astro_ic_phases,  # Block 13
+                                ASTRO_IC_SCHEME, ASTRO_IC_PARAMS)
 
     # ── Binomial_fun (BINV: inverse-transform sampling) ─────────────────────
     # Draws k ~ Binomial(n, p) by inverting the Binomial CDF with a SINGLE
@@ -1040,6 +1050,13 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
         SIC = Astro_to_Neuron_SIC(GT, N, connections=[topo['SIC_i'], topo['SIC_j']])
         n_sic_pairs = int(len(topo['SIC_i']))   # from the pair list, not len(SIC) (standalone)
 
+        # SPEC Block 13: which astrocytes have a synapse link (after the gate),
+        # and the network-level phase of each on a driven limit cycle
+        # (seed_ic_astro; used only where the driven state is a cycle)
+        astro_linked = np.zeros(int(cli['Na']), dtype=bool)
+        astro_linked[np.unique(np.asarray(topo['StoA_j'], dtype=np.int64))] = True
+        astro_phases = astro_ic_phases(int(cli['Na']), net_seeds['seed_ic_astro'])
+
         SpikesA = SpikeMonitor(Astro, name='Spike_monitor_A')
         net.add([N, S, Astro, GJ, GT, StoA, AtoS, SIC, SpikesN, SpikesA])
     else:
@@ -1131,6 +1148,7 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
                 net['Gliot_release'].U_A:     params[28],
                 net['Gliot_release'].G_T:     params[29] * mmole,
                 net['Astrocyte'].O_N:         params[36] / umole / second,
+                net['Neuron'].g_sic:          params[37] * nS,   # SIC, SPEC Block 12
             })
 
         # ──────────────────────────────────────────────────────────────────
@@ -1143,6 +1161,18 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
         run_args[net[RUN_SEED_HOLDER].run_seed] = int(seed_run)
 
         try:
+            if cli['mode'] == 'Full':
+                # SPEC Block 13: every astrocyte starts from the driven state
+                # for this run's parameters (no synchronous onset release); a
+                # failure here discards the run like any other.
+                _a_par = {n: float(params[PARAM_NAMES.index(n)]) for n in ASTRO_IC_PARAMS}
+                _ics, _ = astro_driven_ics(_a_par, astro_linked, astro_phases)
+                run_args.update({
+                    net['Astrocyte'].Gamma_A: _ics['Gamma_A'],
+                    net['Astrocyte'].I:       _ics['I'] * umole,
+                    net['Astrocyte'].C:       _ics['C'] * umole,
+                    net['Astrocyte'].h:       _ics['h'],
+                })
             t0_run = time.time()
             device.run(run_args=run_args)
             check_run_seed(net, seed_run)     # raises SeedNotAppliedError
@@ -1288,9 +1318,12 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
             seed_ic_synapse=np.int64(net_seeds['seed_ic_synapse']),
             seed_ic_astro=np.int64(net_seeds['seed_ic_astro']),
             rng_scheme=np.array(RNG_SCHEME),
-            # SPEC Block 12: SIC provenance (ABSENT under Neuronal)
+            # SPEC Block 12: SIC provenance; Block 13: the astrocytes' initial
+            # state (both ABSENT under Neuronal)
             **{_k: np.array(_v) for _k, _v in
                sic_record_keys(cli['mode'], n_sic_pairs, SIC_SCHEME).items()},
+            **{_k: np.array(_v) for _k, _v in
+               astro_ic_record_keys(cli['mode'], ASTRO_IC_SCHEME).items()},
             spk_N_t=spk_N_t, spk_N_i=spk_N_i,
             spk_A_t=spk_A_t, spk_A_i=spk_A_i,
         )
@@ -1346,8 +1379,9 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
             'seed_ic_synapse':    int(net_seeds['seed_ic_synapse']),
             'seed_ic_astro':      int(net_seeds['seed_ic_astro']),
             'rng_scheme':         RNG_SCHEME,
-            # SPEC Block 12
+            # SPEC Blocks 12 and 13
             **sic_record_keys(cli['mode'], n_sic_pairs, SIC_SCHEME),
+            **astro_ic_record_keys(cli['mode'], ASTRO_IC_SCHEME),
             'n_neuronal_spikes':  int(len(spk_N_t)),
             'n_astrocyte_events': int(len(spk_A_t)),
             'mean_FR_Hz':         float(len(spk_N_t) / (cli['simtime'] * max(Nn, 1))),

@@ -875,6 +875,9 @@ def get_SICparam(**kwargs):
     0-100 % rise of 220.1 ms, a decay tau of 706.0 ms and -43.3 pA (Kovacs &
     Pal 2017, Front Cell Neurosci 11:16, 1 mM Mg). EC50_sic and n_sic equal the
     synaptic NMDA nominal values but are separate from the swept EC50_nmda.
+    g_sic is also registry axis 37 (author, 2026-11-04): a per-neuron parameter
+    of the neuron group whose default is the value here, set per run by
+    run_args in Full mode; the other five are fixed.
     """
     params = {
         'k_on_sic':  3.596/ms,      # binding rate at full Hill activation
@@ -883,6 +886,7 @@ def get_SICparam(**kwargs):
         'EC50_sic':  3.0*mmole,     # Hill half-activation (synaptic NMDA nominal)
         'n_sic':     1.9,           # Hill coefficient (synaptic NMDA nominal)
         'g_sic':     40.6*nS,       # conductance of one pair's receptors, all open
+                                    # (default of the per-neuron g_sic; registry axis 37)
     }
     params.update(kwargs)
     return params
@@ -1243,6 +1247,7 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
                         r_nmda_tot :1
                         r_ampa_tot :1
                         r_sic_tot :1
+                        g_sic : siemens        # per pair; registry axis 37, set by run_args
                         ''')
     else:
         eqs_NN += Equations(''' 
@@ -1280,8 +1285,6 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
     # state 'VT' directly would depolarise ~half the population to near 0 mV.
     # El / V0_span are compile-time constants, so run_args ordering cannot affect them.
     params_NN['V0_span'] = params_NN['VT'] - params_NN['El']   # 7.2 mV at the GROUNDED op-point
-    if sic:
-        params_NN['g_sic'] = get_SICparam()['g_sic']            # SPEC Block 12
 
     
     # Suppress Brian2's resolution_conflict warnings: every per-neuron state variable
@@ -1336,6 +1339,8 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
     N.g_nmda   = params_NN['g_nmda']
     N.I_inj     = params_NN['I_inj']     # default per-neuron bias SCALE (shadowed by run_args)
     N.bias_unit = '(rand() - 0.5)'       # FROZEN unit pattern; standalone-runnable default
+    if sic:
+        N.g_sic = get_SICparam()['g_sic']  # SPEC Block 12: default; registry axis 37 via run_args
     
     
     
@@ -1515,6 +1520,172 @@ def _astrocyte_steady_state(params_astroGT, t_max=300.0):
         'C':       float(sol[-1, 2]) * umole,
         'h':       float(sol[-1, 3]),
     }
+
+
+# ---------------- ASTROCYTE INITIAL CONDITIONS (SPEC Block 13) ----------------
+# Recorded with every Full-mode run (astro_ic): which initial state was used.
+ASTRO_IC_SCHEME = 'driven-v1-2026-11-04'
+# Glutamate drive of a linked astrocyte for its initial state: the median
+# Y_extra of the linked astrocytes at the registry nominal point (1.67-1.71 mM,
+# sandbox 2026-10-31), in uM.
+ASTRO_IC_Y_REF_UM = 1700.0
+# The astrocyte parameters that a run may set (registry names, registry units:
+# uM, uM/s, 1/s, 1/(uM s)); every other constant comes from get_Astroparam().
+ASTRO_IC_PARAMS = ('O_beta', 'O_3K', 'Omega_5P', 'I_bias', 'F', 'I_Theta',
+                   'omega_I', 'O_N')
+
+
+def _astro_constants_um():
+    """get_Astroparam() as plain floats in the units of the registry (uM, s)."""
+    p = get_Astroparam()
+    c = dict(
+        d_1=p['d_1'] / umole, O_2=p['O_2'] * umole * second, d_2=p['d_2'] / umole,
+        d_3=p['d_3'] / umole, d_5=p['d_5'] / umole, C_T=p['C_T'] / umole,
+        rho_A=p['rho_A'], Omega_C=p['Omega_C'] * second, Omega_L=p['Omega_L'] * second,
+        O_P=p['O_P'] / (umole / second), K_P=p['K_P'] / umole,
+        O_delta=p['O_delta'] / (umole / second), K_delta=p['K_delta'] / umole,
+        K_D=p['K_D'] / umole, K_3K=p['K_3K'] / umole, Omega_N=p['Omega_N'] * second,
+        K_KC=p['K_KC'] / umole, zeta=p['zeta'], n=p['n'], spill_over=p['spill_over'],
+        O_beta=p['O_beta'] / (umole / second), O_3K=p['O_3K'] / (umole / second),
+        Omega_5P=p['Omega_5P'] * second, I_bias=p['I_bias'] / umole,
+        F=p['F'] / (umole / second), I_Theta=p['I_Theta'] / umole,
+        omega_I=p['omega_I'] / umole, O_N=p['O_N'] * umole * second)
+    return {k: float(v) for k, v in c.items()}
+
+
+# Custom: the driven state (fixed point, or the trough of a limit cycle) of the
+# astrocyte's own 4-variable ODE. Checked: scipy.optimize.fsolve/root (a fixed
+# point only: no cycle, and no stability), the existing _astrocyte_steady_state
+# (the isolated cell: no drive). Integrated with scipy.integrate.solve_ivp.
+def astro_driven_state(astro_params=None, Y_uM=ASTRO_IC_Y_REF_UM, T=600.0, tail=100.0, n_cycle=1000):
+    """
+    SPEC Block 13: the state of one astrocyte driven as in the network -- the
+    live equations of Astrocyte_Group, the exogenous IP3 drive toward I_bias
+    included, no gap-junction flux, a constant glutamate drive Y_extra = Y_uM
+    (Y_bias = 0) -- after T seconds from the quiescent guess (Gamma_A, I, C, h)
+    = (0, 0.1 uM, 0.05 uM, 0.9). If C still varies by more than 1e-4 uM over
+    the last `tail` seconds, the driven state is a limit cycle: the last full
+    cycle on that window (from one trough of C to the next) is sampled at
+    n_cycle equally spaced times, and the state returned is its first sample,
+    the trough (if fewer than two troughs lie in the window, the state at the
+    minimum of C, with no cycle).
+
+    astro_params : dict name -> value in registry units for any of
+        ASTRO_IC_PARAMS (missing ones take get_Astroparam()'s values).
+    Returns dict Gamma_A, I [uM], C [uM], h, oscillating (bool), C_min, C_max
+    (uM, over the tail window), period (s, or None) and cycle (array
+    n_cycle x 4 of Gamma_A, I [uM], C [uM], h over one period starting at the
+    trough, or None).
+    """
+    from scipy.integrate import solve_ivp
+    c = _astro_constants_um()
+    for k, v in (astro_params or {}).items():
+        if k not in ASTRO_IC_PARAMS:
+            raise KeyError('astro_driven_state: %r is not one of %s' % (k, ASTRO_IC_PARAMS))
+        c[k] = float(v)
+    Y = float(Y_uM)
+    if Y < 0 or not np.isfinite(Y):
+        raise ValueError('astro_driven_state: Y_uM must be finite and >= 0, got %r' % (Y_uM,))
+    drive = c['O_N'] * (Y * c['spill_over']) ** c['n']
+
+    def rhs(t, y):
+        G, I, C, h = y
+        m_inf = I / (I + c['d_1']) * C / (C + c['d_5'])
+        Q2 = c['d_2'] * (I + c['d_1']) / (I + c['d_3'])
+        h_inf = Q2 / (Q2 + C)
+        tau_h = 1.0 / (c['O_2'] * (Q2 + C))
+        dI_b = I - c['I_bias']
+        I_exo = -c['F'] / 2.0 * (1.0 + np.tanh((abs(dI_b) - c['I_Theta']) / c['omega_I'])) * np.sign(dI_b)
+        dG = drive * (1.0 - G) - c['Omega_N'] * (1.0 + c['zeta'] * C / (C + c['K_KC'])) * G
+        dI = (c['O_beta'] * G + c['O_delta'] / (1.0 + I / c['K_delta']) * C**2 / (C**2 + c['K_delta']**2)
+              - c['O_3K'] * C**4 / (C**4 + c['K_D']**4) * I / (I + c['K_3K']) - c['Omega_5P'] * I + I_exo)
+        dC = ((c['Omega_C'] * m_inf**3 * h**3 + c['Omega_L']) * (c['C_T'] - (1.0 + c['rho_A']) * C)
+              - c['O_P'] * C**2 / (C**2 + c['K_P']**2))
+        dh = (h_inf - h) / tau_h
+        return [dG, dI, dC, dh]
+
+    sol = solve_ivp(rhs, (0.0, float(T)), [0.0, 0.1, 0.05, 0.9], method='LSODA',
+                    rtol=1e-8, atol=1e-10, max_step=0.5, dense_output=True)
+    if not sol.success:
+        raise RuntimeError('astro_driven_state: integration failed: %s' % sol.message)
+    tt = np.linspace(float(T) - float(tail), float(T), 20001)
+    Yt = sol.sol(tt)
+    C = Yt[2]
+    osc = bool(C.max() - C.min() > 1e-4)
+    period, cycle = None, None
+    k = int(np.argmin(C)) if osc else len(tt) - 1
+    G, I, Cv, h = (float(v) for v in Yt[:, k])
+    if osc:
+        from scipy.signal import find_peaks
+        tr, _ = find_peaks(-C, prominence=0.25 * float(C.max() - C.min()))
+        if len(tr) >= 2:
+            t0, t1 = float(tt[tr[-2]]), float(tt[tr[-1]])
+            period = t1 - t0
+            cycle = np.ascontiguousarray(sol.sol(t0 + period * np.arange(int(n_cycle)) / int(n_cycle)).T)
+            if not np.all(np.isfinite(cycle)):
+                raise RuntimeError('astro_driven_state: non-finite cycle')
+            G, I, Cv, h = (float(v) for v in cycle[0])
+    if not all(np.isfinite([G, I, Cv, h])):
+        raise RuntimeError('astro_driven_state: non-finite state %r' % ([G, I, Cv, h],))
+    return dict(Gamma_A=G, I=I, C=Cv, h=h, oscillating=osc,
+                C_min=float(C.min()), C_max=float(C.max()), period=period, cycle=cycle)
+
+
+def astro_ic_jitter(N_astro, seed_astro=None):
+    """The network-level +-5 % per-cell jitter of the astrocyte initial state:
+    three arrays (I, C, h), drawn in that order from default_rng(seed_astro),
+    as Astrocyte_Group(ics='steady') has always drawn them (SPEC Block 13)."""
+    rng_ic = np.random.default_rng(seed_astro)
+    return tuple(1.0 + 0.05 * (2.0 * rng_ic.random(int(N_astro)) - 1.0) for _ in range(3))
+
+
+def astro_ic_phases(N_astro, seed_astro=None):
+    """SPEC Block 13: one phase in [0, 1) per astrocyte, the place on its
+    driven limit cycle where it starts (used only where the driven state is a
+    cycle). One draw per network, from a stream of its own: the SeedSequence
+    of (seed_astro, 13), independent of astro_ic_jitter's default_rng(seed_astro)."""
+    ss = np.random.SeedSequence(None if seed_astro is None else [int(seed_astro), 13])
+    return np.random.default_rng(ss).random(int(N_astro))
+
+
+def astro_driven_ics(astro_params, linked, phases, Y_ref_uM=ASTRO_IC_Y_REF_UM):
+    """
+    SPEC Block 13: the initial (Gamma_A, I, C, h) of every astrocyte for one
+    run. A linked astrocyte (at least one synapse link) takes the driven state
+    astro_driven_state(astro_params, Y_ref_uM), an unlinked one
+    astro_driven_state(astro_params, 0). A fixed point is taken as it is, by
+    every astrocyte of that kind (no jitter: a perturbation of a few per cent
+    is what made astrocytes close to C_Theta release at the start). A limit
+    cycle is entered at the astrocyte's own phase (astro_ic_phases): the
+    sample of the cycle at floor(phase * n_cycle), so the starting points are
+    spread uniformly in time over one period, as for oscillators in their
+    stationary state.
+
+    Returns (ics, states): ics = dict of float64 arrays (I and C in uM);
+    states = {True: linked state, False: unlinked state} for the drives used.
+    """
+    linked = np.asarray(linked, dtype=bool).ravel()
+    phases = np.asarray(phases, dtype=np.float64).ravel()
+    if len(phases) != len(linked):
+        raise ValueError('astro_driven_ics: %d astrocytes but %d phases' % (len(linked), len(phases)))
+    if np.any(~np.isfinite(phases)) or np.any(phases < 0.0) or np.any(phases >= 1.0):
+        raise ValueError('astro_driven_ics: phases must lie in [0, 1)')
+    states = {}
+    for flag in (True, False):
+        if np.any(linked == flag):
+            states[flag] = astro_driven_state(astro_params, Y_ref_uM if flag else 0.0)
+    ics = {k: np.empty(len(linked)) for k in ('Gamma_A', 'I', 'C', 'h')}
+    for flag, st in states.items():
+        m = linked == flag
+        if st['cycle'] is not None:
+            cyc = st['cycle']
+            idx = np.minimum((phases[m] * len(cyc)).astype(np.int64), len(cyc) - 1)
+            for j, k in enumerate(('Gamma_A', 'I', 'C', 'h')):
+                ics[k][m] = cyc[idx, j]
+        else:
+            for k in ('Gamma_A', 'I', 'C', 'h'):
+                ics[k][m] = st[k]
+    return ics, states
 
 
 def astrocyte_connections(Astrocyte_group, Connection_dist,
@@ -1724,6 +1895,11 @@ def Astrocyte_Group(N_astro, Simulated_network, seed_astro=None, ics='steady',
                         method='rk4',
                         namespace=Params_astroGT,
                         name='Astrocyte', dtype=float32)
+    # SPEC Block 13: an astrocyte event is an upward crossing of C_osc during
+    # the run. Starting refractory, a cell whose initial C is above C_osc (the
+    # driven state) gives no event at t = 0; one below it is not refractory
+    # from the first step on (refractory 'C>C_osc' ends as soon as C <= C_osc).
+    Astro.not_refractory = False
 
     # Default ICs for per-astrocyte Brian2 parameters (so the library is runnable
     # standalone; shadowed by run_args sweep values at runtime). Required because
@@ -1752,13 +1928,13 @@ def Astrocyte_Group(N_astro, Simulated_network, seed_astro=None, ics='steady',
         # Steady-state from integrating the isolated astrocyte equations,
         # plus ±5% per-cell jitter to break perfect symmetry.
         ss = _astrocyte_steady_state(Params_astroGT)
-        rng_ic = np.random.default_rng(seed_astro)
-        jitter = lambda: 1.0 + 0.05 * (2.0 * rng_ic.random(N_astro) - 1.0)
+        # the same draws as always, in the order I, C, h (SPEC Block 13)
+        jI, jC, jh = astro_ic_jitter(N_astro, seed_astro)
 
         Astro.Gamma_A = ss['Gamma_A']                          # ~0; jitter would be meaningless
-        Astro.I       = (ss['I'] / umole) * jitter() * umole
-        Astro.C       = (ss['C'] / umole) * jitter() * umole
-        Astro.h       = ss['h'] * jitter()
+        Astro.I       = (ss['I'] / umole) * jI * umole
+        Astro.C       = (ss['C'] / umole) * jC * umole
+        Astro.h       = ss['h'] * jh
         print(f"  Astrocyte ICs from steady state: "
               f"Gamma_A={ss['Gamma_A']:.4f}, "
               f"I={ss['I']/umole:.4f} uM, "
@@ -1911,6 +2087,11 @@ def Gliotransmission(N_astro, Astro, ics='jitter', seed_astro=None):
     # Default ICs
     Glio_release.G_A = 0.0 * mole
     Glio_release.C = linked_var(Astro, 'C')
+    # SPEC Block 13: a release needs an upward crossing of C_Theta during the
+    # run; starting refractory, an astrocyte whose initial C is above C_Theta
+    # does not release at t = 0 (the refractory condition 'C>C_Theta' ends as
+    # soon as C <= C_Theta, at the first step for every C(0) below it).
+    Glio_release.not_refractory = False
 
     # Default ICs for per-unit Brian2 parameters (so the library is runnable
     # standalone; shadowed by run_args sweep values at runtime). Must precede any
@@ -2749,19 +2930,20 @@ def voronoi_astro_gj_pairs(N_pos, A_pos, gj_max_dist=150.0):
 # triangulation with a distance cap. Checked: scipy.spatial.Delaunay (used
 # here), scipy.spatial.Voronoi (ridge_points: the same pairs, used as the
 # oracle in smoke_test_sic.py), voronoi_astro_gj_pairs (astrocyte pairs only).
-def sic_pairs(N_pos, A_pos, max_dist=150.0):
+def sic_pairs(N_pos, A_pos, max_dist=np.inf):
     """
     SIC pairs (SPEC Block 12): every (astrocyte a, neuron i) whose cells share
     a border in the JOINT Voronoi tessellation of neurons and astrocytes (an
     edge of the Delaunay triangulation of the joint point set) and whose
-    somata lie at most `max_dist` um apart (the soft cap of the wallach gap
-    junctions, against the long edges at the boundary).
+    somata lie at most `max_dist` um apart. The pipeline uses no cap
+    (max_dist = inf, the author's decision of 2026-11-04); the argument stays
+    for tests and other uses.
 
     Parameters
     ----------
     N_pos : (Nn, 2) array   neuron (x, y) in um
     A_pos : (Na, 2) array   astrocyte (x, y) in um
-    max_dist : float        cap in um (numpy.inf disables it)
+    max_dist : float        cap in um (default numpy.inf: no cap)
 
     Returns
     -------

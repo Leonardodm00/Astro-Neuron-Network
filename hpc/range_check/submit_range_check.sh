@@ -38,7 +38,8 @@
 #         conn_prob box and the gate box, and checks that HPC_main_sweep.py holds
 #         its boxes. The rest are launch_GG.sh's settings, written out below:
 #         Full, tripartite, 1200 neurons and 1200 astrocytes per mm^2 on 300 um
-#         (15 free axes + conn_prob: a resolution-8 fraction of 16,384 corners).
+#         (16 free axes + conn_prob since g_sic, 2026-11-04: a resolution-8
+#         fraction of 16,384 corners; 15 + conn_prob before).
 #         The gate is drawn per topology from its box, as in the campaign; it is
 #         not a design dimension.
 # Any variable below can be overridden with qsub -v NAME=value (EXTRA is a
@@ -223,6 +224,19 @@ read -r -a EXTRA_A <<< "$EXTRA"
 COMMON=(--lib_dir "$LIB_DIR" --n_workers "$NW" --rc-out "$OUT" --rc-simtime "$RC_SIMTIME"
         ${LIKE_ARG[@]+"${LIKE_ARG[@]}"} "${SETTINGS[@]}" ${EXTRA_A[@]+"${EXTRA_A[@]}"})
 
+# Roadmap marker (specs/roadmap/hpc_status.sh, stage I6 of specs/roadmap/ANN.yaml):
+# inside a PBS job only, the first task pushes "running" to the hpc-status
+# branch of origin and the last one "done" or "failed". It never fails the job;
+# ROADMAP_DISABLE=1 turns it off; runs outside PBS (probes, tests) skip it.
+ROADMAP_HELPER="${HERE}/../../specs/roadmap/hpc_status.sh"
+if [ -n "${PBS_JOBID:-}" ] && [ "${ROADMAP_DISABLE:-0}" != "1" ] && [ -f "$ROADMAP_HELPER" ]; then
+    export ROADMAP_STAGE=I6
+    export ROADMAP_N_TASKS="1"
+    export ROADMAP_SCRIPT="hpc/range_check/submit_range_check.sh"
+    . "$ROADMAP_HELPER" || true
+    roadmap_job_start
+    trap 'roadmap_job_end $?' EXIT
+fi
 echo "============================================================"
 echo "range_check | setup ${SETUP} | host $(hostname) | job ${PBS_JOBID:-?} | workers ${NW}"
 echo "phases   : ${PHASES} | analysis ${ANALYZE}"

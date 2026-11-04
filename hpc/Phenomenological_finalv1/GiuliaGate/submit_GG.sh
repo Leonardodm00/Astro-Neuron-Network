@@ -4,7 +4,8 @@
 #PBS -k eo
 ##########################################################################
 # GiuliaGate campaign worker -- MODE Full (neurons and astrocytes), neurons
-# fixed at the default cell, 15 free axes (the rest frozen with --freeze),
+# fixed at the default cell, 16 free axes (the rest frozen with --freeze;
+# 15 before g_sic, 2026-11-04),
 # the astrocyte contact gate drawn per network.
 #
 # Derived from LindaColloDUP/submit_LCDUP.sh (2026-10-31). DO NOT qsub this
@@ -20,7 +21,8 @@
 #   DENSITY, DENSITY_ASTRO, MODE, SWEEP_GROUP, CONN_RULE, CONN_PERIODIC,
 #   CONN_PROB_LO, CONN_PROB_HI, STOA_GATE_LO, STOA_GATE_HI, CONDA_ENV
 # The defaults below equal the launcher's and are only used if this file
-# is submitted by hand. Spec: specs/SPEC.md Block 9.
+# is submitted by hand. Spec: specs/SPEC.md Block 9. ROADMAP_N_TASKS (the
+# array size, for the roadmap marker) also comes from the launcher.
 ##########################################################################
 
 set -u
@@ -124,6 +126,19 @@ fi
 if ! "$PY" "${REPO_DIR}/apply_prior_patch.py" --check-applied --file "${REPO_DIR}/HPC_main_sweep.py"; then
     echo "ERROR: ${REPO_DIR}/HPC_main_sweep.py does not hold the boxes of prior_config.tsv." >&2
     exit 2
+fi
+# Roadmap marker (specs/roadmap/hpc_status.sh, stage I9 of specs/roadmap/ANN.yaml):
+# inside a PBS job only, the first task pushes "running" to the hpc-status
+# branch of origin and the last one "done" or "failed". It never fails the job;
+# ROADMAP_DISABLE=1 turns it off; runs outside PBS (probes, tests) skip it.
+ROADMAP_HELPER="${REPO_DIR}/../../../specs/roadmap/hpc_status.sh"
+if [ -n "${PBS_JOBID:-}" ] && [ "${ROADMAP_DISABLE:-0}" != "1" ] && [ -f "$ROADMAP_HELPER" ]; then
+    export ROADMAP_STAGE=I9
+    export ROADMAP_N_TASKS="${ROADMAP_N_TASKS:-1}"
+    export ROADMAP_SCRIPT="hpc/Phenomenological_finalv1/GiuliaGate/submit_GG.sh"
+    . "$ROADMAP_HELPER" || true
+    roadmap_job_start
+    trap 'roadmap_job_end "${EXIT_CODE:-$?}"' EXIT
 fi
 mkdir -p "$OUTPUT_DIR"
 

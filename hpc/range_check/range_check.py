@@ -12,8 +12,8 @@ Why
 
 What it runs
     The setup's own HPC_main_sweep.main(), imported from the --lib_dir among the
-    arguments (the project folder: 36-D or 37-D, with or without the --freeze
-    patch). Every other argument is passed through; these are appended, and
+    arguments (the project folder: 36-D, 37-D or 38-D, with or without the
+    --freeze patch). Every other argument is passed through; these are appended, and
     later arguments win: --out_dir, --simtime, --n_topologies,
     --n_params_per_worker, --seed_master, --conn_prob_lo P --conn_prob_hi P.
     The only change to the production path: in this (parent) process the

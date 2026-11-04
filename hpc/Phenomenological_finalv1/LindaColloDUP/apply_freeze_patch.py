@@ -3,7 +3,8 @@
 apply_freeze_patch.py -- add a --freeze option to HPC_main_sweep.py.
 
 Run ONCE, inside the LindaColloDUP folder, on its own copy of the pipeline
-(copied from the cluster's MEAMA/ folder, 37-D). Never run it on MEAMA/.
+(copied from the cluster's MEAMA/ folder, 37-D; from the clone's root folder,
+38-D, since 2026-11-04). Never run it on MEAMA/.
 
 What --freeze does (after this patch):
     --freeze "NAME,NAME=VALUE,..."   removes the named axes from --sweep_group

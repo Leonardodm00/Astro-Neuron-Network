@@ -4,8 +4,9 @@ smoke_test_range_check.py -- checks of hpc/range_check/ (specs/SPEC.md Block 6),
 the standard prior range calibration: the corners of a setup's prior box and
 random cells of its 7-bin grid.
 
-  R1  corner design on the repository's 37-D root pipeline (23 free axes +
-      conn_prob = 24 dimensions): a two-level fraction of 16,384 runs of
+  R1  corner design on the repository's 38-D root pipeline (23 free axes of
+      neuron_synapse + conn_prob = 24 dimensions; g_sic, axis 37 since
+      2026-11-04, is an astrocyte axis): a two-level fraction of 16,384 runs of
       resolution >= 5, no main effect or two-axis interaction aliased with
       another (Gram check), every column balanced; per conn level 8,192
       corners in 8 topologies x 48 workers x k=22 slots with 256 centre
@@ -74,12 +75,13 @@ random cells of its 7-bin grid.
       exits 2; a refused third submission names the two jobs to qdel; the
       giulia setup launches on four nodes, and an unpatched GiuliaGate copy
       fails the precheck
-  R11 the GiuliaGate design (patched copy): the 15 free axes of
-      prior_config.tsv + conn_prob = 16 dimensions, a two-level fraction of
-      16,384 corners of resolution >= 5 (8,192 per level), interior 2,352
-      cells per level with conn_prob at 0.075 in bin 0 of [0.05, 0.4]; Sigma
-      linear in [2, 10] mV, g_ampa and g_nmda log in [0.05, 10] nS; the fixed
-      axes at their TSV values in every vector
+  R11 the GiuliaGate design (patched copy): the 16 free axes of
+      prior_config.tsv + conn_prob = 17 dimensions (15 + conn_prob before
+      g_sic, 2026-11-04), a two-level fraction of 16,384 corners of
+      resolution >= 5 (8,192 per level), interior 2,352 cells per level with
+      conn_prob at 0.075 in bin 0 of [0.05, 0.4]; Sigma linear in [2, 10] mV,
+      g_ampa and g_nmda log in [0.05, 10] nS, g_sic log in [4, 400] nS; the
+      fixed axes at their TSV values in every vector
 
 Run:  python3 smoke_test_range_check.py | tail -1        (about 4 min with R6, R6b)
       python3 smoke_test_range_check.py --no-sim          (skip R6, R6b)
@@ -207,7 +209,7 @@ print(json.dumps(res))
 
 
 def r1(tmp):
-    print('\n[R1] corner design, 37-D root pipeline (24 dimensions: a fraction)')
+    print('\n[R1] corner design, 38-D root pipeline (24 dimensions: a fraction)')
     d = in_subprocess(make_lib(os.path.join(tmp, 'lib36')), CORNER_BODY % (
         ['--out_dir', 'x', '--mode', 'Neuronal', '--sweep_group', 'neuron_synapse'], True))
     check(d is not None, 'design built')
@@ -885,12 +887,12 @@ print(json.dumps(out))
     if not check(d is not None, 'design built'):
         return
     import math
-    check(sorted(d['names']) == free_tsv and len(free_tsv) == 15,
-          'the 15 free axes of prior_config.tsv are the free axes of the design')
+    check(sorted(d['names']) == free_tsv and len(free_tsv) == 16,
+          'the 16 free axes of prior_config.tsv are the free axes of the design')
     ci = d['corners']['info']
-    check(ci['d'] == 16 and ci['kind'] == 'fraction' and ci['n_runs'] == 16384 and ci['resolution'] >= 5
+    check(ci['d'] == 17 and ci['kind'] == 'fraction' and ci['n_runs'] == 16384 and ci['resolution'] >= 5
           and d['corners']['n_design'] == 8192 and d['corners']['conn'] == 0.05,
-          '16 dimensions: a fraction of 16384 corners, resolution %s; level 0: 8192 corners at conn_prob 0.05'
+          '17 dimensions: a fraction of 16384 corners, resolution %s; level 0: 8192 corners at conn_prob 0.05'
           % ci['resolution'])
     check(d['interior']['n_design'] == 2352 and abs(d['interior']['conn'] - 0.075) < 1e-12,
           'interior: 2352 cells per level, conn_prob 0.075 in bin 0 of [0.05, 0.4]')
@@ -899,6 +901,8 @@ print(json.dumps(out))
           'Sigma linear in [2, 10] mV (corner values %s)' % d['corners']['sigma'])
     check(all(n in d['log'] and abs(d['lo'][n] - math.log(0.05)) < 1e-12 and abs(d['hi'][n] - math.log(10.0)) < 1e-12
               for n in ('g_ampa', 'g_nmda')), 'g_ampa, g_nmda log in [0.05, 10] nS')
+    check('g_sic' in d['log'] and abs(d['lo']['g_sic'] - math.log(4.0)) < 1e-12
+          and abs(d['hi']['g_sic'] - math.log(400.0)) < 1e-12, 'g_sic log in [4, 400] nS (SPEC Block 12)')
     bad = [(ph, n, v) for ph in ('corners', 'interior') for n, v in d[ph]['vals'].items()
            if len(v) != 1 or abs(v[0] - fixed[n]) > 1e-6 * max(1.0, abs(fixed[n]))]
     check(not bad and d['gate'] == [0.2, 1.0],

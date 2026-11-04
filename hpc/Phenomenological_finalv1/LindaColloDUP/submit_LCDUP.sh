@@ -123,6 +123,19 @@ else
     PY="python"
     echo "[env] LCDUP_NO_ENV=1 -- using the ambient python, NOT ${CONDA_ENV}."
 fi
+# Roadmap marker (specs/roadmap/hpc_status.sh, stage I4 of specs/roadmap/ANN.yaml):
+# inside a PBS job only, the first task pushes "running" to the hpc-status
+# branch of origin and the last one "done" or "failed". It never fails the job;
+# ROADMAP_DISABLE=1 turns it off; runs outside PBS (probes, tests) skip it.
+ROADMAP_HELPER="${REPO_DIR}/../../../specs/roadmap/hpc_status.sh"
+if [ -n "${PBS_JOBID:-}" ] && [ "${ROADMAP_DISABLE:-0}" != "1" ] && [ -f "$ROADMAP_HELPER" ]; then
+    export ROADMAP_STAGE=I4
+    export ROADMAP_N_TASKS="${ROADMAP_N_TASKS:-1}"
+    export ROADMAP_SCRIPT="hpc/Phenomenological_finalv1/LindaColloDUP/submit_LCDUP.sh"
+    . "$ROADMAP_HELPER" || true
+    roadmap_job_start
+    trap 'roadmap_job_end "${EXIT_CODE:-$?}"' EXIT
+fi
 mkdir -p "$OUTPUT_DIR"
 
 if [ -n "${PBS_NCPUS:-}" ]; then N_WORKERS="$PBS_NCPUS"; else N_WORKERS=$(nproc); fi

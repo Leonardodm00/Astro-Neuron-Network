@@ -34,7 +34,9 @@ added on top of 3188be6; t_ref 3 ms, the quiet-corner check and the SIC
 candidates (2026-11-02) added on top of 4430a47; U_0_sr's box [0.01, 0.7]
 (2026-11-03) added on top of 6204b40; the SIC decision and its open
 choices (2026-11-03) added on top of 004ed7b; Block 11 (seeds) on top of
-2bf3857; Block 12 (the SIC) on top of 6c50aed)
+2bf3857; Block 12 (the SIC) on top of 6c50aed; the author's decisions on
+its results, the g_sic axis (38-D registry), the uncapped pairs and Block 13
+(astrocyte initial conditions) on top of 916bf61)
 
 ## 0. Coverage
 
@@ -63,7 +65,11 @@ choices (2026-11-03) added on top of 004ed7b; Block 11 (seeds) on top of
   in `hpc/Phenomenological_finalv1/ASD_fun_BD_cpp.py`; the SIC pairs of
   `build_topology`, the SIC group of `build_and_run` and of the sweep worker,
   `sic_record_keys`; `smoke_test_sic.py`
-- the root pipeline's 37-D registry, sweep groups and astrocyte contact gate
+- the astrocytes' initial conditions (Block 13): `astro_driven_state`,
+  `astro_ic_phases`, `astro_ic_jitter`, `astro_driven_ics`, `ASTRO_IC_SCHEME` in
+  `ASD_fun_BD_cpp.py`; their run_args in `build_and_run` and in the sweep
+  worker; `smoke_test_astro_ic.py`
+- the root pipeline's registry (37-D; 38-D since 2026-11-04), sweep groups and astrocyte contact gate
   (Block 8): `hpc/Phenomenological_finalv1/HPC_main_sweep.py` and
   `HPC_single_run.py` as far as Block 8 describes them, and the `O_N` lines
   of `ASD_fun_BD_cpp.py` -- not yet the model's equations or the rest of the
@@ -333,6 +339,20 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
     of Block 8); the nominal 0.15 lies inside. The range checks of
     LindaColloDUP and GiuliaGate covered [0.1, 1]; [0.01, 0.1) is new to
     the calibration (Block 6).
+  - 2026-11-04 [author], on Block 12's results (section 8): "Rerun please
+    with the g_sic which will be the further searched parameter in Giulia
+    gate": g_sic becomes a free axis of GiuliaGate and so axis 37 of the
+    registry (38-D), box [4, 400] nS, log-uniform (chosen from three
+    proposals: a decade either side of the calibrated 40.6 nS), nominal
+    40.6 nS; the range check of GiuliaGate is run again with the SIC, 20 s
+    per run ("Increase the simulation time up to 20s", already the default),
+    with fewer simulations only if needed. "g_sic per pair, do not apply the
+    150um cap": no normalisation by the number of partners and no distance
+    cap on the SIC pairs. "set the initial conditions in order to not
+    trigger this artefact": Block 13. The contact gate does not thin the SIC
+    pairs ("is right"). The roadmap: the proposed grouping ("the grouping is
+    right"), named ANN, with I3, I4, I6 and I9 as cluster stages ("yes").
+    "Push everything".
   - 2026-11-04 [author]: the SIC (Block 12). The equation: the synaptic
     NMDA scheme driven by G_A(t) at every step, dx/dt = k_on H(G_A)(1 - x)
     - x/tau_d, dr/dt = (x - r)/tau_r, with the synaptic Hill constants (EC50
@@ -466,8 +486,16 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   `refractory_audit_full_<UTC>/` in the submission folder.
 - Test oracles: smoke test T3 (fake HOME; CODE clamped / not clamped /
   missing, LOGS table, DATA, VERDICT, unknown option refused).
+- Roadmap marker [2026-11-04]: `submit_refractory_scan.sh` sources
+  `specs/roadmap/hpc_status.sh` (stage I3 of `specs/roadmap/ANN.yaml`) inside
+  a PBS job only (PBS_JOBID set, `ROADMAP_DISABLE` not 1, the helper
+  present): it pushes "running", then "done" or "failed" with the job's exit
+  status, to the hpc-status branch; it never changes the job's exit status.
 - Confirmed: inferred.
-- Status: smoke-tested 2026-10-30.
+- Status: smoke-tested 2026-10-30. [2026-11-04] The marker lines checked
+  [SANDBOX] against a local bare origin: a stub scan exiting 3 gives the job
+  exit 3 and a "failed" marker with last_exit 3; with ROADMAP_DISABLE=1, and
+  without PBS_JOBID, no marker.
 
 ### Block 4: LindaColloDUP launch package
 
@@ -587,6 +615,12 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   tasks (`-J 0-162%1`, 192 cores) and cpu 652 tasks (`-J 0-651%4`, 48
   cores); Block 6's smoke test 76 passed with `--no-sim`. Skipped: davinci,
   the cfd queue's limits (walltime, cores) and its per-core speed.
+  [2026-11-04] On a fresh copy of the 38-D root (g_sic, Block 12: an
+  astrocyte axis, inert in Neuronal mode and outside neuron_synapse): both
+  patches CHECK OK and PATCHED, smoke test 41 passed; `APPLY_LCDUP.txt`
+  step 3 now expects 38. `submit_LCDUP.sh` carries the roadmap marker lines
+  (stage I4; inside a PBS job only, as Block 3's) and `launch_LCDUP.sh`
+  passes each array's size as ROADMAP_N_TASKS.
 
 ### Block 5: clamp_cadex_copies, the cluster-wide clamp
 
@@ -938,6 +972,19 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   fixed (R6b checks the plumbing only). [corrected 2026-10-31] Fixed by
   Block 10; 87 passed again with it, and again with the median drive and
   the registry's O_N box [0.0001, 1] (823a9ac).
+  [2026-11-04] GiuliaGate gains g_sic (Block 12; decided, section 4): 16
+  free axes + conn_prob = 17 dimensions, still a resolution-8 fraction of
+  16,384 corners (2^(17-3); `range_design.two_level_design(17)`, verified by
+  `min_word_length`), interior unchanged (2,352 cells per conn_prob bin);
+  runs of 20 s (RC_SIMTIME, unchanged) with the SIC and the driven
+  astrocyte start (Block 13). R11 checks the 17 dimensions and g_sic log in
+  [4, 400] nS. `submit_range_check.sh` carries the roadmap marker lines
+  (stage I6; one marker per job, inside a PBS job only). Smoke-tested
+  [SANDBOX]: 77 passed + 2 skipped with `--no-sim`, 88 passed with the
+  simulations. Runtime with the SIC: +7 to +13 % per 40 s run at 1,170
+  synapses and 333 SIC pairs (sandbox twins, SIC on/off, Block 12's demo);
+  the share falls as the synapse count grows (inferred), so the four-node
+  estimate of section 6 holds within that margin; not timed on davinci.
 
 ### Block 7: the seed guard across ~/ANN
 
@@ -1030,7 +1077,10 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   36-D registry from `HPC_single_run.py` at import (appends `O_N`, nominal
   0.3). The model declares `O_N : 1/mole/second` per astrocyte, default
   `Params_astroGT['O_N']`, and run_args sets it to `params[36] / umole /
-  second`.
+  second`. [corrected 2026-11-04] 38-D: `g_sic` at index 37 (unit nS,
+  nominal 40.6, box (4.0, 400.0) log-uniform, in `ASTRO_PARAMS`; Block 12);
+  `assert PARAM_BOUNDS.shape == (38, 2)`; the stale-registry repair also
+  appends `g_sic`.
 - Sweep groups: `tripartite` = the free neuron, synapse and astrocyte axes
   minus `I_Theta` and `omega_I` (held at their nominals 0.3 uM and 0.05 uM):
   32 axes. `neuron_synapse` 23 (unchanged), `all` 34.
@@ -1099,7 +1149,10 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   davinci from `hpc/Phenomenological_finalv1/GiuliaGate/` in the clone:
   MODE Full on the root pipeline (Block 8, with Block 1's hold), neurons at
   the default cell, the astrocyte contact gate drawn per network, 15 free
-  axes.
+  axes [corrected 2026-11-04: 16, g_sic added, free in [4, 400] nS log,
+  the registry box (Block 12); the TSV has 40 rows (38 registry axes plus
+  the two topology rows); `--check-applied` prints `BOXES OK: 16 free axes
+  ...`; `smoke_test_gg.py` expects N_DIMS 38 and 16 free axes].
 - Modules: `prior_config.tsv` (the prior), `apply_prior_patch.py` (its only
   reader; standard library), `apply_freeze_patch.py` (Block 4's, a byte
   copy), `launch_GG.sh` (login node), `submit_GG.sh` (PBS worker),
@@ -1224,6 +1277,16 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   in G8 and in every Full run at nominal parameters the astrocytes go
   non-finite within about 30 ms. [corrected 2026-10-31] Unblocked by Block
   10 (G8: 0 astrocyte NaN warnings).
+  [2026-11-04] g_sic free in [4, 400] nS (log; `prior_config.tsv` row 40;
+  the registry box, so the prior patch leaves it alone): 16 free axes,
+  "BOXES OK: 16 free axes"; G1 checks 40 rows and the g_sic box, G3 N_DIMS
+  38, G8 the SIC and astro_ic keys in the sidecars. `submit_GG.sh` carries
+  the roadmap marker lines (stage I9; inside a PBS job only) and
+  `launch_GG.sh` passes each array's size as ROADMAP_N_TASKS; checked
+  [SANDBOX] against a local bare origin with a stub python: an array of two
+  tasks gives "running" after the first and "done" (n_done 2) after the
+  second. Smoke-tested [SANDBOX]: 34 passed + 1 skipped, 38 passed with
+  `--sim`.
 
 ### Block 10: the astrocyte's glutamate drive is the median over its links
 
@@ -1333,7 +1396,13 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
 - Confirmed: yes 2026-10-31 (author: "use the option a"; "I would use the
   median instead"; "make the option a the default standard").
 - Status: smoke-tested 2026-10-31 in the sandbox (10 passed). Skipped:
-  davinci.
+  davinci. [2026-11-04] A4's event count assumed the quiescent start: from
+  Block 13's driven start the astrocytes begin above C_osc and refractory
+  (0 events of 48 at the nominal point). A4 now checks the driven start's
+  record, and A4b runs the same network from the quiescent start
+  (build_and_run(..., astro_ic='quiescent')), where the event check keeps
+  its sensitivity to the summed drive: 13 passed [SANDBOX] (A4b: 48 of 48
+  astrocytes with an event, no NaN warning).
 
 ### Block 11: random seeds, per network for the draws made before the run, per run for the dynamics
 
@@ -1472,7 +1541,15 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   several partner astrocytes add.
 - Constants, fixed, not registry axes (`get_SICparam`): k_on_sic
   3.596 /ms, tau_d_sic 651.9 ms, tau_r_sic 2 ms, EC50_sic 3 mM, n_sic 1.9,
-  g_sic 40.6 nS; E_NMDA is the neurons' E_nmda (0 mV). EC50_sic and n_sic
+  g_sic 40.6 nS; E_NMDA is the neurons' E_nmda (0 mV). [corrected
+  2026-11-04, the author's decision of section 4] g_sic is a registry axis:
+  index 37 (`g_sic`, unit nS, nominal 40.6, box [4, 400] nS log-uniform,
+  in `ASTRO_PARAMS`, so in the groups astro, tripartite and all), a
+  per-neuron parameter `g_sic : siemens` of the neuron group (default the
+  nominal; `get_SICparam()['g_sic']` keeps 40.6 nS as the library
+  default) that run_args sets to `params[37] nS` in Full mode with the SIC
+  on. Under Neuronal mode no neuron has it: a swept g_sic is declared inert
+  there, as the other astrocyte axes. The other five stay fixed constants. EC50_sic and n_sic
   equal the synaptic NMDA nominal values but are separate constants: the
   synapses' EC50_nmda (a registry axis) and n_nmda do not change the SIC.
   The De Pitta & Brunel parameters G_sic, tau_sic_r, tau_sic of
@@ -1506,16 +1583,20 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   {neuron somata} union {astrocyte somata} (their cells in the joint
   Voronoi tessellation share a border) and |p_a - p_i| <= d_max, with
   d_max = `gj_max_dist` (default 150 um), the soft cap the wallach gap
-  junctions use against the long edges at the boundary. `sic_pairs(N_pos,
-  A_pos, max_dist)` computes P in `build_topology`, for both topology modes,
-  in Full mode; P is empty in Neuronal mode. No random draw; the pairs are
+  junctions use against the long edges at the boundary [corrected
+  2026-11-04, the author: no cap, d_max = infinity; the long boundary edges
+  stay]. `sic_pairs(N_pos, A_pos, max_dist)` computes P in `build_topology`
+  with max_dist = numpy.inf, for both topology modes, in Full mode; P is
+  empty in Neuronal mode. No random draw; the pairs are
   sorted by (astrocyte, neuron). A degenerate point set (collinear or
   coincident somata) raises ValueError. The contact gate stoa_gate_p does
-  not thin P (it acts on synapse-astrocyte contacts) (proposed). In the
+  not thin P (it acts on synapse-astrocyte contacts) (confirmed by the
+  author 2026-11-04). In the
   GiuliaGate geometry (108 + 108 cells, 300 um box, five random layouts,
   sandbox): 302-326 pairs, 2.8-3.0 partner astrocytes per neuron on
   average, 0-6 neurons with none, median contact distance 22 um; the cap
-  removes 1-3 edges per layout.
+  removes 1-3 edges per layout [corrected 2026-11-04: no cap, so those
+  edges, up to about 240 um long, are pairs too].
 - Switch: `Neuronal_Network(..., sic=None)`. None: on in Full mode, off
   otherwise; True with a mode other than Full raises ValueError. Off: the
   neuron equations are those before Block 12 (the same parsed equations;
@@ -1575,7 +1656,134 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   skipped and 87 with the simulations, GiuliaGate 33 + 1 skipped and 36
   with --sim, LindaColloDUP 41 on a freshly patched copy); the repository
   invariant of Block 1 (`clamp_cadex_copies.py`): all CAdEx copies
-  clamped.
+  clamped. [2026-11-04, later] g_sic a per-neuron parameter set from
+  registry axis 37 and the pairs uncapped (section 4): `smoke_test_sic.py`
+  45/45 under Brian2 2.11.0 and 2.10.1 (S3 g_sic per neuron, S7 no cap, S10
+  the astro_ic key, S11 against 6c50aed with the quiescent start).
+
+### Block 13: astrocyte initial conditions at the driven state
+
+- Purpose (decided by the author on 2026-11-04, section 4: "set the
+  initial conditions in order to not trigger this artefact"). Every
+  Full-mode run started each astrocyte from the isolated quiescent state
+  (`_astrocyte_steady_state`: no exogenous IP3 drive, Gamma_A = 0; I 0.001,
+  C 0.052 uM), so at t = 0 the exogenous drive toward I_bias and the
+  glutamate drive switched on together and C overshot: one synchronous
+  release per astrocyte at 0.9-2.4 s (section 8, Block 12's twins), an
+  artefact of the initial state. A single astrocyte under a constant drive
+  (the live equations, no gap junctions; sandbox, `single_astro.py`,
+  2026-11-04): from the quiescent state C peaks at 0.64-0.87 uM within
+  10 s (above C_Theta 0.5 uM) at the nominal point, O_N 1e-4 or 0.01,
+  Y_extra 0-1.7 mM, I_bias 1.0 with F 10; from the driven state it stays at
+  its fixed point (0.28-0.45 uM) or on its cycle (I_bias 0.3: 0.17-0.43 uM).
+  Modules: `ASD_fun_BD_cpp.py`, `HPC_single_run.py` (`build_and_run`),
+  `HPC_main_sweep.py` (the worker). Confirmed: yes (2026-11-04) for the aim;
+  the construction below is inferred (proposed by Claude, not yet reviewed).
+- Semantics. For each Full-mode run s and each astrocyte a, the state
+  (Gamma_A, I, C, h) at t = 0 comes from the driven state of one astrocyte
+  with the run's astrocyte parameters (O_beta, O_3K, Omega_5P, I_bias, F,
+  I_Theta, omega_I, O_N of theta(s); every other constant from
+  `get_Astroparam`), the exogenous drive included, no gap-junction flux,
+  and a constant glutamate drive Y_a: Y_ref = 1.7 mM if astrocyte a has at
+  least one synapse link after the contact gate, 0 otherwise. The driven
+  state is found by integrating these equations for 600 s from the
+  quiescent guess (0, 0.1 uM, 0.05 uM, 0.9) (scipy solve_ivp, LSODA, rtol
+  1e-8, atol 1e-10). If C varies by at most 1e-4 uM over the last 100 s it
+  is a fixed point, and every astrocyte of that kind (linked, unlinked)
+  starts exactly there: no jitter. Otherwise it is a limit cycle: the last
+  full cycle in that window, from one trough of C to the next (period P),
+  sampled at n = 1000 equally spaced times, and astrocyte a starts at
+  sample floor(u_a n), with u_a ~ U[0, 1) drawn once per network from
+  SeedSequence((seed_ic_astro, 13)) (`astro_ic_phases`; not the stream of
+  the jitter): the starting points are spread uniformly in time over one
+  period, the stationary state of uncoupled oscillators (if fewer than two
+  troughs lie in the window, every astrocyte of that kind takes the state at
+  the minimum of C). Both the Astrocyte and the Gliot_release groups start
+  refractory (not_refractory = False): a release (and an astrocyte event)
+  needs an upward crossing of its threshold during the run, so an astrocyte
+  that starts above C_Theta releases only after C has fallen below it and
+  risen again. Gliot_release (G_A = 0, the x_A jitter) is unchanged.
+- Why no jitter and why phases (sandbox, 2026-11-04; the GiuliaGate
+  geometry, 108 + 108 cells, conn_prob 0.10, seed 7, 20 s, SIC on). The
+  first draft gave I, C and h the +-5 % jitter of before: at gate 1, 9 of
+  108 astrocytes still released in the first 2 s at the registry nominal
+  point (7 linked ones with C(0) 2-5 % above the fixed point, which
+  relaxed with an overshoot past C_Theta, and 2 unlinked ones), and 43 of
+  108 at O_N 1e-4 with C_Theta 0.3 uM (the first at 0.04 s); without the
+  jitter none did, at gate 1 and at gate 0.2. On a limit cycle a common
+  start (the trough) would put every first peak at the same time: the
+  driven state is a cycle at 28 of 150 random points of GiuliaGate's
+  astrocyte box for a linked astrocyte and at 48 of 150 for an unlinked
+  one (amplitude 0.05-0.33 uM; I_bias, F and O_N drawn from the box).
+- Evidence for the final rule [SANDBOX] (same network, gate 1, 20 s; the
+  driven start against the quiescent one, `build_and_run(...,
+  astro_ic='quiescent')`):
+
+  | regime | start | astrocytes releasing in 0-5 s | largest share of the 0-10 s releases in 1 s | releases in 2-20 s | neuron rate 0-2 s / 2-20 s (Hz) |
+  |---|---|---|---|---|---|
+  | registry nominal | driven | 0 of 108 | - | 0 | 4.38 / 2.66 |
+  | registry nominal | quiescent | 108 of 108 | 1.00 | 0 | 67.2 / 10.6 |
+  | O_N 1e-4 | driven | 0 | - | 0 | 4.38 / 2.66 |
+  | O_N 1e-4 | quiescent | 108 | 0.90 | 28 | 33.4 / 14.7 |
+  | O_N 1e-4, C_Theta 0.3 | driven | 0 | - | 0 | 4.38 / 2.66 |
+  | O_N 1e-4, C_Theta 0.3 | quiescent | 108 | 1.00 | 108 | 64.4 / 21.2 |
+  | I_bias 0.3, C_Theta 0.3 (a cycle) | driven | 55 | 0.20 | 166 (98 astrocytes) | 22.6 / 26.3 |
+  | I_bias 0.3, C_Theta 0.3 (a cycle) | quiescent | 100 | 0.92 | 107 | 54.3 / 21.9 |
+
+  Reading: no synchronous release at the start in any regime. Where the
+  driven state is a fixed point below C_Theta the astrocytes do not release
+  at all in 20 s, and then they do not act on the neurons (no G_A, no SIC,
+  no presynaptic switch): the three driven runs give the same spikes. The
+  quiescent start raised the neurons' rate in the window [2 s, 20 s] four-
+  to eightfold, through the onset release (the presynaptic switch decays
+  with 1/Omega_G = 120 s at the nominal point). On the cycle the releases
+  are spread over the period and go on through the run. At O_N 1e-4 with
+  C_Theta 0.3 the onset release of the quiescent start leaves the network
+  releasing (108 releases in 2-20 s, 21 Hz) while the driven start leaves it
+  quiet: two self-consistent behaviours (section 8).
+- Y_ref: the median Y_extra of the linked astrocytes at the registry
+  nominal point (1.67-1.71 mM, sandbox 2026-10-31,
+  `claude/GiuliaGate_Campaign_Operations.md` section 6). The driven state is
+  insensitive to it where Gamma_A saturates (Gamma_A 0.97-0.99 for Y 0.5-1.7
+  mM at O_N 0.3, 0.53-0.79 at O_N 0.01) and Gamma_A is small below (0.012-
+  0.039 at O_N 1e-4). Where the astrocyte's real drive differs from Y_ref
+  at low O_N, the start relaxes toward the real state; this transient is
+  not removed (the real drive is known only once the network runs).
+- Where: `astro_driven_state(astro_params, Y_uM)` returns the driven
+  state of one astrocyte (with `period` and `cycle` on a limit cycle);
+  `astro_ic_phases(N_astro, seed)` the phases; `astro_driven_ics(
+  params_by_name, linked, phases, Y_ref_uM)` the four arrays for every
+  astrocyte. `astro_ic_jitter(N_astro, seed)` keeps the draws of
+  `Astrocyte_Group(ics='steady')` (the quiescent start) unchanged. Both
+  entry points compute the arrays for each run from that run's parameter
+  vector and pass them through run_args (`Astrocyte.Gamma_A`, `.I`, `.C`,
+  `.h`), which `main()` applies after every initial value and before the
+  reseed (Block 11's order); the values set at build time (the quiescent
+  state) are overwritten. In the worker the arrays are computed inside the
+  run's try block, so a failure discards that run only. `build_and_run(...,
+  astro_ic='quiescent')` keeps the old state, for the comparisons of the
+  tests and the evidence only. Cost: 0.04-0.4 s per run (two driven states).
+- Records: in Full mode the npz and json of every run carry `astro_ic`
+  ('driven-v1-2026-11-04', `ASTRO_IC_SCHEME` of the library the run
+  imported); absent under Neuronal. A Full-mode record without it started
+  from the quiescent state. (The jittered first draft was never pushed: no
+  record carries it.)
+- Custom code: yes, the driven state (the fixed point or the sampled cycle
+  of a 4-variable ODE; scipy has no such routine) and the phase draw.
+- Tests: `smoke_test_astro_ic.py` (A1-A7, docstring): the driven state is a
+  fixed point of the live equations (the library's own equations in Brian2,
+  float64), a planted 1 % error is caught, the cycle's samples lie on the
+  live model's cycle (phase 0.5 = phase 0 shifted by half a period), the
+  artefact from the quiescent start and none from the driven one, the
+  refractory start, the jitter of the quiescent start unchanged, the phase
+  mapping, and the compiled pipeline (the recorded C at t = 0 equals the
+  driven state; 0 of 27 astrocytes release in the first 5 s, 27 of 27 from
+  the quiescent start).
+- Status: implemented 2026-11-04. Checked [SANDBOX] the same day:
+  `smoke_test_astro_ic.py` 32/32 (27 + A7); the evidence above. Confirmed:
+  the aim (the author, 2026-11-04); the construction (driven state, Y_ref,
+  no jitter, phases on a cycle, refractory start) is inferred, proposed by
+  Claude and not yet reviewed by the author.
 
 ### 5.1 Projects and where their model runs
 
@@ -1610,8 +1818,8 @@ campaign's `job_args.json` `lib_dir`).
 | `python3 clamp_cadex_copies.py --self-test` and `python3 smoke_test_clamp_cadex_copies.py` | Block 5 | embedded fixtures; a repository clone for the mock tree | seconds |
 | `python3 clamp_cadex_copies.py <repository root>` | the repository invariant of Block 1 | the repository | seconds |
 | `python3 smoke_test_seed_allocation.py` | Block 7 (and the allocator's older groups) | numpy, the root pipeline | seconds |
-| `python3 smoke_test_stoa_gate.py` | Block 8: the contact gate (36 checks) | the root folder | seconds |
-| `python3 smoke_test_param_recording.py` | Block 8: axis declaration and records under the 37-D registry (119 checks) | the root folder | seconds |
+| `python3 smoke_test_stoa_gate.py` | Block 8: the contact gate and the 38-D registry (42 checks) | the root folder | seconds |
+| `python3 smoke_test_param_recording.py` | Block 8: axis declaration and records under the 38-D registry (119 checks) | the root folder | seconds |
 | `python3 seed_alloc.py --root . --ledger artifacts/seed_ledger.tsv --scan-tree /davinci-1/home/ldellamea/ANN --report` | Block 7 on davinci: what the guard sees | a launch folder | seconds (not timed on davinci) |
 | `python3 smoke_test_range_check.py` | Block 6 | the repository pipeline, Brian2 and a C++ compiler | minutes |
 | `qsub -v SETUP=...,LIB_DIR=...,OUT=... submit_range_check.sh` | Block 6 on a setup, one node | the setup's folder on davinci | hours (not timed on davinci) |
@@ -1619,10 +1827,12 @@ campaign's `job_args.json` `lib_dir`).
 | `python3 range_check.py --rc-phase corners --rc-level 0 --rc-out X --rc-design-only <settings>` | Block 6: a level's design, nothing run | the setup's folder | seconds |
 | `NODES=4 SETUP=giulia bash launch_range_check.sh` (first with `DRYRUN=1`) | Block 6 on GiuliaGate: corners split by conn_prob level on two intel nodes, interior split in two on two cpu nodes, then the analysis job | the GiuliaGate folder after `APPLY_GG.txt` steps 0-4; `qsub` | seconds to submit; the jobs about 1-2, 9-10, 4 and 6-7 h (estimate from MEAMA's davinci throughput, not measured) |
 | `python3 smoke_test_gg.py` (`--sim` adds G8) | Block 9 | the repository; G8 needs Brian2 and a C++ compiler | 30 s; about 1 min with `--sim` |
-| `python3 smoke_test_astro_drive.py` (`--no-sim` skips A3 and A4) | Block 10 (10 checks) | the root folder; A2 needs Brian2, A3 and A4 also a C++ compiler | seconds; about 35 s with A3 and A4 |
+| `python3 smoke_test_astro_drive.py` (`--no-sim` skips A3 and A4) | Block 10 (13 checks) | the root folder; A2 needs Brian2, A3 and A4 also a C++ compiler | seconds; about 1.5 min with A3, A4 and A4b |
 | `SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes DRYRUN=1 bash launch_GG.sh` | Block 9 dry run | the GiuliaGate folder after steps 0-4 | seconds |
-| `python3 smoke_test_sic.py` (`--no-sim` skips the compiled runs) | Block 12 (43 checks) | the root folder; Brian2; S10 and S11 also a C++ compiler, S3 and S11 git | about 2-3 min on two cores; about 40 s with `--no-sim` |
+| `python3 smoke_test_sic.py` (`--no-sim` skips the compiled runs) | Block 12 (45 checks) | the root folder; Brian2; S10 and S11 also a C++ compiler, S3 and S11 git | about 2-3 min on two cores; about 40 s with `--no-sim` |
 | `python3 sic_demo.py --out DIR` then `python3 sic_demo_plots.py DIR` | Block 12: SIC on/off twins (regimes nominal, oscillating, quiet_strong, repeated) and their figures | the root folder, Brian2 and a C++ compiler | about 2.5 min per 40 s run on one core (sandbox): about 12-15 min for the four regimes (eight runs) with `--jobs 2` |
+| `python3 smoke_test_astro_ic.py` (`--no-sim` skips A7) | Block 13 (32 checks) | the root folder; Brian2; A7 also a C++ compiler | about 15 s with `--no-sim`; about 2-3 min with A7 |
+| `python3 specs/roadmap/roadmap.py status --yaml specs/roadmap/ANN.yaml` | the roadmap (stages coloured from git, SPEC, reports, markers) | a clone with origin | seconds |
 
 ## 7. Not executable in the sandbox
 
@@ -1859,7 +2069,11 @@ campaign's `job_args.json` `lib_dir`).
     start of Full-mode analyses; whether to keep g_sic per pair, scale it
     (for instance by the number of partners), or narrow the reach; whether
     the synchronous onset release is an artefact of the initial
-    conditions to remove.
+    conditions to remove. [closed 2026-11-04] Decided (section 4): g_sic
+    per pair and searched in GiuliaGate (registry axis 37, [4, 400] nS),
+    no cap on the pairs, the onset release removed by Block 13, the range
+    check run again with the SIC; the window start stays 2 s until the
+    range check shows otherwise.
 - The legacy Izhikevich model in the top-level `ASN_fun_pheno.py` has a 2 ms
   refractory period and no hold: during it the quadratic term can carry v
   past the threshold with no reset, as in the CAdEx runaway. Not used by any
@@ -1994,3 +2208,17 @@ campaign's `job_args.json` `lib_dir`).
   on davinci. Candidate fix, not applied: draw that figure inside
   try/except so that a figure cannot stop a run. Decision pending with the
   author.
+- [2026-11-04] Two self-consistent behaviours of the astrocyte-neuron loop
+  (Block 13's evidence, [SANDBOX]: GiuliaGate geometry, gate 1, seed 7,
+  20 s). At O_N 1e-4 with C_Theta 0.3 uM the driven start leaves every
+  astrocyte at its fixed point (C 0.283 uM, below C_Theta) and the network
+  at 2.66 Hz with no release in 20 s, while the onset release of the
+  quiescent start leaves it releasing on (108 releases in 2-20 s, neuron
+  rate 21 Hz): a release drives bursts through the SIC and the presynaptic
+  switch, the bursts raise the glutamate drive, and the astrocytes cross
+  C_Theta again. Where both exist, the start decides which one a run shows,
+  and noise may switch it only over longer times (not seen in 20 s). Not
+  mapped over the box; the old quiescent start selected the active one
+  wherever it exists. Open: whether runs should start from the quiet state
+  (Block 13 as implemented), from a perturbation that can reach both, or be
+  long enough for noise to choose (raised 2026-11-04, for the author).

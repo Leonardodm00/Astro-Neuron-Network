@@ -23,7 +23,10 @@ THIS FOLDER (repository path hpc/Phenomenological_finalv1/LindaColloDUP/)
 
 NOT IN GIT: the patched pipeline copies. Step 0 copies the 7 pipeline files
 from the clone's root folder hpc/Phenomenological_finalv1/, the 37-D version
-with the contact gate and the clamp (specs/SPEC.md Block 8). Decided
+with the contact gate and the clamp (specs/SPEC.md Block 8); 38-D since
+2026-11-04 (g_sic, the conductance of the astrocytes' slow inward current,
+SPEC Block 12: an astrocyte axis, so inert here in Neuronal mode and outside
+neuron_synapse; a fresh copy patches and tests as before). Decided
 2026-10-31: every campaign runs from the clone, and nothing is copied in from
 outside it. Until then step 0 copied from the cluster's MEAMA/ folder:
 HPC_main_sweep.py and HPC_single_run.py are the same files there, and
@@ -52,7 +55,7 @@ campaign that is running: it keeps its copies.
 
 ORDER OF OPERATIONS (paste one line at a time)
 
-0. update the clone and copy the 37-D pipeline from the clone's root folder
+0. update the clone and copy the 38-D pipeline from the clone's root folder
    (expect the 7 copied files in the listing next to the package files, and
    NO output from git status: the copies are ignored). Run it again if an
    earlier step 0 copied from MEAMA/; steps 2-7 then follow again:
@@ -63,7 +66,8 @@ cd ~/ANN/Astro-Neuron-Network && git pull && cd hpc/Phenomenological_finalv1/Lin
 2. byte check of the package files (expect "0 CR 0 non-ASCII" seven times):
 python3 -c "import sys;[print(p, open(p,'rb').read().count(b'\r'), 'CR', sum(b>127 for b in open(p,'rb').read()), 'non-ASCII') for p in sys.argv[1:]]" launch_LCDUP.sh submit_LCDUP.sh apply_freeze_patch.py apply_box_patch.py smoke_test_freeze.py apply_refractory_clamp.py seed_alloc.py
 
-3. environment and registry (expect "37"):
+3. environment and registry (expect "38"; a folder copied before 2026-11-04
+   prints "37"):
 conda activate brian_final && python -c "import HPC_main_sweep as S; print(S.N_DIMS)"
 
 4. freeze patch, box patch, then the smoke test (expect "CHECK OK" and

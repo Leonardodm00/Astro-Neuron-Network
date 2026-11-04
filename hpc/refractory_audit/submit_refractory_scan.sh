@@ -42,6 +42,19 @@ set -u
 python -c "import os, sys, numpy; p = os.environ.get('CONDA_PREFIX', ''); assert p and sys.executable.startswith(p), sys.executable; print('[env]', sys.executable, '| numpy', numpy.__version__)" \
     || { echo "ERROR: ${CONDA_ENV} is not usable." >&2; exit 2; }
 
+# Roadmap marker (specs/roadmap/hpc_status.sh, stage I3 of specs/roadmap/ANN.yaml):
+# inside a PBS job only, the first task pushes "running" to the hpc-status
+# branch of origin and the last one "done" or "failed". It never fails the job;
+# ROADMAP_DISABLE=1 turns it off; runs outside PBS (probes, tests) skip it.
+ROADMAP_HELPER="${REPO_DIR}/../../specs/roadmap/hpc_status.sh"
+if [ -n "${PBS_JOBID:-}" ] && [ "${ROADMAP_DISABLE:-0}" != "1" ] && [ -f "$ROADMAP_HELPER" ]; then
+    export ROADMAP_STAGE=I3
+    export ROADMAP_N_TASKS="1"
+    export ROADMAP_SCRIPT="hpc/refractory_audit/submit_refractory_scan.sh"
+    . "$ROADMAP_HELPER" || true
+    roadmap_job_start
+    trap 'roadmap_job_end $?' EXIT
+fi
 IFS=':' read -r -a CAMPS <<< "$CAMPAIGNS"
 echo "refractory full scan | host $(hostname) | job ${PBS_JOBID:-?} | workers ${NW}"
 echo "campaigns: ${CAMPS[*]}"

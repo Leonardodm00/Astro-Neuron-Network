@@ -7,17 +7,19 @@ folder; no cluster, no qsub; no simulation unless --sim.
 
   G1 prior_config.tsv: apply_prior_patch.py --self-test PASS, also with an
      unusable TMPDIR/__pycache__ (it writes no file); the TSV lists the
-     37 axes of the registry plus conn_prob and stoa_gate_p; 15 free axes, each
-     with 0 < low < high; its scale column follows the rule of
-     HPC_main_sweep.py (log iff low > 0 and high/low >= 10)
+     38 axes of the registry plus conn_prob and stoa_gate_p; 16 free axes, each
+     with 0 < low < high (g_sic [4, 400] nS since 2026-11-04); its scale
+     column follows the rule of HPC_main_sweep.py (log iff low > 0 and
+     high/low >= 10)
   G2 patches on the copy: apply_freeze_patch.py PATCHED; apply_prior_patch.py
      --check CHECK OK, then PATCHED with Sigma, g_ampa and g_nmda (the boxes
      that differ from the registry; O_N's [0.0001, 1] is the registry box
-     since 2026-10-31); a second run ALREADY APPLIED; --check-applied BOXES
-     OK; the patched file compiles, 3 rows marked
-  G3 the patched module: N_DIMS 37; tripartite minus the freeze list = the 15
+     since 2026-10-31, g_sic's [4, 400] since 2026-11-04); a second run
+     ALREADY APPLIED; --check-applied BOXES OK; the patched file compiles,
+     3 rows marked
+  G3 the patched module: N_DIMS 38; tripartite minus the freeze list = the 16
      free axes of the TSV; their PARAM_BOUNDS = the TSV boxes; LOG_PARAMS
-     follows the rule (Sigma, I_bias, U_A linear, the other 12 log)
+     follows the rule (Sigma, I_bias, U_A linear, the other 13 log)
   G4 refusals: a TSV edited after patching (Sigma [3, 9]) fails
      --check-applied and the patcher refuses the file; a fixed DeltaT off the
      registry is refused
@@ -36,9 +38,11 @@ folder; no cluster, no qsub; no simulation unless --sim.
   G7 bytes: every file of the package pure ASCII, LF only
   G8 (--sim; Brian2 and a C++ compiler, 2-4 min) the real worker on a tiny
      Full network (APPLY_GG.txt step 7: 2 runs of 2 s on a 120 um well):
-     "topo_00000 done: 2 ok", the gate p in its box in every sidecar, and no
-     NaN warning for the neurons or the astrocytes (before Block 10, the
-     summed astrocyte drive gave 4 astrocyte warnings here)
+     "topo_00000 done: 2 ok", the gate p in its box in every sidecar, the
+     sidecars carry the SIC (sic_scheme, n_sic_pairs > 0; Block 12) and the
+     driven astrocyte initial state (astro_ic; Block 13), and no NaN warning
+     for the neurons or the astrocytes (before Block 10, the summed astrocyte
+     drive gave 4 astrocyte warnings here)
 
 Run:  python3 smoke_test_gg.py | tail -1          (about 30 s)
       python3 smoke_test_gg.py --sim | tail -1    (also G8)
@@ -58,7 +62,8 @@ PIPELINE = ('HPC_main_sweep.py', 'HPC_single_run.py', 'ASD_fun_BD_cpp.py', 'aggr
             'burst_metrics.py', 'burst_plots.py', 'synapse_pdist.csv')
 PACKAGE = ('launch_GG.sh', 'submit_GG.sh', 'apply_prior_patch.py', 'apply_freeze_patch.py', 'seed_alloc.py',
            'prior_config.tsv', 'smoke_test_gg.py', 'APPLY_GG.txt', '.gitignore')
-# O_N [0.0001, 1] equals the registry box since 2026-10-31 (specs/SPEC.md Block 10), so it is not patched
+# O_N [0.0001, 1] equals the registry box since 2026-10-31 (specs/SPEC.md Block 10), so it is not patched;
+# nor is g_sic [4, 400] nS, the registry box since the axis was added (2026-11-04, Block 12)
 CHANGED = {'Sigma': (2.0, 10.0), 'g_ampa': (0.05, 10.0), 'g_nmda': (0.05, 10.0)}
 LINEAR = {'Sigma', 'I_bias', 'U_A'}
 RESULTS = {'passed': 0, 'failed': 0, 'skipped': 0}
@@ -136,14 +141,17 @@ def g1(tmp):
     code = ('import sys, json\nsys.path.insert(0, %r)\nimport HPC_main_sweep as S\n'
             'print(json.dumps(list(S.PARAM_NAMES)))\n' % ROOT)
     names = json.loads(run([sys.executable, '-c', code], cwd=ROOT).stdout.strip().splitlines()[-1])
-    check(sorted(axes) == sorted(list(names) + ['conn_prob', 'stoa_gate_p']) and len(axes) == 39,
-          'the 37 registry axes plus conn_prob and stoa_gate_p, once each')
+    check(sorted(axes) == sorted(list(names) + ['conn_prob', 'stoa_gate_p']) and len(axes) == 40,
+          'the 38 registry axes plus conn_prob and stoa_gate_p, once each')
     free = [x for x in rows if x['status'] == 'free' and x['group'] != 'topology']
-    check(len(free) == 15 and all(0 < float(x['low']) < float(x['high']) for x in free),
-          '15 free axes, each with 0 < low < high')
+    check(len(free) == 16 and all(0 < float(x['low']) < float(x['high']) for x in free),
+          '16 free axes, each with 0 < low < high')
+    gs = [x for x in free if x['axis'] == 'g_sic']
+    check(len(gs) == 1 and (float(gs[0]['low']), float(gs[0]['high'])) == (4.0, 400.0),
+          'g_sic free in [4, 400] nS (decided 2026-11-04)')
     rule = all(x['scale'] == ('log' if float(x['high']) / float(x['low']) >= 10 else 'lin') for x in free)
     check(rule and {x['axis'] for x in free if x['scale'] == 'lin'} == LINEAR,
-          'scale column follows the rule: Sigma, I_bias, U_A linear, the other 12 log')
+          'scale column follows the rule: Sigma, I_bias, U_A linear, the other 13 log')
     return {x['axis']: (float(x['low']), float(x['high'])) for x in free}
 
 
@@ -160,7 +168,7 @@ def g2(tmp):
     check(r3.returncode == 0 and 'PATCHED' in r3.stdout and all(n in r3.stdout for n in CHANGED),
           'apply_prior_patch.py: PATCHED, with %s' % ', '.join(CHANGED))
     check(r4.returncode == 0 and 'ALREADY APPLIED' in r4.stdout, 'a second run: ALREADY APPLIED, nothing written')
-    check(r5.returncode == 0 and 'BOXES OK: 15 free axes' in r5.stdout, '--check-applied: BOXES OK: 15 free axes')
+    check(r5.returncode == 0 and 'BOXES OK: 16 free axes' in r5.stdout, '--check-applied: BOXES OK: 16 free axes')
     r6 = run([sys.executable, '-m', 'py_compile', 'HPC_main_sweep.py'], cwd=lib)
     n_mark = open(os.path.join(lib, 'HPC_main_sweep.py')).read().count('[GiuliaGate box 2026-10-31]')
     check(r6.returncode == 0 and n_mark == len(CHANGED),
@@ -174,12 +182,12 @@ def g3(lib, free_tsv):
     d = module_facts(lib, freeze)
     if not check(d is not None, 'module imported, freeze list parsed by _apply_freeze'):
         return
-    check(d['n'] == 37 and sorted(d['active']) == sorted(free_tsv),
-          'N_DIMS 37; tripartite minus the freeze list = the 15 free axes of the TSV')
+    check(d['n'] == 38 and sorted(d['active']) == sorted(free_tsv),
+          'N_DIMS 38; tripartite minus the freeze list = the 16 free axes of the TSV')
     check(all(abs(d['bounds'][n][0] - lo) < 1e-12 and abs(d['bounds'][n][1] - hi) < 1e-12
               for n, (lo, hi) in free_tsv.items()), 'PARAM_BOUNDS of the free axes = the TSV boxes')
     act_log = set(d['active']) & set(d['log'])
-    check(act_log == set(free_tsv) - LINEAR, 'LOG_PARAMS: Sigma, I_bias, U_A linear, the other 12 log')
+    check(act_log == set(free_tsv) - LINEAR, 'LOG_PARAMS: Sigma, I_bias, U_A linear, the other 13 log')
 
 
 def g4(tmp):
@@ -310,6 +318,9 @@ def g8(tmp):
                                                                 'iter_*.json'))]
     check(len(sides) == 2 and all(0.2 <= s.get('stoa_gate_p', -1) <= 1.0 for s in sides),
           'two sidecars, the gate p in [0.2, 1] in each')
+    check(len(sides) == 2 and all(str(s.get('sic_scheme', '')).startswith('sic-v1') and s.get('n_sic_pairs', 0) > 0
+                                  and str(s.get('astro_ic', '')).startswith('driven-v1') for s in sides),
+          'the sidecars carry the SIC (sic_scheme, n_sic_pairs > 0) and the driven astrocyte start (astro_ic)')
     n_v = len(re.findall(r"variable 'V' has NaN", out))
     n_a = len(re.findall(r"Astrocyte's variable '\w+' has NaN", out))
     print('    NaN warnings: neurons %d, astrocytes %d' % (n_v, n_a))
