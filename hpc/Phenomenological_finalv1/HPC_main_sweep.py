@@ -97,6 +97,8 @@ from HPC_single_run import (                                         # noqa: E40
     # SPEC Block 11: per-network seeds and the per-run seed applied in main()
     derive_network_seeds, validate_run_seed, install_run_seed, check_run_seed,
     SeedNotAppliedError, RNG_SCHEME, RUN_SEED_HOLDER,
+    # SPEC Block 12: the SIC keys of the records
+    sic_record_keys,
 )
 
 # ---------------------------------------------------------------------------
@@ -901,7 +903,8 @@ def _worker_entry(pack: dict) -> list:
     sys.path.insert(0, lib_dir)
     from ASD_fun_BD_cpp import (Neuronal_Network, Astrocyte_Group,
                                 Gliotransmission, Synapse_to_astro,
-                                Astro_to_Syn)
+                                Astro_to_Syn,
+                                Astro_to_Neuron_SIC, SIC_SCHEME)   # Block 12
 
     # ── Binomial_fun (BINV: inverse-transform sampling) ─────────────────────
     # Draws k ~ Binomial(n, p) by inverting the Binomial CDF with a SINGLE
@@ -1032,10 +1035,16 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
         )
         AtoS = Astro_to_Syn(GT, S, connections=Connections_list)
 
+        # Slow inward current, always on in Full mode (SPEC Block 12); raises
+        # if the neuron group was built without r_sic_tot.
+        SIC = Astro_to_Neuron_SIC(GT, N, connections=[topo['SIC_i'], topo['SIC_j']])
+        n_sic_pairs = int(len(topo['SIC_i']))   # from the pair list, not len(SIC) (standalone)
+
         SpikesA = SpikeMonitor(Astro, name='Spike_monitor_A')
-        net.add([N, S, Astro, GJ, GT, StoA, AtoS, SpikesN, SpikesA])
+        net.add([N, S, Astro, GJ, GT, StoA, AtoS, SIC, SpikesN, SpikesA])
     else:
         SpikesA = None
+        n_sic_pairs = 0
         net.add([N, S, SpikesN])
 
     # -- Run seed (SPEC Block 11) --------------------------------------------
@@ -1279,6 +1288,9 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
             seed_ic_synapse=np.int64(net_seeds['seed_ic_synapse']),
             seed_ic_astro=np.int64(net_seeds['seed_ic_astro']),
             rng_scheme=np.array(RNG_SCHEME),
+            # SPEC Block 12: SIC provenance (ABSENT under Neuronal)
+            **{_k: np.array(_v) for _k, _v in
+               sic_record_keys(cli['mode'], n_sic_pairs, SIC_SCHEME).items()},
             spk_N_t=spk_N_t, spk_N_i=spk_N_i,
             spk_A_t=spk_A_t, spk_A_i=spk_A_i,
         )
@@ -1334,6 +1346,8 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
             'seed_ic_synapse':    int(net_seeds['seed_ic_synapse']),
             'seed_ic_astro':      int(net_seeds['seed_ic_astro']),
             'rng_scheme':         RNG_SCHEME,
+            # SPEC Block 12
+            **sic_record_keys(cli['mode'], n_sic_pairs, SIC_SCHEME),
             'n_neuronal_spikes':  int(len(spk_N_t)),
             'n_astrocyte_events': int(len(spk_A_t)),
             'mean_FR_Hz':         float(len(spk_N_t) / (cli['simtime'] * max(Nn, 1))),
@@ -1831,6 +1845,9 @@ def main():
             'n_stoa_links':      int(len(topo['StoA_i'])),
             'n_stoa_viable':     int(len(topo.get('StoA_viable_i',
                                                   topo['StoA_i']))),
+            # SPEC Block 12: SIC pairs (ABSENT under Neuronal)
+            **({'n_sic_pairs': int(len(topo['SIC_i']))}
+               if args.mode == 'Full' else {}),
             'p_eff_actual':      float(len(topo['S_i']) / max(args.Nn * (args.Nn - 1), 1)),
             't_topo_build_s':    float(t_topo),
             'mode':              args.mode,

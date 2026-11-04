@@ -858,10 +858,40 @@ def get_Synparam(synapse_type='depressing',**kwargs):
 
 
 
+# ---------------- SLOW INWARD CURRENT (SPEC Block 12) ----------------
+# Recorded with every Full-mode run (sic_scheme): which SIC model produced it.
+SIC_SCHEME = 'sic-v1-2026-11-04'
+
+
+def get_SICparam(**kwargs):
+    """Constants of the slow inward current (SPEC Block 12), fixed (not
+    registry axes). For each SIC pair (astrocyte a, neuron i):
+        dx/dt = k_on_sic H(G_A,a(t)) (1 - x) - x / tau_d_sic
+        dr/dt = (x - r) / tau_r_sic
+        H(G)  = (G/EC50_sic)^n_sic / (1 + (G/EC50_sic)^n_sic)
+    and on neuron i: I_sic = g_sic r_sic_tot (V - E_nmda) / (1 + exp(-0.062 V/mV)/3.57).
+    Calibration (chat of 2026-11-04): one release with G0 = 78 uM (rho_e 6.5e-4,
+    G_T 200 mM, U_A 0.6, x_A 1), Omega_e 5 /s, V clamped at -60 mV gives a
+    0-100 % rise of 220.1 ms, a decay tau of 706.0 ms and -43.3 pA (Kovacs &
+    Pal 2017, Front Cell Neurosci 11:16, 1 mM Mg). EC50_sic and n_sic equal the
+    synaptic NMDA nominal values but are separate from the swept EC50_nmda.
+    """
+    params = {
+        'k_on_sic':  3.596/ms,      # binding rate at full Hill activation
+        'tau_d_sic': 651.9*ms,      # unbinding (decay) time constant
+        'tau_r_sic': 2.0*ms,        # opening (rise) time constant, as tau_rise_nmda
+        'EC50_sic':  3.0*mmole,     # Hill half-activation (synaptic NMDA nominal)
+        'n_sic':     1.9,           # Hill coefficient (synaptic NMDA nominal)
+        'g_sic':     40.6*nS,       # conductance of one pair's receptors, all open
+    }
+    params.update(kwargs)
+    return params
+
+
 def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal',
                      Decay_type='Double_exp', synapse_type='neutral', conn_prob_=None,
                      seed_neu=None, seed_syn=None, connections=None,
-                     Binomial_fun=None, syn_positions=None):
+                     Binomial_fun=None, syn_positions=None, sic=None):
     """
     Build the neuronal `NeuronGroup` ('Neuron') and synaptic `Synapses` group
     ('Synapse').
@@ -900,6 +930,13 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
     syn_positions : (N, 2) ndarray or None
         Pre-computed bouton positions in um, paired with the (i, j) of
         `connections`. Used by the HPC loader to restore S.x_syn, S.y_syn.
+    sic : {None, True, False}
+        Slow inward current on the neurons (SPEC Block 12). None (default): on
+        in Full mode, off otherwise. True requires Simulated_network='Full'.
+        On: I_syn includes I_sic = g_sic r_sic_tot B(V) (V - E_nmda), r_sic_tot
+        being summed by the group of `Astro_to_Neuron_SIC`. Off: the neuron
+        equations are exactly those before Block 12. The pipeline always runs
+        Full mode with the SIC; False is for tests and ablations.
 
     Returns
     -------
@@ -912,6 +949,15 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
             "Neuronal_Network requires a Brian2 Function 'Binomial_fun' "
             "passed via the Binomial_fun= argument."
         )
+    # SPEC Block 12: the SIC is on in Full mode unless switched off explicitly.
+    if sic is None:
+        sic = (Simulated_network == 'Full')
+    elif sic not in (True, False):
+        raise ValueError("Neuronal_Network: sic must be None, True or False, "
+                         "got %r" % (sic,))
+    if sic and Simulated_network != 'Full':
+        raise ValueError("Neuronal_Network: the SIC needs the astrocytes "
+                         "(Simulated_network='Full'), got %r" % (Simulated_network,))
 
     # ---------------------- NEURONAL GROUP ----------------------
      # neuron model
@@ -1185,15 +1231,29 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
 
     
     
-    eqs_NN += Equations(''' 
-                        I_syn =  I_ampa + I_nmda: amp
+    if sic:
+        # SPEC Block 12: slow inward current through the extrasynaptic NMDA
+        # receptors of every SIC pair of the neuron (r_sic_tot, summed by the
+        # group of Astro_to_Neuron_SIC); same Mg block and reversal as I_nmda.
+        eqs_NN += Equations('''
+                        I_syn =  I_ampa + I_nmda + I_sic : amp
                         I_ampa = g_ampa*(V-E_ampa)*(r_ampa_tot) : amp
                         I_nmda = g_nmda*(V-E_nmda)*(r_nmda_tot)/(1+exp(-0.062*V/mV)/3.57) : amp
+                        I_sic = g_sic*(V-E_nmda)*(r_sic_tot)/(1+exp(-0.062*V/mV)/3.57) : amp
                         r_nmda_tot :1
                         r_ampa_tot :1
+                        r_sic_tot :1
+                        ''')
+    else:
+        eqs_NN += Equations(''' 
+                            I_syn =  I_ampa + I_nmda: amp
+                            I_ampa = g_ampa*(V-E_ampa)*(r_ampa_tot) : amp
+                            I_nmda = g_nmda*(V-E_nmda)*(r_nmda_tot)/(1+exp(-0.062*V/mV)/3.57) : amp
+                            r_nmda_tot :1
+                            r_ampa_tot :1
                         
                     
-                        ''')
+                            ''')
 
     
     
@@ -1220,6 +1280,8 @@ def Neuronal_Network(Nn, Syn_pdist=None, ics=False, Simulated_network='Neuronal'
     # state 'VT' directly would depolarise ~half the population to near 0 mV.
     # El / V0_span are compile-time constants, so run_args ordering cannot affect them.
     params_NN['V0_span'] = params_NN['VT'] - params_NN['El']   # 7.2 mV at the GROUNDED op-point
+    if sic:
+        params_NN['g_sic'] = get_SICparam()['g_sic']            # SPEC Block 12
 
     
     # Suppress Brian2's resolution_conflict warnings: every per-neuron state variable
@@ -2093,6 +2155,57 @@ def Astro_to_Syn(Glio_release, synapse, connections):
     return Astro_Syn
 
 
+def Astro_to_Neuron_SIC(Glio_release, neurons, connections, params=None):
+    """
+    Slow inward current from astrocytes to neurons (SPEC Block 12): one
+    receptor population per SIC pair (astrocyte a, neuron i), driven by the
+    astrocyte's gliotransmitter G_A at every step:
+        dx_sic/dt = k_on_sic H(G_A_pre) (1 - x_sic) - x_sic / tau_d_sic
+        dr_sic/dt = (x_sic - r_sic) / tau_r_sic
+        r_sic_tot_post = sum of r_sic over the neuron's pairs (summed)
+    The neuron group must have been built with the SIC on (`r_sic_tot`).
+
+    Parameters
+    ----------
+    Glio_release : NeuronGroup 'Gliot_release' (has G_A)
+    neurons : NeuronGroup 'Neuron' built by Neuronal_Network(..., sic=True)
+    connections : [SIC_i, SIC_j], astrocyte and neuron index of each pair
+        (from sic_pairs / build_topology)
+    params : dict or None, namespace (default get_SICparam())
+
+    Returns
+    -------
+    Synapses 'ecs_astro_to_neuron_sic' (no synapse when the pair list is empty)
+    """
+    if 'r_sic_tot' not in neurons.variables:
+        raise ValueError('Astro_to_Neuron_SIC: the neuron group has no r_sic_tot; '
+                         'build it with Neuronal_Network(..., sic=True) (Full mode)')
+    src = np.asarray(connections[0], dtype=np.int64).ravel()
+    tgt = np.asarray(connections[1], dtype=np.int64).ravel()
+    if len(src) != len(tgt):
+        raise ValueError('Astro_to_Neuron_SIC: %d astrocyte indices but %d neuron '
+                         'indices' % (len(src), len(tgt)))
+    if len(src) and (src.min() < 0 or src.max() >= len(Glio_release)
+                     or tgt.min() < 0 or tgt.max() >= len(neurons)):
+        raise ValueError('Astro_to_Neuron_SIC: an index is out of range (%d '
+                         'astrocytes, %d neurons)' % (len(Glio_release), len(neurons)))
+    namespace = dict(get_SICparam() if params is None else params)
+    SIC = Synapses(Glio_release, neurons,
+                   model='''
+                   dx_sic/dt = k_on_sic*((G_A_pre/EC50_sic)**n_sic/(1 + (G_A_pre/EC50_sic)**n_sic))*(1 - x_sic) - x_sic/tau_d_sic : 1 (clock-driven)
+                   dr_sic/dt = (x_sic - r_sic)/tau_r_sic : 1 (clock-driven)
+                   r_sic_tot_post = r_sic : 1 (summed)
+                   ''',
+                   method='exponential_euler',
+                   namespace=namespace,
+                   name='ecs_astro_to_neuron_sic', dtype=float64)
+    if len(src):
+        SIC.connect(i=src.astype(np.int32), j=tgt.astype(np.int32))
+        SIC.x_sic = 0.0
+        SIC.r_sic = 0.0
+    return SIC
+
+
 # --------------- ELECTRODE RECORDINGS ---------------
 
 
@@ -2630,6 +2743,70 @@ def voronoi_astro_gj_pairs(N_pos, A_pos, gj_max_dist=150.0):
 
     return (np.asarray(src, dtype=np.int32),
             np.asarray(tgt, dtype=np.int32))
+
+
+# Custom: no library function returns the neuron-astrocyte edges of a joint
+# triangulation with a distance cap. Checked: scipy.spatial.Delaunay (used
+# here), scipy.spatial.Voronoi (ridge_points: the same pairs, used as the
+# oracle in smoke_test_sic.py), voronoi_astro_gj_pairs (astrocyte pairs only).
+def sic_pairs(N_pos, A_pos, max_dist=150.0):
+    """
+    SIC pairs (SPEC Block 12): every (astrocyte a, neuron i) whose cells share
+    a border in the JOINT Voronoi tessellation of neurons and astrocytes (an
+    edge of the Delaunay triangulation of the joint point set) and whose
+    somata lie at most `max_dist` um apart (the soft cap of the wallach gap
+    junctions, against the long edges at the boundary).
+
+    Parameters
+    ----------
+    N_pos : (Nn, 2) array   neuron (x, y) in um
+    A_pos : (Na, 2) array   astrocyte (x, y) in um
+    max_dist : float        cap in um (numpy.inf disables it)
+
+    Returns
+    -------
+    SIC_i, SIC_j : 1-D int32 arrays, astrocyte and neuron index of each pair,
+        sorted by (astrocyte, neuron). Empty if there is no neuron or no
+        astrocyte. A degenerate point set (all somata collinear, or two at the
+        same position) raises ValueError: its tessellation is not the one
+        intended.
+    """
+    from scipy.spatial import Delaunay
+    N_pos = np.asarray(N_pos, dtype=np.float64).reshape(-1, 2)
+    A_pos = np.asarray(A_pos, dtype=np.float64).reshape(-1, 2)
+    Nn, Na = len(N_pos), len(A_pos)
+    empty = (np.array([], dtype=np.int32), np.array([], dtype=np.int32))
+    if Nn == 0 or Na == 0:
+        return empty
+    if float(max_dist) < 0.0 or np.isnan(max_dist):
+        raise ValueError('sic_pairs: max_dist must be >= 0, got %r' % (max_dist,))
+    points = np.vstack([N_pos, A_pos])
+    if Nn + Na == 2:
+        # two cells: their Voronoi cells share the perpendicular bisector
+        if np.array_equal(N_pos[0], A_pos[0]):
+            raise ValueError('sic_pairs: a neuron and an astrocyte at the same position')
+        d = float(np.hypot(*(A_pos[0] - N_pos[0])))
+        return ((np.array([0], dtype=np.int32), np.array([0], dtype=np.int32))
+                if d <= max_dist else empty)
+    try:
+        tri = Delaunay(points)
+    except Exception as exc:          # scipy raises QhullError for these sets
+        raise ValueError('sic_pairs: degenerate point set (collinear somata?): %s'
+                         % exc) from exc
+    if len(getattr(tri, 'coplanar', [])) > 0:
+        raise ValueError('sic_pairs: %d soma(ta) coincide with another one; the '
+                         'joint tessellation is undefined there' % len(tri.coplanar))
+    s = np.sort(tri.simplices, axis=1)
+    edges = np.unique(np.vstack([s[:, [0, 1]], s[:, [1, 2]], s[:, [0, 2]]]), axis=0)
+    # edges are (low, high) global indices; neurons first, then astrocytes
+    cross = (edges[:, 0] < Nn) & (edges[:, 1] >= Nn)
+    neu = edges[cross, 0]
+    ast = edges[cross, 1] - Nn
+    d = np.hypot(A_pos[ast, 0] - N_pos[neu, 0], A_pos[ast, 1] - N_pos[neu, 1])
+    keep = d <= max_dist
+    neu, ast = neu[keep], ast[keep]
+    order = np.lexsort((neu, ast))
+    return ast[order].astype(np.int32), neu[order].astype(np.int32)
 
 
 def nearest_astro_for_synapse(bouton_pos, A_pos, stoa_cutoff=70.0):

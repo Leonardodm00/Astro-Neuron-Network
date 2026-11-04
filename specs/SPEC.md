@@ -33,7 +33,8 @@ of f397e29; GiuliaGate's queues and its range-check findings (2026-11-02)
 added on top of 3188be6; t_ref 3 ms, the quiet-corner check and the SIC
 candidates (2026-11-02) added on top of 4430a47; U_0_sr's box [0.01, 0.7]
 (2026-11-03) added on top of 6204b40; the SIC decision and its open
-choices (2026-11-03) added on top of 004ed7b)
+choices (2026-11-03) added on top of 004ed7b; Block 11 (seeds) on top of
+2bf3857; Block 12 (the SIC) on top of 6c50aed)
 
 ## 0. Coverage
 
@@ -57,6 +58,11 @@ choices (2026-11-03) added on top of 004ed7b)
   `hpc/Phenomenological_finalv1/Giulia/ASD_fun_BD_cpp.py`): in
   `Neuronal_Network`, the dV/dt line and the threshold, reset and refractory
   arguments of the neuron `NeuronGroup` -- not the rest of those files
+- the slow inward current (Block 12): `get_SICparam`, `sic_pairs`,
+  `Astro_to_Neuron_SIC`, `SIC_SCHEME` and the SIC lines of `Neuronal_Network`
+  in `hpc/Phenomenological_finalv1/ASD_fun_BD_cpp.py`; the SIC pairs of
+  `build_topology`, the SIC group of `build_and_run` and of the sweep worker,
+  `sic_record_keys`; `smoke_test_sic.py`
 - the root pipeline's 37-D registry, sweep groups and astrocyte contact gate
   (Block 8): `hpc/Phenomenological_finalv1/HPC_main_sweep.py` and
   `HPC_single_run.py` as far as Block 8 describes them, and the `O_N` lines
@@ -130,7 +136,11 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
 | Cm | membrane capacitance | scalar | pF |
 | tau_A | adaptation time constant | scalar | ms |
 | I_inj b_i | frozen per-neuron bias, b_i ~ U(-0.5, 0.5) drawn once at build | scalar per neuron | pA |
-| I_syn,i | synaptic current (inward negative) | state | pA |
+| I_syn,i | synaptic current (inward negative); in Full mode I_AMPA,i + I_NMDA,i + I_SIC,i (Block 12) | state | pA |
+| G_A,a | gliotransmitter concentration of astrocyte a (`Gliot_release.G_A`) | state, float32 | uM |
+| P, P_i | SIC pairs (astrocyte a, neuron i); P_i = {a : (a, i) in P} | int32 arrays `SIC_i` (a), `SIC_j` (i) | -- |
+| x_ai, r_ai | bound and open fractions of the extrasynaptic NMDA receptors of SIC pair (a, i) | states in [0, 1], float64 | -- |
+| r_SIC,i, I_SIC,i | sum over a in P_i of r_ai; slow inward current of neuron i (inward negative) | `r_sic_tot` (summed), `I_sic` | --, pA |
 | sigma | noise amplitude (stationary SD of the passive membrane) | scalar | mV |
 | t_ref | refractory period | scalar, 3 ms | ms |
 | t_s,i | a spike time of neuron i | float | s |
@@ -323,6 +333,20 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
     of Block 8); the nominal 0.15 lies inside. The range checks of
     LindaColloDUP and GiuliaGate covered [0.1, 1]; [0.01, 0.1) is new to
     the calibration (Block 6).
+  - 2026-11-04 [author]: the SIC (Block 12). The equation: the synaptic
+    NMDA scheme driven by G_A(t) at every step, dx/dt = k_on H(G_A)(1 - x)
+    - x/tau_d, dr/dt = (x - r)/tau_r, with the synaptic Hill constants (EC50
+    3 mM, n 1.9) and tau_r 2 ms; k_on, tau_d and g_sic calibrated to
+    Kovacs & Pal 2017 ("Our Hill, n = 1.9"). The reach rule: "I would say
+    the first [the astrocytes of the neuron's input synapses], but i'm not
+    sure whether the sic currents are elicited in the perisynaptic space or
+    generally across the arbour. In the first case do the per synapse, in
+    the second case do all the astrocytes whose voronoi region touches that
+    neuron's one"; the literature read the same day supports the arbour
+    (Block 12), so the Voronoi rule. The switch: "Always on in Full mode"
+    (no pipeline flag; the constants fixed; the 37-D registry unchanged).
+    The roadmap: every block plus the SIC, and two theory topics, this
+    implementation and the biology of astrocyte-mediated SICs.
   - 2026-11-04 [author]: the seed problem of section 8 is solved in the
     pipeline, with no silent path left ("Solve absolutely the seed problem.
     Everything must be bulletproof"): Block 11.
@@ -1409,6 +1433,150 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   lines with the same B, "2 ok", and write seed_run, seed_verified True,
   seed_build and rng_scheme into each npz.
 
+### Block 12: the slow inward current (SIC), astrocyte to neuron through extrasynaptic NMDA receptors
+
+- Purpose (decided by the author on 2026-11-03 and 2026-11-04, section 4).
+  Each astrocyte's gliotransmitter also acts on neurons postsynaptically,
+  through extrasynaptic NMDA receptors with the Mg block; the presynaptic
+  route (Gamma_S in U_0) is unchanged. Modules, in
+  `hpc/Phenomenological_finalv1/`: `ASD_fun_BD_cpp.py` (`SIC_SCHEME`,
+  `get_SICparam`, `sic_pairs`, `Astro_to_Neuron_SIC`, the SIC lines of
+  `Neuronal_Network`), `HPC_single_run.py` (`build_topology`,
+  `build_and_run`, `sic_record_keys`, the records) and `HPC_main_sweep.py`
+  (the worker, the records, `topology_meta.json`). Campaign folders get
+  them with their step 0 copy. Confirmed: yes (2026-11-04) for the
+  equation, the constants, the switch and the reach rule as the author
+  specified it; the items marked (proposed) are inferred.
+- Equations. G_A,a(t) is the gliotransmitter of astrocyte a
+  (`Gliot_release.G_A`, the variable the presynaptic route reads; De Pitta &
+  Brunel 2016 eq. A.9: at each release of a, G_A,a += rho_e G_T U_A x_A,a;
+  between releases dG_A,a/dt = -Omega_e G_A,a). For each SIC pair (a, i) in
+  P and all t >= 0:
+
+      dx_ai/dt = k_on H(G_A,a(t)) (1 - x_ai(t)) - x_ai(t) / tau_d
+      dr_ai/dt = (x_ai(t) - r_ai(t)) / tau_r
+      H(G) = (G / EC50_sic)^n_sic / (1 + (G / EC50_sic)^n_sic)
+      x_ai(0) = r_ai(0) = 0
+
+  For each neuron i, with P_i = {a : (a, i) in P}:
+
+      r_SIC,i(t) = sum over a in P_i of r_ai(t)      (`r_sic_tot`; 0 if P_i is empty)
+      I_SIC,i(t) = g_sic r_SIC,i(t) (V_i(t) - E_NMDA) / (1 + exp(-0.062 V_i(t)/mV) / 3.57)
+      I_syn,i(t) = I_AMPA,i(t) + I_NMDA,i(t) + I_SIC,i(t)
+
+  x_ai is the fraction of pair (a, i)'s receptors with gliotransmitter
+  bound and r_ai their open fraction. The binding rate follows G_A,a(t) at
+  every step (the synapses' NMDA scheme reads its Hill input once per
+  release), so the SIC's rise and size depend on G_A's peak and on how long
+  it lasts (Omega_e). Each pair is its own receptor population: the SICs of
+  several partner astrocytes add.
+- Constants, fixed, not registry axes (`get_SICparam`): k_on_sic
+  3.596 /ms, tau_d_sic 651.9 ms, tau_r_sic 2 ms, EC50_sic 3 mM, n_sic 1.9,
+  g_sic 40.6 nS; E_NMDA is the neurons' E_nmda (0 mV). EC50_sic and n_sic
+  equal the synaptic NMDA nominal values but are separate constants: the
+  synapses' EC50_nmda (a registry axis) and n_nmda do not change the SIC.
+  The De Pitta & Brunel parameters G_sic, tau_sic_r, tau_sic of
+  `get_Synparam` stay unused.
+- Calibration (the validation target). One release with G0 = rho_e G_T U_A
+  x_A = 6.5e-4 x 200 mM x 0.6 x 1 = 78 uM, Omega_e = 5 /s, V clamped at
+  -60 mV: 0-100 % rise 220.1 ms, single-exponential decay tau 706.0 ms
+  (fitted from the peak down to 10 % of it), peak r 0.2233, peak current
+  -43.31 pA. Target: Kovacs & Pal 2017, Front Cell Neurosci 11:16 (PPN,
+  1 mM Mg, -60 mV; full text in project knowledge): 43.3 pA, rise
+  220.1 ms, decay tau 706 ms. k_on and tau_d were fitted to the two times
+  (residual 1.3e-9) and g_sic to the amplitude, with scipy, in the chat of
+  2026-11-04 (scratchpad scripts `sic_kinetics_check.py`,
+  `sic_continuous_variants.py`; not in the repository). Over the prior's
+  G0 range (3-585 uM: G_T 50-1000 mM, U_A 0.1-0.9): rise 231 to 56 ms,
+  peak r 5.3e-4 to 0.984 (peak current up to about 191 pA at -60 mV);
+  with Omega_e 1 and 25 /s instead of 5 /s: rise 484 and 76 ms.
+- Reach rule P (the author on 2026-11-04: per synapse if SICs arise in the
+  perisynaptic space, "all the astrocytes whose voronoi region touches that
+  neuron's one" if across the arbour). The literature read the same day
+  places the SIC receptors on the arbour: extrasynaptic, pharmacologically
+  distinct from the synaptic NMDA receptors, from perisomatic to distal
+  dendritic sites, one astrocyte reaching several neurons and one neuron
+  reached by several astrocytes (Pal 2024 review, Kovacs & Pal 2017, De
+  Pitta & Brunel 2016, in project knowledge; Petralia et al. 2010,
+  doi 10.1016/j.neuroscience.2010.01.022, PMC full text; Angulo et al. 2004, Ashhad &
+  Narayanan 2016 and Pirttimaki et al. 2011 read from the PMC pages through
+  a fetch tool; no study tests whether ensheathment of the neuron's own
+  synapses is needed). So: (a, i) is in P iff astrocyte a and neuron i are
+  joined by an edge of the Delaunay triangulation of the joint point set
+  {neuron somata} union {astrocyte somata} (their cells in the joint
+  Voronoi tessellation share a border) and |p_a - p_i| <= d_max, with
+  d_max = `gj_max_dist` (default 150 um), the soft cap the wallach gap
+  junctions use against the long edges at the boundary. `sic_pairs(N_pos,
+  A_pos, max_dist)` computes P in `build_topology`, for both topology modes,
+  in Full mode; P is empty in Neuronal mode. No random draw; the pairs are
+  sorted by (astrocyte, neuron). A degenerate point set (collinear or
+  coincident somata) raises ValueError. The contact gate stoa_gate_p does
+  not thin P (it acts on synapse-astrocyte contacts) (proposed). In the
+  GiuliaGate geometry (108 + 108 cells, 300 um box, five random layouts,
+  sandbox): 302-326 pairs, 2.8-3.0 partner astrocytes per neuron on
+  average, 0-6 neurons with none, median contact distance 22 um; the cap
+  removes 1-3 edges per layout.
+- Switch: `Neuronal_Network(..., sic=None)`. None: on in Full mode, off
+  otherwise; True with a mode other than Full raises ValueError. Off: the
+  neuron equations are those before Block 12 (the same parsed equations;
+  the string differs only in indentation), so a run with the SIC off is
+  spike-for-spike the run before Block 12 (smoke_test_sic.py). The
+  pipeline has no flag: Full mode always builds the SIC; `sic=False` exists
+  for tests and ablations only. In Full mode both entry points build
+  `Astro_to_Neuron_SIC(GT, N, [SIC_i, SIC_j])`, which raises ValueError if
+  the neuron group has no `r_sic_tot` (built with the SIC off), if the two
+  index arrays differ in length, or if an index is out of range.
+- Implementation: `Astro_to_Neuron_SIC` builds the Synapses group
+  `ecs_astro_to_neuron_sic` from `Gliot_release` to `Neuron` with
+  clock-driven x_sic, r_sic (exponential_euler, dtype float64, namespace
+  `get_SICparam()`, x_sic = r_sic = 0 at t = 0) and the summed
+  `r_sic_tot_post`; with no pair it has no synapse and r_SIC = 0. It draws
+  no random number, so the random streams are consumed as before until
+  the dynamics differ. Brian2 updates the summed `r_sic_tot` before the
+  synapses' state in each step, so I_SIC,i at step n uses the open
+  fractions of step n - 1 (one step, 0.05 ms; the synapses' r_nmda_tot
+  and r_ampa_tot behave the same way).
+- `build_and_run(topo, args, params, sic=None, record=None)` in
+  `HPC_single_run.py`: `sic=False` builds the SIC-off twin (the neurons
+  without `r_sic_tot`, no SIC group) and `record` adds state monitors (V,
+  I_sic and r_sic_tot of chosen neurons; I_sic and r_sic_tot of every
+  neuron; C and G_A of every astrocyte), returned under `record`; both
+  serve `sic_demo.py`. `main()` passes neither, and any other value of
+  `sic` raises ValueError. The SIC group sits at the same place in the
+  network's object list in the single run and in the sweep worker.
+- Records (`sic_record_keys(mode, n_sic_pairs, sic_scheme)`): in Full mode
+  the npz and json of every run carry `sic_scheme` ('sic-v1-2026-11-04',
+  from the library the run imported) and `n_sic_pairs`;
+  `topology_meta.json` carries `n_sic_pairs`; `topology.npz` carries
+  `SIC_i` (astrocyte) and `SIC_j` (neuron). Under Neuronal these keys are
+  absent (the convention of `stoa_gate_record_keys`); `topology.npz` then
+  holds empty `SIC_i`, `SIC_j`. A Full-mode record without `sic_scheme`
+  comes from a run before Block 12.
+- Not changed: the copies no launcher uses (`Giulia/`, `Burst Tests/`)
+  and the folders of running campaigns (never repeat step 0 into a running
+  campaign's folder). Full-mode campaigns run before Block 12 have no SIC;
+  a rerun from a fresh step 0 has it (MEAMA, GiuliaGate); LindaColloDUP
+  runs Neuronal and is unaffected.
+- Custom code: `sic_pairs` (scipy Delaunay, as `voronoi_astro_gj_pairs`;
+  no library function returns the neuron-astrocyte edges of a joint
+  triangulation with a cap).
+- Tests: `smoke_test_sic.py` (docstring). Demonstration: `sic_demo.py`
+  (SIC on/off twins, simulation only) and `sic_demo_plots.py` (figures);
+  their results are in section 8.
+- Status: implemented 2026-11-04. Checked [SANDBOX] the same day:
+  `smoke_test_sic.py` 45/45 under Brian2 2.11.0 and under 2.10.1 (pairs
+  against the Voronoi ridge oracle and a hand-solved layout; Brian2
+  against scipy, first order in dt; the clamp at -60 mV gives -43.30 pA,
+  rise 220.2 ms, decay 706.2 ms; C++ = numpy to 3.8e-14; with the SIC off,
+  and with the SIC terms but r_SIC = 0, the Full-mode spikes of 6c50aed
+  exactly; Neuronal mode unchanged); the earlier suites unchanged
+  (param_recording 119, stoa_gate 36, astro_drive 10, seed_allocation 47,
+  burst_metrics, seeding 20/20 under 2.11.0 and 2.10.1, range_check 76 + 2
+  skipped and 87 with the simulations, GiuliaGate 33 + 1 skipped and 36
+  with --sim, LindaColloDUP 41 on a freshly patched copy); the repository
+  invariant of Block 1 (`clamp_cadex_copies.py`): all CAdEx copies
+  clamped.
+
 ### 5.1 Projects and where their model runs
 
 The tester can check only what is in the repository. The cluster folders
@@ -1453,6 +1621,8 @@ campaign's `job_args.json` `lib_dir`).
 | `python3 smoke_test_gg.py` (`--sim` adds G8) | Block 9 | the repository; G8 needs Brian2 and a C++ compiler | 30 s; about 1 min with `--sim` |
 | `python3 smoke_test_astro_drive.py` (`--no-sim` skips A3 and A4) | Block 10 (10 checks) | the root folder; A2 needs Brian2, A3 and A4 also a C++ compiler | seconds; about 35 s with A3 and A4 |
 | `SIZING_CONFIRMED=1 REFRACTORY_CLAMP=yes DRYRUN=1 bash launch_GG.sh` | Block 9 dry run | the GiuliaGate folder after steps 0-4 | seconds |
+| `python3 smoke_test_sic.py` (`--no-sim` skips the compiled runs) | Block 12 (43 checks) | the root folder; Brian2; S10 and S11 also a C++ compiler, S3 and S11 git | about 2-3 min on two cores; about 40 s with `--no-sim` |
+| `python3 sic_demo.py --out DIR` then `python3 sic_demo_plots.py DIR` | Block 12: SIC on/off twins (regimes nominal, oscillating, quiet_strong, repeated) and their figures | the root folder, Brian2 and a C++ compiler | about 2.5 min per 40 s run on one core (sandbox): about 12-15 min for the four regimes (eight runs) with `--jobs 2` |
 
 ## 7. Not executable in the sandbox
 
@@ -1646,7 +1816,50 @@ campaign's `job_args.json` `lib_dir`).
   its nearest astrocyte within 70 um of the soma; alternatives: the
   astrocytes of its input synapses, or one per synapse); the calibration
   target (proposed: Kovacs & Pal at 1 mM Mg); g_sic fixed first or a
-  registry axis; Full mode only, off by default.
+  registry axis; Full mode only, off by default. [closed 2026-11-04]
+  Block 12: the author chose the synaptic scheme driven by G_A(t), fixed
+  constants, always on in Full mode, and the reach rule by the literature
+  (Voronoi adjacency); section 4.
+- [2026-11-04] What the SIC does in the network (Block 12; `sic_demo.py`,
+  sandbox: GiuliaGate geometry, 108 + 108 cells, conn_prob 0.10, gate 1,
+  seed_topo 101, seed_run 7, 40 s; each regime run with the SIC on and as
+  the SIC-off twin, same topology, seeds and noise). Releases are the
+  upward jumps of G_A (the astrocyte events of the records are C > C_osc
+  crossings, 0.2 uM, not releases).
+  - Registry nominal (O_N 0.3) and O_N 1e-4: each of the 108 astrocytes
+    releases once, 0.9-1.7 s and 1.3-2.4 s after the start, the same in
+    both twins, and not again in 40 s (its
+    later calcium peaks stay below C_Theta 0.5 uM). In the 2 s after these
+    releases the partner neurons fire at 92 and 90 Hz (8.6 and 7.5 Hz in
+    the twin); the mean rate over the run is 11.8 against 7.8 Hz and 12.2
+    against 7.4 Hz, but from 3 s on 7.81 against 7.77 Hz and 8.7 against
+    7.5 Hz. Under the registry values the SIC is an onset event.
+  - C_Theta 0.3 uM with O_N 1e-4: the astrocytes' slow calcium oscillation
+    is in phase across the well, so all of them release together about
+    every 10 s (432 releases in 40 s, in the windows 0.9-1.6, 11-12, 21-22
+    and 31-32 s); each wave gives a network burst of 140-160 Hz per neuron
+    (50 ms bins) lasting about 2 s; mean rate 25.6
+    against 7.7 Hz (22.6 against 7.7 from 3 s on).
+  - G_T 1000 mM, U_A 0.9 (G0 585 uM) in the quiet corner (Sigma 3 mV,
+    U_0_sr 0.1, O_G 10, Omega_G 0.001): mean rate 14.1 against 1.3 Hz, and
+    5.7 against 1.4 Hz from 3 s on, after the SIC itself has decayed.
+  - Size: each neuron sums the SICs of its partners, and the releases are
+    synchronous, so the clamp-equivalent peaks (g_sic r_SIC B(-60 mV)
+    60 mV) have medians of 86-118 pA and maxima of 198-237 pA at G0 78 uM,
+    median 380 and maximum 928 pA at G0 585 uM; during firing the current
+    reaches -0.35 to -0.44 nA (-1.68 nA at G0 585 uM). Single SICs in
+    slices span 18-477 pA (Pal 2015 mini-review, in project knowledge).
+  - Reading (own, not tested): (a) the onset release follows the start of
+    the run, so with the SIC every Full-mode run has a synchronous network
+    burst between about 1 and 5 s; an analysis window starting at 2 s (the
+    range check's [2 s, 20 s]) includes most of it. (b) The calibration
+    holds per pair and per release; synchronous releases onto about three
+    partners per neuron, and saturation at high G0, take a neuron's SIC
+    beyond the slice range. Decision pending with the author: the window
+    start of Full-mode analyses; whether to keep g_sic per pair, scale it
+    (for instance by the number of partners), or narrow the reach; whether
+    the synchronous onset release is an artefact of the initial
+    conditions to remove.
 - The legacy Izhikevich model in the top-level `ASN_fun_pheno.py` has a 2 ms
   refractory period and no hold: during it the quadratic term can carry v
   past the threshold with no reset, as in the CAdEx runaway. Not used by any
