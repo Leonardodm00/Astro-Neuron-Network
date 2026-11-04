@@ -54,6 +54,15 @@ the glutamate over its contacts instead of the sum (specs/SPEC.md Block 10,
 the author's option (a)). Step 0 copies the fixed model: run steps 0-8 again
 if you ran them before this commit. [corrected 2026-10-31] The MEDIAN over
 its contacts (the author's choice the same day), still Block 10.
+[FIXED 2026-11-04] Run seeds (specs/SPEC.md Block 11; section 8). Until
+this commit the per-run seed never reached the compiled binary: every run of a
+worker replayed the build-time random stream, and the draws made before the
+run (V(0), the neuron bias, the astrocyte jitter) were the same in every
+network of a campaign. Now each run's seed is applied inside the binary and
+read back after the run (a mismatch stops the sweep with exit 3), and the
+pre-run draws are seeded per topology. Step 0 copies the fixed pipeline: run
+steps 0-8 again before the launch. Never repeat step 0 into the folder of a
+campaign that is running: it keeps its copies.
 
 ORDER OF OPERATIONS (paste one line at a time)
 
@@ -90,9 +99,12 @@ python smoke_test_gg.py | tail -1
 grep -E '^[[:space:]]*dV/dt' ASD_fun_BD_cpp.py
 
 7. probe, about 1-2 min on the login node: 2 tiny Full runs through the real
-   worker (expect "topo_00000 done: 2 ok" and "NaN warnings: neurons 0,
-   astrocytes 0"; before the fix the astrocyte count was above 0), then clean up:
-mkdir -p artifacts && GG_NO_ENV=1 NODETAG=probe CAMPAIGN_TAG=probe_check SEED_BASE=1000 N_TOPOLOGIES=1 C_MAX=120 SIMTIME=2 PBS_NCPUS=2 FREEZE_ENC=$(python apply_prior_patch.py --freeze-list | tr ',=' ':@') bash submit_GG.sh > artifacts/probe_check.log 2>&1; grep -E "topo_00000 done" artifacts/probe_check.log; echo "NaN warnings: neurons $(grep -c "variable 'V' has NaN" artifacts/probe_check.log), astrocytes $(grep -c "Astrocyte's variable" artifacts/probe_check.log)"; rm -rf campaign_probe_check
+   worker (expect two lines "[worker 000] ..." and "[worker 001] topo_00000:
+   build seed B (topo_seed_base T); 1 run seeds, each applied in the binary
+   and read back (SPEC Block 11)" with the same B on both, then "topo_00000
+   done: 2 ok" and "NaN warnings: neurons 0, astrocytes 0"; before the fix
+   the astrocyte count was above 0), then clean up:
+mkdir -p artifacts && GG_NO_ENV=1 NODETAG=probe CAMPAIGN_TAG=probe_check SEED_BASE=1000 N_TOPOLOGIES=1 C_MAX=120 SIMTIME=2 PBS_NCPUS=2 FREEZE_ENC=$(python apply_prior_patch.py --freeze-list | tr ',=' ':@') bash submit_GG.sh > artifacts/probe_check.log 2>&1; grep -E "run seeds, each applied|topo_00000 done" artifacts/probe_check.log; echo "NaN warnings: neurons $(grep -c "variable 'V' has NaN" artifacts/probe_check.log), astrocytes $(grep -c "Astrocyte's variable" artifacts/probe_check.log)"; rm -rf campaign_probe_check
 
 8. dry run (expect the freeze list, "boxes : Sigma [2, 10]; g_ampa [0.05, 10];
    g_nmda [0.05, 10]", "V clamp (t_ref): yes", "conn_prob : U[0.05, 0.4] per

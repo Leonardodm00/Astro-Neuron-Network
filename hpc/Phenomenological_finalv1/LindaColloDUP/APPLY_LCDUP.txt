@@ -40,6 +40,15 @@ Without the clamp, a neuron driven above VT during its refractory period runs
 away to NaN and never spikes again (operations doc, section 3).
 The launch (step 8) waits for the range check, which needs steps 0-5a done
 (see the note after step 7).
+[FIXED 2026-11-04] Run seeds (specs/SPEC.md Block 11; section 8). Until
+this commit the per-run seed never reached the compiled binary: every run of a
+worker replayed the build-time random stream, and the draws made before the
+run (V(0), the neuron bias, the astrocyte jitter) were the same in every
+network of a campaign. Now each run's seed is applied inside the binary and
+read back after the run (a mismatch stops the sweep with exit 3), and the
+pre-run draws are seeded per topology. Step 0 copies the fixed pipeline: run
+steps 0-7 again before the launch. Never repeat step 0 into the folder of a
+campaign that is running: it keeps its copies.
 
 ORDER OF OPERATIONS (paste one line at a time)
 
@@ -69,9 +78,11 @@ python apply_refractory_clamp.py --self-test | tail -1 && python apply_refractor
 5b. (not used since 2026-10-30) without the clamp: skip 5a and use REFRACTORY_CLAMP=no in steps 7-8.
 
 6. probe, about 1-2 min on the login node: 2 tiny runs through the real worker
-   (expect the dV/dt line ending in "(unless refractory)", "topo_00000 done: 2 ok"
-   and NaN count 0), then clean up:
-mkdir -p artifacts && LCDUP_NO_ENV=1 NODETAG=probe CAMPAIGN_TAG=probe_check SEED_BASE=1000 N_TOPOLOGIES=1 C_MAX=120 SIMTIME=2 PBS_NCPUS=2 FREEZE_ENC=Cm:I_inj:VA@-48:DeltaA:VR@-58.2:EC50_ampa:EC50_nmda:alpha_syn:O_G:Omega_G bash submit_LCDUP.sh > artifacts/probe_check.log 2>&1; grep -E "dV/dt \(model|topo_00000 done" artifacts/probe_check.log; echo "NaN warnings: $(grep -c 'has NaN' artifacts/probe_check.log)"; rm -rf campaign_probe_check
+   (expect the dV/dt line ending in "(unless refractory)", two lines
+   "[worker 00k] topo_00000: build seed B (topo_seed_base T); 1 run seeds,
+   each applied in the binary and read back (SPEC Block 11)" with the same B,
+   "topo_00000 done: 2 ok" and NaN count 0), then clean up:
+mkdir -p artifacts && LCDUP_NO_ENV=1 NODETAG=probe CAMPAIGN_TAG=probe_check SEED_BASE=1000 N_TOPOLOGIES=1 C_MAX=120 SIMTIME=2 PBS_NCPUS=2 FREEZE_ENC=Cm:I_inj:VA@-48:DeltaA:VR@-58.2:EC50_ampa:EC50_nmda:alpha_syn:O_G:Omega_G bash submit_LCDUP.sh > artifacts/probe_check.log 2>&1; grep -E "dV/dt \(model|run seeds, each applied|topo_00000 done" artifacts/probe_check.log; echo "NaN warnings: $(grep -c 'has NaN' artifacts/probe_check.log)"; rm -rf campaign_probe_check
 
 7. dry run (expect Nn=159, the freeze list with VA=-48 and VR=-58.2,
    "conn_prob      : U[0.01, 0.4] per topology",

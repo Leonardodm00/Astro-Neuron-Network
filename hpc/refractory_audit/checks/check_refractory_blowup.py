@@ -180,6 +180,7 @@ def run_variant(a):
                     beta_conn=float('nan'), params_list=list(params),
                     theta_list=list(theta), iter_indices=list(range(a.k)),
                     seed_runs=seed_runs, cli=cli,
+                    topo_seed_base=base,   # required by the worker since SPEC Block 11
                     scratch_root=os.path.join(a.work_dir, 'scratch_' + a.label))
         run0 = state['run'] + 1
         S._worker_entry(pack)

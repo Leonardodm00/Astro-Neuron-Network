@@ -154,6 +154,9 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   pF, pA, ms in documentation and checks.
 - Randomness: the pipeline's seeds are unchanged by the covered code; the
   screen's sampling uses `numpy.random.default_rng(--seed)`, default seed 1.
+  [corrected 2026-11-04] Since Block 11 the sweep and the single run seed
+  every simulation on two levels: network seeds for the draws made before the
+  run, a run seed applied inside the binary and read back after the run.
 - Binding decisions. The project's decision log is not available where this
   file was written, so the decisions are recorded in the project doc
   `claude/LindaColloDUP_Campaign_Operations.md`:
@@ -320,6 +323,9 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
     of Block 8); the nominal 0.15 lies inside. The range checks of
     LindaColloDUP and GiuliaGate covered [0.1, 1]; [0.01, 0.1) is new to
     the calibration (Block 6).
+  - 2026-11-04 [author]: the seed problem of section 8 is solved in the
+    pipeline, with no silent path left ("Solve absolutely the seed problem.
+    Everything must be bulletproof"): Block 11.
   - 2026-11-03 [author]: the astrocytes also act on the neurons
     postsynaptically: a slow inward current (SIC) through extrasynaptic
     NMDA receptors on the postsynaptic neuron, gated by the astrocyte's
@@ -1305,6 +1311,104 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
 - Status: smoke-tested 2026-10-31 in the sandbox (10 passed). Skipped:
   davinci.
 
+### Block 11: random seeds, per network for the draws made before the run, per run for the dynamics
+
+- Purpose (decided by the author on 2026-11-04, section 4). The defect
+  (section 8, 2026-11-03): the worker compiled the binary once and called
+  `device.seed(seed_run)` before each `device.run(run_args=...)`. Brian2
+  cpp_standalone only writes `device.seed()` into `main()` at build time
+  (`brian2/devices/cpp_standalone/device.py`, `seed()` appends to
+  `main_queue`; 2.10.1 and 2.11.0), so no run seed was ever applied: every run
+  started from the build seed `seed_device` (50). The draws made before the run
+  were the same in every network of a campaign: the build seed and the IC seeds
+  the worker passed (`cli['seed_neuron']`, `cli['seed_astro']`) were campaign
+  constants. `HPC_single_run.py` had the same defect for `--seed_run`. Modules:
+  `HPC_single_run.py` (the helpers below and the single run) and
+  `HPC_main_sweep.py` (parent and worker) in `hpc/Phenomenological_finalv1/`;
+  campaign folders get them with their step 0 copy. Confirmed: yes
+  (2026-11-04).
+- Semantics, for each simulation s on network (topology) T:
+  - network level: every draw made before the run. In the binary, for each
+    neuron i, V_i(0) = El + U_i V0_span and bias_unit_i = U'_i - 0.5 (U, U'
+    ~ Uniform[0, 1), `ASD_fun_BD_cpp.Neuronal_Network` and the worker); in
+    numpy, the astrocytes' +-5 % jitter of I, C, h (`Astrocyte_Group`,
+    `ics='steady'`) and the x_A jitter (`Gliotransmission`, `ics='jitter'`).
+    These come from seeds derived from (seed_device, network_key_T):
+    identical in every run on T, different between networks. network_key_T
+    is the topology's `topo_seed_base` in the sweep, 0 in a single run.
+  - run level: every draw made during the run, the membrane noise (`randn()`
+    in `noise`) and the asynchronous-release draws of `Binomial_fun`, from
+    seed_run(s), applied inside the binary just before the network runs.
+  - So the output of s is a deterministic function of (the topology arrays of
+    T, the network seeds of T, the parameter vector theta(s), seed_run(s)),
+    whatever other runs share the binary and in whatever order they run.
+- Derivation: `derive_network_seeds(seed_device, network_key)` returns
+  {seed_build, seed_ic_neuron, seed_ic_synapse, seed_ic_astro}; each is
+  1 + w mod (2^31 - 2), w the first uint32 word of numpy
+  `SeedSequence([seed_device, network_key, tag]).generate_state(1)`, with tags
+  1, 2, 3, 4. seed_build seeds Brian2 (`device.seed`, the network-level draws
+  in the binary); seed_ic_neuron and seed_ic_synapse go to
+  `Neuronal_Network` (whose position and bouton draws the worker overrides
+  with the topology's arrays); seed_ic_astro to `Astrocyte_Group` and
+  `Gliotransmission` (which uses seed_ic_astro + 1). These streams share no
+  state with `build_topology`'s generators, seeded with the raw
+  seed_neuron_T / seed_synapse_T / seed_astro_T integers (passing
+  seed_astro_T itself would have reused the astrocyte-position stream for the
+  IC jitter).
+- Run seed in the binary: `install_run_seed(device, NeuronGroup)`, called
+  after the last initial-value statement and before `net.run`. It adds the
+  group `Run_seed_holder` (1 element; `run_seed : integer (constant)` and
+  `run_seed_applied : integer`, both -1 at build), calls
+  `device.apply_run_args()` (so that `set_from_command_line` follows every
+  initial value), then inserts C++ into `main()`: read run_seed; if it is
+  below 0, print an error and return 97 from `main()` (no results); else
+  seed every generator k with run_seed + k (Brian2's own convention) and
+  write run_seed into run_seed_applied. Each run passes
+  `run_args[Run_seed_holder.run_seed] = seed_run`; after it,
+  `check_run_seed(net, seed_run)` reads run_seed_applied and raises
+  `SeedNotAppliedError` unless it equals seed_run.
+- Validity: `validate_run_seed`: an integer with 0 <= seed_run < 2^31 - 1
+  (int32), else ValueError, for every seed of a pack before anything is
+  built. A pack without `topo_seed_base` raises KeyError. A Brian2 device
+  without `apply_run_args`, `insert_code` or `get_array_name` raises
+  RuntimeError before the build. The parent draws seed_run from
+  `master_rng.integers(0, 2^31 - 1)` as before and draws nothing new from
+  master_rng (smoke_test_param_recording T1).
+- Failure policy: `SeedNotAppliedError` discards the run (no npz, a line in
+  `_failures.jsonl`) and ends the worker's chunk with a record
+  `seed_failure: True`; the parent then prints a FATAL line after the
+  topology's report and the manifest rebuild, and exits with code 3.
+- Records: npz and json of every run: `seed_run` (the applied, verified
+  seed), `seed_verified` True, `noise_mode` 'fresh', `topo_seed_base`,
+  `seed_build`, `seed_ic_neuron`, `seed_ic_synapse`, `seed_ic_astro`,
+  `rng_scheme` 'v2-2026-11-04'. `topology_meta.json`: the four network seeds
+  and `rng_scheme`. The worker prints one line per topology: its build seed,
+  topo_seed_base and the number of run seeds. The single run's npz:
+  `seed_run` (applied; -1 without `--seed_run`), `seed_build`,
+  `seed_ic_astro`, `seed_device`, `rng_scheme`.
+- Single run: network seeds from `derive_network_seeds(--seed_device, 0)`;
+  `--seed_run`, when given, applied and checked as above; without it no
+  reseed (the run continues the network-level stream).
+- Not changed: copies with the same defect that no launcher uses --
+  `hpc/Phenomenological_finalv1/Giulia/` (superseded, section 4),
+  `hpc/Phenomenological_finalv1/Burst Tests/`, `hpc/Multiple Sweeps/`
+  (Hodgkin-Huxley) and `hpc/Single Test Run/`. A campaign already running
+  keeps its folder's copies: never repeat step 0 into a running campaign's
+  folder. Campaigns run before Block 11 cannot be reproduced by it.
+- Custom code: yes, the inserted C++ (marked at `_RESEED_CPP`): Brian2 has
+  no runtime seed for a compiled standalone binary.
+- Tests: `smoke_test_seeding.py` (S0-S12, docstring).
+- Status: implemented 2026-11-04. Checked [SANDBOX] the same day:
+  `smoke_test_seeding.py` 20/20 under Brian2 2.11.0 and 20/20 under 2.10.1;
+  the earlier suites unchanged (param_recording 119, stoa_gate 36,
+  astro_drive 10, seed_allocation 47, range_check 76 + 2 skipped and 87 with
+  the simulations, GiuliaGate 33 + 1 skipped and 36 with --sim, LindaColloDUP
+  41 on a freshly patched copy); the GiuliaGate step-7 and LindaColloDUP
+  step-6 probes on freshly patched copies print two "[worker 00k] topo_00000:
+  build seed B ...; 1 run seeds, each applied in the binary and read back"
+  lines with the same B, "2 ok", and write seed_run, seed_verified True,
+  seed_build and rng_scheme into each npz.
+
 ### 5.1 Projects and where their model runs
 
 The tester can check only what is in the repository. The cluster folders
@@ -1634,7 +1738,9 @@ campaign's `job_args.json` `lib_dir`).
   `device.run` (distinct seeds give distinct streams, equal seeds equal ones,
   values initialised before it stay frozen, unset gives the old stream). Not
   checked: whether the build-time draws (V(0), bias_unit) are the same in every
-  network of a campaign. Decision pending with the author.
+  network of a campaign. Decision pending with the author. [closed 2026-11-04]
+  Fixed by Block 11; they were the same in every network (a campaign-constant
+  build seed), now per network.
 - [2026-11-03] The presynaptic route alone (the author: "just see how the model
   behaves with just the pre-synaptic" route), sandbox study on the GiuliaGate
   setting (108 + 108 cells, 20 s; scripts and tables outside the repository).
@@ -1663,3 +1769,15 @@ campaign's `job_args.json` `lib_dir`).
   (O_N, I_bias, activity), the switched fraction (gate, release share) and the
   facilitation removed (U_0_sr small, alpha_syn large), and it changes the
   network only where activity has low-rate epochs.
+- [2026-11-04] `HPC_single_run.py`'s 3-D topology figure
+  (`plot_3d_layered_topology`, drawn before the simulation) fails at random,
+  "ValueError: Axis limits cannot be NaN or Inf" after overflow warnings in
+  mpl_toolkits.mplot3d, and the run exits 1 without simulating. Checked
+  [SANDBOX] (matplotlib 3.11.2): on one and the same topology file it failed in
+  4 of 7 fresh processes with the code before Block 11 and in 8 of 13 with
+  Block 11 (PYTHONHASHSEED=0 included), and passed in the others;
+  smoke_test_astro_drive.py A4 failed that way, then passed 10/10. Not
+  seed-related, and the sweep worker draws no figure. Not checked: matplotlib
+  on davinci. Candidate fix, not applied: draw that figure inside
+  try/except so that a figure cannot stop a run. Decision pending with the
+  author.

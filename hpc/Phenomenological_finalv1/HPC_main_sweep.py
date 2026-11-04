@@ -21,10 +21,14 @@
 # Inner (each worker, separate Python process via spawn):
 #   • set_device('cpp_standalone', build_on_run=False, directory=worker_dir)
 #     device.reinit(); device.activate(build_on_run=False)
-#   • build the network from the *shared* topology arrays
+#   • build the network from the *shared* topology arrays; the draws made
+#     before the run (V(0), bias_unit, astrocyte IC jitter) use this
+#     topology's network seeds (SPEC Block 11)
 #   • compile ONCE
 #   • for each parameter vector in the worker's chunk:
-#         device.run(run_args={...params...}, seed=fresh_seed_run)
+#         device.run(run_args={...params..., Run_seed_holder.run_seed: seed_run})
+#         (the binary reseeds its generators with seed_run before the run and
+#          writes back the seed it applied; checked after the run)
 #         harvest spk_N_t / spk_N_i / spk_A_t / spk_A_i
 #         atomic write of iter_<NN>.npz   (spike data + params + conn_prob)
 #         atomic write of iter_<NN>.json  (metadata, used for manifest rebuild)
@@ -90,6 +94,9 @@ from HPC_single_run import (                                         # noqa: E40
     resolve_population_from_density,
     PARAM_NAMES, PARAM_UNITS, NOMINAL_PARAMS,
     SWEEP_GROUPS, resolve_sweep_group,
+    # SPEC Block 11: per-network seeds and the per-run seed applied in main()
+    derive_network_seeds, validate_run_seed, install_run_seed, check_run_seed,
+    SeedNotAppliedError, RNG_SCHEME, RUN_SEED_HOLDER,
 )
 
 # ---------------------------------------------------------------------------
@@ -824,7 +831,11 @@ def _worker_entry(pack: dict) -> list:
     theta_list       : (k, 30) ndarray — inference coords (ln on log-axes);
                        stored verbatim as the SBI label, never used in run_args
     iter_indices     : list[int]   — local iter indices for the saved filenames
-    seed_runs        : list[int]   — one fresh seed_run per parameter vector
+    seed_runs        : list[int]   — one fresh seed_run per parameter vector,
+                       in [0, 2**31 - 1); applied inside the binary and read
+                       back after each run (SPEC Block 11)
+    topo_seed_base   : int   -- the topology's seed root; with cli['seed_device']
+                       it gives the network-level seeds (derive_network_seeds)
     cli              : dict — flattened CLI args needed by the worker
     scratch_root     : str  — root for per-worker cpp_standalone build dirs
 
@@ -849,13 +860,24 @@ def _worker_entry(pack: dict) -> list:
     seed_runs     = pack['seed_runs']
     cli           = pack['cli']
     scratch_root  = pack['scratch_root']
+    # SPEC Block 11: no silent default -- a pack without its topology's seed root
+    # is refused, and every run seed is checked before anything is built.
+    if 'topo_seed_base' not in pack:
+        raise KeyError("pack has no 'topo_seed_base': the network-level seeds "
+                       "cannot be derived (SPEC Block 11)")
+    topo_seed_base = int(pack['topo_seed_base'])
+    net_seeds      = derive_network_seeds(cli['seed_device'], topo_seed_base)
+    seed_runs      = [validate_run_seed(s) for s in seed_runs]
+    if len(seed_runs) != len(params_list):
+        raise ValueError('pack has %d seed_runs for %d parameter vectors'
+                         % (len(seed_runs), len(params_list)))
 
     # ── Brian2 device init (per the exact pattern requested) ─────────────────
     worker_scratch = os.path.join(scratch_root, f'worker_{worker_id:03d}')
     os.makedirs(worker_scratch, exist_ok=True)
 
     from brian2 import (set_device, get_device, devices, start_scope,
-                        defaultclock, Network, SpikeMonitor,
+                        defaultclock, Network, SpikeMonitor, NeuronGroup,
                         second, ms, mV, nS, pA, pF, mmole, umole, msiemens, cm, um,
                         BrianLogger, Function, DEFAULT_FUNCTIONS)
 
@@ -868,7 +890,10 @@ def _worker_entry(pack: dict) -> list:
     BrianLogger.suppress_hierarchy('brian2.parsing')
 
     start_scope()
-    devices.device.seed(cli['seed_device'])
+    # Network-level draws (V(0), bias_unit) from this topology's build seed
+    # (SPEC Block 11): the same in every run on this topology, different
+    # between topologies. The run-level draws follow seed_run (below).
+    devices.device.seed(net_seeds['seed_build'])
     defaultclock.dt = 0.05 * ms
 
     # ── Library import (inside worker so spawn re-imports cleanly) ──────────
@@ -975,8 +1000,8 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
         conn_prob_=conn_prob,                       # flat: this topology's draw;
                                                     # weibull: library default,
                                                     # never read (dead branch)
-        seed_neu=cli['seed_neuron'],
-        seed_syn=cli['seed_synapse'],
+        seed_neu=net_seeds['seed_ic_neuron'],     # Block 11 (positions are
+        seed_syn=net_seeds['seed_ic_synapse'],    # overridden below)
         connections=[topo['S_i'], topo['S_j']],
         Binomial_fun=Binomial_fun,
         syn_positions=syn_positions,
@@ -991,7 +1016,7 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
     if cli['mode'] == 'Full':
         Astro, GJ = Astrocyte_Group(
             cli['Na'], 'Full',
-            seed_astro=cli['seed_astro'],
+            seed_astro=net_seeds['seed_ic_astro'],   # IC jitter, Block 11
             ics='steady',
             connections=[topo['GJ_i'], topo['GJ_j']],
         )
@@ -999,7 +1024,7 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
         Astro.y_astro = topo['A_pos'][:, 1] * um
 
         GT = Gliotransmission(cli['Na'], Astro,
-                              ics='jitter', seed_astro=cli['seed_astro'])
+                              ics='jitter', seed_astro=net_seeds['seed_ic_astro'])
 
         StoA, Connections_list = Synapse_to_astro(
             S, Astro,
@@ -1013,35 +1038,27 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
         SpikesA = None
         net.add([N, S, SpikesN])
 
+    # -- Run seed (SPEC Block 11) --------------------------------------------
+    # After the last initial value, before net.run(): every device.run() below
+    # reseeds Brian2's generators from run_args[Run_seed_holder.run_seed] inside
+    # main(), and the binary writes back the seed it applied. (device.seed()
+    # cannot do this: it only edits main() for the next build.)
+    SeedHolder = install_run_seed(device, NeuronGroup)
+    net.add(SeedHolder)
+
     # ── Compile ONCE ────────────────────────────────────────────────────────
     t0_compile = time.time()
     net.run(simtime)
     device.build(run=False, directory=None)
     t_compile = time.time() - t0_compile
 
-    # ── Per-run reseeding capability ─────────────────────────────────────────
-    # CORRECTION: device.run() has never accepted a `seed=` kwarg, so the old
-    # signature probe ('seed' in inspect.signature(device.run)) ALWAYS returned
-    # False and forced paired mode even on modern Brian2 (confirmed on 2.9).
-    # The documented standalone idiom for reproducible per-run noise is
-    # device.seed(value) called immediately BEFORE each device.run() — see
-    # brian2.devices.device.seed. device.seed() is core API present in every
-    # modern Brian2 (>=2.x); we check for it defensively and only fall back to
-    # paired mode on a (now implausible) install that lacks it.
-    _supports_seed = callable(getattr(device, 'seed', None))
-    noise_mode = 'fresh' if _supports_seed else 'paired'
-
-    if not _supports_seed:
-        print(
-            f'[worker {worker_id:03d}] NOTE: This Brian2 install lacks '
-            f"device.seed().  Falling back to PAIRED-COMPARISON mode "
-            f"(the cpp_standalone binary replays the build-time RNG sequence; "
-            f"all parameter vectors within topo_{topo_idx:05d} see the same "
-            f"(rand()-0.5)*I_inj initialisation and the same xi noise stream). "
-            f"device.seed() is core API in all modern Brian2 (>=2.x); if you see "
-            f"this, the env is unexpectedly old:  pip install --upgrade brian2",
-            flush=True,
-        )
+    # Every run below gets its own seed_run (draws made during the run) on top
+    # of this topology's frozen network-level draws: 'fresh' noise per run.
+    noise_mode = 'fresh'
+    print(f'[worker {worker_id:03d}] topo_{topo_idx:05d}: build seed '
+          f"{net_seeds['seed_build']} (topo_seed_base {topo_seed_base}); "
+          f'{len(seed_runs)} run seeds, each applied in the binary and read back '
+          f'(SPEC Block 11)', flush=True)
 
     # ── Inner loop: device.run() once per parameter vector ──────────────────
     # Each iteration is wrapped in try/except.  A run that crashes the
@@ -1111,21 +1128,15 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
         # Per-parameter try/except: a crash here MUST NOT abort the rest of
         # the worker's chunk, and MUST NOT write any iter_*.npz/iter_*.json.
         # ──────────────────────────────────────────────────────────────────
+        # SPEC Block 11: this run's seed travels in run_args; the binary reseeds
+        # every generator with it just before the network runs and writes back
+        # the value it applied, checked right after the run.
+        run_args[net[RUN_SEED_HOLDER].run_seed] = int(seed_run)
+
         try:
             t0_run = time.time()
-            if _supports_seed:
-                # Reseed the standalone RNG immediately before this run so each
-                # parameter vector gets an independent, REPRODUCIBLE noise
-                # realisation: the build-frozen (rand()-0.5) bias_unit pattern is
-                # fixed per topology, while I_inj (its run_args SCALE) and the xi
-                # stream are reseeded here per sim. seed_run is a distinct master_rng draw per sim
-                # (see parent), so the whole campaign is reproducible from
-                # seed_master while no two sims share a noise stream. device.seed()
-                # does NOT recompile — it only resets the RNG for the next run.
-                device.seed(int(seed_run))
-                device.run(run_args=run_args)
-            else:
-                device.run(run_args=run_args)   # no device.seed(): paired fallback
+            device.run(run_args=run_args)
+            check_run_seed(net, seed_run)     # raises SeedNotAppliedError
             t_run = time.time() - t0_run
 
             # Harvest --------------------------------------------------------
@@ -1189,6 +1200,28 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
                 'error_msg':  str(e)[:200],
             })
 
+            # SPEC Block 11: a seed the binary did not apply is a defect of the
+            # build, not of this parameter vector, so every later run of this
+            # binary would be wrong too: stop the chunk and flag it; the parent
+            # stops the sweep.
+            if isinstance(e, SeedNotAppliedError):
+                summaries.append({
+                    'ok':           False,
+                    'seed_failure': True,
+                    'worker_id':    worker_id,
+                    'topo_idx':     topo_idx,
+                    'iter_indices': [int(iter_idx)],
+                    'error':        'SeedNotAppliedError: ' + str(e)[:300],
+                })
+                return [{'t_compile_s': float(t_compile),
+                         'worker_id': worker_id,
+                         'topo_idx':  topo_idx,
+                         'n_runs_completed': sum(
+                             1 for s in summaries if s.get('ok')),
+                         'n_runs_discarded': sum(
+                             1 for s in summaries if s.get('discarded')),
+                         'aborted_early': True}] + summaries
+
             # If the cpp_standalone binary itself is broken (e.g. SIGSEGV
             # left the device in a corrupt state), every subsequent
             # device.run() call in this worker is doomed.  Bail out of the
@@ -1215,10 +1248,9 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
         # ───── Success path: save .npz + .json ─────────────────────────────
         n_consecutive_failures = 0
 
-        # In paired mode, store seed_run as -1: that draw was not actually
-        # applied to the binary, so keeping its sampled value would be
-        # misleading (would imply reproducibility we don't have).
-        seed_run_saved = int(seed_run) if _supports_seed else -1
+        # SPEC Block 11: seed_run was applied by the binary and read back
+        # (check_run_seed above), so the recorded value is the one that ran.
+        seed_run_saved = int(seed_run)
 
         npz_name = f'iter_{iter_idx:05d}.npz'
         npz_path = os.path.join(topo_dir, npz_name)
@@ -1237,8 +1269,16 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
             **{_k: np.float64(_v) for _k, _v in
                stoa_gate_record_keys(cli['mode'], stoa_gate_p).items()},
             topo_idx=np.int32(topo_idx),
-            seed_run=np.int64(seed_run_saved),
-            noise_mode=np.array(noise_mode),     # 'fresh' or 'paired'
+            seed_run=np.int64(seed_run_saved),   # applied in the binary, read back
+            noise_mode=np.array(noise_mode),     # 'fresh' (Block 11)
+            # SPEC Block 11: the seeds of this run's two levels of randomness
+            seed_verified=np.bool_(True),
+            topo_seed_base=np.int64(topo_seed_base),
+            seed_build=np.int64(net_seeds['seed_build']),
+            seed_ic_neuron=np.int64(net_seeds['seed_ic_neuron']),
+            seed_ic_synapse=np.int64(net_seeds['seed_ic_synapse']),
+            seed_ic_astro=np.int64(net_seeds['seed_ic_astro']),
+            rng_scheme=np.array(RNG_SCHEME),
             spk_N_t=spk_N_t, spk_N_i=spk_N_i,
             spk_A_t=spk_A_t, spk_A_i=spk_A_i,
         )
@@ -1286,6 +1326,14 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
             'param_names':        PARAM_NAMES,
             'seed_run':           seed_run_saved,
             'noise_mode':         noise_mode,
+            # SPEC Block 11
+            'seed_verified':      True,
+            'topo_seed_base':     int(topo_seed_base),
+            'seed_build':         int(net_seeds['seed_build']),
+            'seed_ic_neuron':     int(net_seeds['seed_ic_neuron']),
+            'seed_ic_synapse':    int(net_seeds['seed_ic_synapse']),
+            'seed_ic_astro':      int(net_seeds['seed_ic_astro']),
+            'rng_scheme':         RNG_SCHEME,
             'n_neuronal_spikes':  int(len(spk_N_t)),
             'n_astrocyte_events': int(len(spk_A_t)),
             'mean_FR_Hz':         float(len(spk_N_t) / (cli['simtime'] * max(Nn, 1))),
@@ -1467,7 +1515,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help='Master seed for all outer-loop randomness (conn_prob, '
                         'topology seeds, parameter vectors, seed_runs). '
                         'Default: derived from PBS_JOBID for reproducibility.')
-    p.add_argument('--seed_device',  type=int, default=50)
+    p.add_argument('--seed_device',  type=int, default=50,
+                   help='With each topology\'s topo_seed_base, the root of the '
+                        'network-level seeds (draws made before the run: V(0), '
+                        'bias_unit, astrocyte IC jitter; SPEC Block 11).')
     p.add_argument('--seed_neuron',  type=int, default=39)
     p.add_argument('--seed_synapse', type=int, default=35)
     p.add_argument('--seed_astro',   type=int, default=60)
@@ -1760,6 +1811,11 @@ def main():
             'seed_neuron':       int(seed_neuron_k),
             'seed_synapse':      int(seed_synapse_k),
             'seed_astro':        int(seed_astro_k),
+            # SPEC Block 11: the network-level seeds the workers derive from
+            # (seed_device, topo_seed_base); each run's seed is in its sidecar.
+            **{_k: int(_v) for _k, _v in
+               derive_network_seeds(args.seed_device, topo_seed_base).items()},
+            'rng_scheme':        RNG_SCHEME,
             'Nn':                int(args.Nn),
             'Na':                Na_eff,
             'c_max':             float(args.c_max),
@@ -1840,6 +1896,7 @@ def main():
                 'theta_list':   [theta_matrix[i] for i in chunk_idxs],
                 'iter_indices': chunk_idxs,
                 'seed_runs':    [int(seed_runs[i]) for i in chunk_idxs],
+                'topo_seed_base': int(topo_seed_base),   # SPEC Block 11
                 'cli':          cli_dict,
                 'scratch_root': scratch_root,
             })
@@ -1875,6 +1932,7 @@ def main():
         n_ok = 0
         n_fail = 0          # worker-level (whole chunk) failures
         n_discarded = 0     # per-parameter discards (overflow / underflow / etc.)
+        n_seed_fail = 0     # SPEC Block 11: a run seed the binary did not apply
         compile_times = []
         run_times = []
         for worker_results in all_results:
@@ -1892,6 +1950,8 @@ def main():
                     run_times.append(r.get('t_run_s', 0.0))
                 else:
                     n_fail += 1
+                    if r.get('seed_failure'):
+                        n_seed_fail += 1
                     print(f'[main]   WORKER FAILURE iter={r.get("iter_indices", "?")} '
                           f'worker={r.get("worker_id", -1)}: {r.get("error", "?")}',
                           flush=True)
@@ -1915,6 +1975,14 @@ def main():
             rebuild_manifest(args.out_dir)
         except Exception as e:
             print(f'[main]   manifest rebuild failed (non-fatal): {e}', flush=True)
+
+        # SPEC Block 11: never continue a sweep whose run seeds are not applied.
+        if n_seed_fail:
+            print(f'[main] FATAL: {n_seed_fail} worker(s) of topo_{topo_idx:05d} '
+                  f'read back a run seed different from the requested one '
+                  f'(SeedNotAppliedError, details in {topo_dir}/_failures.jsonl). '
+                  f'Stopping the sweep.', flush=True)
+            sys.exit(3)
 
     print('\n[done] outer loop exhausted args.n_topologies '
           f'({args.n_topologies}) without walltime kill.')

@@ -310,9 +310,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('--seed_synapse', type=int, default=35)
     p.add_argument('--seed_astro',   type=int, default=60)
     p.add_argument('--seed_run',     type=int, default=None, metavar='INT',
-                   help='If given, forwarded to device.run(seed=...) so that '
-                        'each run sees its own stochastic draw.  '
-                        'Omit for paired-comparison mode.')
+                   help='Seed of the draws made during the run (membrane noise, '
+                        'asynchronous release), applied inside the binary and '
+                        'read back (SPEC Block 11). Omit to continue the '
+                        'network-level stream of --seed_device.')
 
     # ── Swept parameters ─────────────────────────────────────────────────────
     g = p.add_argument_group('Swept parameters (units as noted; '
@@ -435,6 +436,133 @@ def resolve_population_from_density(Nn, Na, c_max,
             print(f"[density] rho_neuron={density}/mm^2  c_max={c_max}um  "
                   f"area={area_mm2:.4f}mm^2  ->  Nn={Nn_out}, Na={Na_out}  ({astro_note})")
     return Nn_out, Na_out
+
+
+# =============================================================================
+# Random-number seeding (SPEC Block 11)
+# =============================================================================
+# Two levels of randomness per simulation:
+#   network level -- every draw made BEFORE the run: in the compiled binary
+#     (V(0) = El + rand()*V0_span, bias_unit = rand() - 0.5) and in numpy (the
+#     astrocyte IC jitter, the x_A jitter). Frozen per network: the same in every
+#     run on one topology, different between topologies. Seeds from
+#     derive_network_seeds(seed_device, network_key).
+#   run level -- every draw made DURING the run (the membrane noise, the
+#     asynchronous-release Binomial draws). From seed_run, applied by C++ that
+#     install_run_seed() puts into main() just before the network runs, and read
+#     back after the run by check_run_seed().
+# Why not device.seed(seed_run): in cpp_standalone, device.seed() only appends a
+# line to main() for the NEXT build (brian2/devices/cpp_standalone/device.py,
+# seed() -> main_queue); called after device.build() it changes nothing, so a
+# binary replayed with device.run(run_args=...) never sees it.
+
+SEED_MAX = 2**31 - 1               # every seed handled here lies in [0, SEED_MAX - 1]
+RNG_SCHEME = 'v2-2026-11-04'       # recorded with every run (Block 11)
+RUN_SEED_HOLDER = 'Run_seed_holder'
+_NETWORK_SEED_TAGS = (('seed_build', 1), ('seed_ic_neuron', 2),
+                      ('seed_ic_synapse', 3), ('seed_ic_astro', 4))
+
+# C++ inserted into main() by install_run_seed(): after set_from_command_line()
+# (the run's run_args), before the network runs. {seed} and {applied} are the
+# holder's array names. A missing seed (-1) stops the binary (exit 97), so a run
+# without its seed can never produce results.
+_RESEED_CPP = '''
+{{
+    // SPEC Block 11: reseed every generator from this run's seed (run_args)
+    const long long _block11_seed = (long long) brian::{seed}[0];
+    if (_block11_seed < 0) {{
+        std::cerr << "[Block 11] run seed not set (" << _block11_seed
+                  << "): refusing to run" << std::endl;
+        return 97;
+    }}
+    for (size_t _i = 0; _i < brian::_random_generators.size(); _i++)
+        brian::_random_generators[_i].seed(
+            (unsigned long) (_block11_seed + (long long) _i));
+    brian::{applied}[0] = (int32_t) _block11_seed;
+}}
+'''
+
+
+class SeedNotAppliedError(RuntimeError):
+    """The seed read back from the binary after a run is not the requested one."""
+
+
+def derive_network_seeds(seed_device, network_key):
+    """Seeds for the draws made before the run, one per purpose.
+
+    Each is 1 + (first uint32 word of numpy SeedSequence([seed_device,
+    network_key, tag])) mod (SEED_MAX - 1), tags 1-4: reproducible, distinct per
+    network_key, and sharing no state with each other or with build_topology's
+    generators (those are seeded with the raw seed_neuron / seed_synapse /
+    seed_astro integers). network_key: the topology's topo_seed_base in the
+    sweep, 0 in a single run. Returns {seed_build, seed_ic_neuron,
+    seed_ic_synapse, seed_ic_astro}."""
+    seed_device, network_key = int(seed_device), int(network_key)
+    if seed_device < 0 or network_key < 0:
+        raise ValueError('seed_device and network_key must be >= 0, got %d, %d'
+                         % (seed_device, network_key))
+    out = {}
+    for name, tag in _NETWORK_SEED_TAGS:
+        word = np.random.SeedSequence([seed_device, network_key, tag]).generate_state(
+            1, dtype=np.uint32)[0]
+        out[name] = 1 + int(word) % (SEED_MAX - 1)
+    return out
+
+
+def validate_run_seed(seed_run):
+    """seed_run as int, checked to fit the holder (int32): 0 <= seed < SEED_MAX."""
+    s = int(seed_run)
+    if s != seed_run or not 0 <= s < SEED_MAX:
+        raise ValueError('seed_run must be an integer in [0, %d), got %r'
+                         % (SEED_MAX, seed_run))
+    return s
+
+
+def install_run_seed(device, NeuronGroup, name=RUN_SEED_HOLDER):
+    """Make every later device.run() reseed Brian2's generators from run_args.
+
+    Call after the LAST initial-value statement and before net.run(); add the
+    returned group to the Network; give each run run_args[holder.run_seed] =
+    seed_run; after each run call check_run_seed(net, seed_run). Order inside
+    main(): the initial values (network-level draws), set_from_command_line()
+    (made explicit here, so that it precedes the reseed), the reseed, the run."""
+    for attr in ('apply_run_args', 'insert_code', 'get_array_name'):
+        if not callable(getattr(device, attr, None)):
+            raise RuntimeError('this Brian2 device has no %s(): the run seed cannot '
+                               'be applied (SPEC Block 11)' % attr)
+    if getattr(device, 'run_args_applied', False):
+        raise RuntimeError('run_args were applied before install_run_seed(): the '
+                           'reseed would read the seed before it is set')
+    holder = NeuronGroup(1, '''run_seed : integer (constant)
+                               run_seed_applied : integer''', name=name)
+    holder.run_seed = -1
+    holder.run_seed_applied = -1
+    device.apply_run_args()
+    seed_arr = device.get_array_name(holder.variables['run_seed'], access_data=False)
+    applied_arr = device.get_array_name(holder.variables['run_seed_applied'],
+                                        access_data=False)
+    device.insert_code('main', _RESEED_CPP.format(seed=seed_arr, applied=applied_arr))
+    return holder
+
+
+def check_run_seed(net, seed_run, name=RUN_SEED_HOLDER):
+    """After device.run(): the seed the binary applied must equal seed_run.
+
+    Read from the file the binary wrote in this run, not through the variable:
+    Brian2 caches run_seed_applied's build-time value (-1) and refreshes its
+    cache only for variables set by run_args or written by its own code
+    objects, which the inserted C++ is not."""
+    from brian2 import get_device
+    dev = get_device()
+    var = net[name].variables['run_seed_applied']
+    fname = os.path.join(dev.results_dir, dev.get_array_filename(var))
+    applied = int(np.fromfile(fname, dtype=var.dtype)[0])
+    if hasattr(dev, 'array_cache'):
+        dev.array_cache[var] = None       # later reads through Brian2 reload too
+    if applied != int(seed_run):
+        raise SeedNotAppliedError('run seed %d requested, %d applied by the binary'
+                                  % (int(seed_run), applied))
+    return applied
 
 
 # =============================================================================
@@ -800,7 +928,12 @@ def build_and_run(topo: dict, args, params: np.ndarray) -> dict:
     BrianLogger.suppress_hierarchy('brian2.parsing')
 
     start_scope()
-    devices.device.seed(args.seed_device)
+    # SPEC Block 11: network-level draws (V(0), bias_unit, astrocyte IC jitter)
+    # from seeds derived from --seed_device (network_key 0 in a single run); the
+    # run-level draws from --seed_run, applied by install_run_seed() below.
+    net_seeds = derive_network_seeds(args.seed_device, 0)
+    seed_run = None if args.seed_run is None else validate_run_seed(args.seed_run)
+    devices.device.seed(net_seeds['seed_build'])
     defaultclock.dt = 0.05 * ms
 
     print('\n[pass 2] Brian2 cpp_standalone: building groups ...')
@@ -917,8 +1050,8 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
         Decay_type='Double_exp',
         synapse_type='facilitating',
         conn_prob_=args.conn_prob,
-        seed_neu=args.seed_neuron,
-        seed_syn=args.seed_synapse,
+        seed_neu=net_seeds['seed_ic_neuron'],
+        seed_syn=net_seeds['seed_ic_synapse'],
         connections=[topo['S_i'], topo['S_j']],
         Binomial_fun=Binomial_fun,
         syn_positions=syn_positions,
@@ -938,7 +1071,7 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
         # ── Astrocyte group ───────────────────────────────────────────────────
         Astro, GJ = Astrocyte_Group(
             args.Na, 'Full',
-            seed_astro=args.seed_astro,
+            seed_astro=net_seeds['seed_ic_astro'],
             ics='steady',
             connections=[topo['GJ_i'], topo['GJ_j']],
         )
@@ -947,7 +1080,7 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
         Astro.y_astro = topo['A_pos'][:, 1] * um
 
         GT = Gliotransmission(args.Na, Astro,
-                              ics='jitter', seed_astro=args.seed_astro)
+                              ics='jitter', seed_astro=net_seeds['seed_ic_astro'])
 
         StoA, Connections_list = Synapse_to_astro(
             S, Astro,
@@ -962,6 +1095,12 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
     else:   # Neuronal
         SpikesA = None
         net.add([N, S, SpikesN])
+
+    # Run seed (SPEC Block 11): after the last initial value, before net.run().
+    seed_holder = None
+    if seed_run is not None:
+        seed_holder = install_run_seed(device, NeuronGroup)
+        net.add(seed_holder)
 
     # ── Compile ───────────────────────────────────────────────────────────────
     print('[pass 2] Compiling cpp_standalone binary ...')
@@ -1025,15 +1164,16 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
           f'(simtime={args.simtime:.1f} s, seed_run={args.seed_run}) ...')
     t0 = _wall.time()
 
-    # device.run() has never accepted a `seed=` kwarg (it silently fails on
-    # modern Brian2). The documented cpp_standalone idiom for reproducible
-    # per-run noise is device.seed(value) called immediately BEFORE device.run()
-    # — mirrors HPC_main_sweep._worker_entry. device.seed() is core API in every
-    # modern Brian2 (>=2.x); we probe for it defensively and, lacking it, fall
-    # back to replaying the build-time RNG sequence.
-    if args.seed_run is not None and callable(getattr(device, 'seed', None)):
-        device.seed(int(args.seed_run))
+    # SPEC Block 11: the run seed travels in run_args and is applied by the C++
+    # that install_run_seed() put into main(); check_run_seed() reads back the
+    # seed the binary applied. Without --seed_run the run continues the
+    # network-level stream (no reseed).
+    if seed_holder is not None:
+        run_args[seed_holder.run_seed] = seed_run
     device.run(run_args=run_args)
+    if seed_holder is not None:
+        check_run_seed(net, seed_run)
+        print(f'[pass 2] run seed {seed_run} applied (read back from the binary).')
 
     t_run = _wall.time() - t0
     ratio = t_run / args.simtime
@@ -1055,6 +1195,9 @@ double Binomial_fun(int n, double p, int _vectorisation_idx) {
         spk_N_t=spk_N_t, spk_N_i=spk_N_i,
         spk_A_t=spk_A_t, spk_A_i=spk_A_i,
         t_compile_s=t_compile, t_run_s=t_run,
+        seed_build=net_seeds['seed_build'],
+        seed_ic_astro=net_seeds['seed_ic_astro'],
+        seed_run_applied=(-1 if seed_run is None else seed_run),
     )
 
 
@@ -2032,7 +2175,12 @@ def main():
         spk_N_i=results['spk_N_i'],
         spk_A_t=results['spk_A_t'],
         spk_A_i=results['spk_A_i'],
-        seed_run=np.int64(-1 if args.seed_run is None else args.seed_run),
+        # SPEC Block 11: the seed the binary applied (read back; -1 = no reseed)
+        seed_run=np.int64(results['seed_run_applied']),
+        seed_build=np.int64(results['seed_build']),
+        seed_ic_astro=np.int64(results['seed_ic_astro']),
+        seed_device=np.int64(args.seed_device),
+        rng_scheme=np.array(RNG_SCHEME),
     )
     print(f'[data]  Spike data saved → {npz_path}')
 
