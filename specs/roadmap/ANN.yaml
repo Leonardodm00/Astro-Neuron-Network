@@ -1,0 +1,190 @@
+# Roadmap of the subproject ANN: the root pipeline of
+# hpc/Phenomenological_finalv1 (CAdEx neuron-astrocyte networks for the SBI
+# training sets), its audits, calibration and campaign launch packages.
+# Source of truth for the stages and the theory statuses; the implementation
+# statuses are computed by specs/roadmap/roadmap.py (never written by hand).
+# Grouping confirmed by the author on 2026-11-04.
+schema: 1
+name: ANN
+title: Neuron-astrocyte sweep pipeline (hpc/)
+repo: leonardodm00/astro-neuron-network
+branch: main
+spec: specs/SPEC.md
+hpc_branch: hpc-status
+# A running HPC marker older than this is reported as failing. The campaign
+# arrays (I4, I9) run for weeks with one marker per array, so 720 h (30 days)
+# rather than the default 48 h; a range-check job killed by its walltime
+# therefore stays "running" on the page until then (its .o/.e logs show it).
+stale_after_hours: 720
+
+theory:
+  - id: TS1
+    title: Astrocyte-mediated slow inward currents
+    summary: the astrocyte-to-neuron SIC pathway, its model and its biology (asked by the author, 2026-11-04)
+    refs: []
+    depends_on: []
+  - id: T1
+    parent: TS1
+    title: The SIC kinetic scheme driven by G_A
+    summary: how the Block 12 receptor scheme turns the gliotransmitter time course into a current - continuous Hill-driven binding and opening, the Mg block, why a per-release kick cannot fit the slow rise, the calibration of k_on, tau_d and g_sic to Kovacs & Pal 2017, the dependence on G0 and Omega_e, and the Voronoi reach rule
+    refs: [SPEC Block 12, De Pitta & Brunel 2016, Kovacs & Pal 2017]
+    depends_on: []
+    affects: [I12]
+    status: open
+    closed_on:
+    decision:
+  - id: T2
+    parent: TS1
+    title: Biology of astrocyte-mediated SICs
+    summary: astrocytic glutamate release, the extrasynaptic GluN2B/GluN2D NMDA receptors that carry SICs and where they sit on the neuron, how many neurons one astrocyte reaches and synchrony, functional roles (excitability, synchrony, plasticity) and the slice-versus-in-vivo caveats
+    refs: [Pal 2024 review, Pal 2015 mini-review, Kovacs & Pal 2017, Csemer et al. 2023, Petralia et al. 2010]
+    depends_on: []
+    affects: [I12]
+    status: open
+    closed_on:
+    decision:
+
+implementation:
+  - id: S1
+    title: Network model
+    summary: the equations of the simulated network that the blocks change - neuron, astrocyte drive, astrocyte-to-neuron current, astrocyte start
+    depends_on: []
+    needs_theory: []
+  - id: S2
+    title: Sweep pipeline
+    summary: the registry (38 axes since g_sic), the sampling, the records and the seeds of every run
+    depends_on: []
+    needs_theory: []
+  - id: S3
+    title: Audit of past campaigns
+    summary: how many runs of earlier campaigns lost neurons to the refractory runaway, and the clamp of the cluster copies
+    depends_on: []
+    needs_theory: []
+  - id: S4
+    title: Prior calibration
+    summary: the standard range check of each setup's prior boxes before a campaign
+    depends_on: []
+    needs_theory: []
+  - id: S5
+    title: Campaign launch packages
+    summary: the launch folders of the campaigns run from the root pipeline
+    depends_on: []
+    needs_theory: []
+
+  - id: I1
+    title: Refractory hold in the CAdEx neuron
+    summary: V is held at V_R during t_ref (Gorski et al. 2021), so a neuron cannot run away to NaN
+    block: 1
+    parent: S1
+    depends_on: []
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I10
+    title: Astrocyte glutamate drive, the median over its links
+    summary: Y_extra of an astrocyte is the median of Y_A over its synapse links, not the sum that made the astrocytes diverge
+    block: 10
+    parent: S1
+    depends_on: []
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I12
+    title: Slow inward current
+    summary: astrocyte G_A drives extrasynaptic NMDA receptors on its Voronoi-neighbour neurons (no distance cap); always on in Full mode; g_sic per pair is registry axis 37
+    block: 12
+    parent: S1
+    depends_on: [I8]
+    needs_theory: [T1, T2]
+    needs_hpc: false
+    jobs: []
+  - id: I13
+    title: Astrocyte start at the driven state
+    summary: every astrocyte starts from the state its own equations reach under the run's drives (the fixed point, or its own phase on the limit cycle) and refractory, so no astrocyte releases because the run starts
+    block: 13
+    parent: S1
+    depends_on: [I10, I11]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I8
+    title: Registry, sweep groups and the astrocyte contact gate
+    summary: the registry (37 axes, 38 since g_sic), the sweep groups and the contact gate stoa_gate_p of the default pipeline
+    block: 8
+    parent: S2
+    depends_on: []
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I11
+    title: Random seeds per network and per run
+    summary: network-level draws from seeds per topology, run-level draws from a seed applied inside the binary and read back
+    block: 11
+    parent: S2
+    depends_on: [I8]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I7
+    title: Seed guard across ~/ANN
+    summary: a campaign cannot reuse seeds already used under ~/ANN
+    block: 7
+    parent: S2
+    depends_on: []
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I2
+    title: refractory_scan, the spike-train screen
+    summary: per-run classification of early-silenced neurons from the spike trains
+    block: 2
+    parent: S3
+    depends_on: []
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I3
+    title: Audit driver and its PBS job
+    summary: runs the screen over every campaign on davinci and writes the tables
+    block: 3
+    parent: S3
+    depends_on: [I2]
+    needs_theory: []
+    needs_hpc: true
+    jobs: [refr_scan, hpc/refractory_audit/submit_refractory_scan.sh]
+  - id: I5
+    title: clamp_cadex_copies, the cluster-wide clamp
+    summary: puts the refractory hold into every CAdEx copy under ~/ANN
+    block: 5
+    parent: S3
+    depends_on: [I1]
+    needs_theory: []
+    needs_hpc: false
+    jobs: []
+  - id: I6
+    title: range_check, the standard prior range calibration
+    summary: corners and interior of each setup's prior on two to four nodes, then the analysis job
+    block: 6
+    parent: S4
+    depends_on: [I8]
+    needs_theory: []
+    needs_hpc: true
+    jobs: [range_check, rc_corners, rc_corners_a, rc_corners_b, rc_interior, rc_interior_a, rc_interior_b, rc_analysis, hpc/range_check/submit_range_check.sh]
+  - id: I4
+    title: LindaColloDUP launch package
+    summary: the neurons-only campaign, launched from a clamped copy of the root pipeline
+    block: 4
+    parent: S5
+    depends_on: [I1, I8]
+    needs_theory: []
+    needs_hpc: true
+    jobs: [lcdup_campaign, hpc/Phenomenological_finalv1/LindaColloDUP/submit_LCDUP.sh]
+  - id: I9
+    title: GiuliaGate launch package
+    summary: Giulia's Full-mode campaign from the root pipeline (the median drive, the seeds, the SIC with g_sic free, the driven astrocyte start)
+    block: 9
+    parent: S5
+    depends_on: [I8]
+    needs_theory: []
+    needs_hpc: true
+    jobs: [gg_campaign, hpc/Phenomenological_finalv1/GiuliaGate/submit_GG.sh]

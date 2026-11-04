@@ -1,2 +1,4 @@
 __pycache__/
 *.pyc
+# roadmap: the cluster-side state of hpc_status.sh
+.roadmap/
