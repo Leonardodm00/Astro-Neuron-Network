@@ -687,6 +687,7 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
 
 ### Block 6: range_check, the standard prior range calibration
 
+- Modules: `hpc/range_check/range_design.py`, `hpc/range_check/range_check.py`, `hpc/range_check/range_analysis.py`, `hpc/range_check/range_plots.py`, `hpc/range_check/submit_range_check.sh`, `hpc/range_check/launch_range_check.sh` (their roles in the item below).
 - Purpose (decided by the author on 2026-10-30, the standard for every
   setup): before a campaign is launched, measure the activity its prior box
   produces, through the setup's own sweep code, at the corners of the box and
@@ -1290,6 +1291,7 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
 
 ### Block 10: the astrocyte's glutamate drive is the median over its links
 
+- Modules: `hpc/Phenomenological_finalv1/ASD_fun_BD_cpp.py` (`Synapse_to_astro`, `astro_median_function`).
 - Purpose (decided by the author on 2026-10-31, section 4): the fix of the
   astrocyte NaN of section 8, option (a) with the median ("I would use the
   median instead"), the default standard of the model ("make the option a
@@ -1406,6 +1408,7 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
 
 ### Block 11: random seeds, per network for the draws made before the run, per run for the dynamics
 
+- Modules: `hpc/Phenomenological_finalv1/HPC_single_run.py`, `hpc/Phenomenological_finalv1/HPC_main_sweep.py`.
 - Purpose (decided by the author on 2026-11-04, section 4). The defect
   (section 8, 2026-11-03): the worker compiled the binary once and called
   `device.seed(seed_run)` before each `device.run(run_args=...)`. Brian2
@@ -1504,6 +1507,7 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
 
 ### Block 12: the slow inward current (SIC), astrocyte to neuron through extrasynaptic NMDA receptors
 
+- Modules: `hpc/Phenomenological_finalv1/ASD_fun_BD_cpp.py`, `hpc/Phenomenological_finalv1/HPC_single_run.py`, `hpc/Phenomenological_finalv1/HPC_main_sweep.py`.
 - Purpose (decided by the author on 2026-11-03 and 2026-11-04, section 4).
   Each astrocyte's gliotransmitter also acts on neurons postsynaptically,
   through extrasynaptic NMDA receptors with the Mg block; the presynaptic
@@ -1663,6 +1667,7 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
 
 ### Block 13: astrocyte initial conditions at the driven state
 
+- Modules: `hpc/Phenomenological_finalv1/ASD_fun_BD_cpp.py`, `hpc/Phenomenological_finalv1/HPC_single_run.py`, `hpc/Phenomenological_finalv1/HPC_main_sweep.py`.
 - Purpose (decided by the author on 2026-11-04, section 4: "set the
   initial conditions in order to not trigger this artefact"). Every
   Full-mode run started each astrocyte from the isolated quiescent state
