@@ -1,8 +1,8 @@
-Run status: running
+Run status: finished
 Repository: Leonardodm00/Astro-Neuron-Network
 Commit under test: e86661b0ffdf2279aeb42166fedc6d762e7d9f12
 Mode: full
 Started (UTC): 2026-11-13 21:46
-Last update (UTC): 2026-11-13 22:35
-Phase: step 10: writing the report
-Note: -
+Last update (UTC): 2026-11-13 22:40
+Phase: delivered
+Note: PASS WITH ISSUES (1 MAJOR, 7 MINOR, 6 NOTE; 241 spec tests: 234 passed, 7 failed)
