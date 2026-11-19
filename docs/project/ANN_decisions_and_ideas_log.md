@@ -6,6 +6,7 @@
 | 2026-11-10 (later) | D-002 added (the user's review of the drafted Methods: three SBI choices and the placeholder feature list kept, the detection-alignment note dropped); a "See also" line added to D-001. Evidence: the user's reply in the same chat, 2026-11-10. |
 | 2026-11-10 (evening) | D-003 added: the Methods drop the "same detection" clause and keep the model's cell numbers. D-002's reading of "Drop this" and D-001's "See also" line marked [corrected]: the user dropped the clause from the section, not only the note. Tag `[SANDBOX]` added. Evidence: the user's request "lets keep these numbers and rewrite these methods", 2026-11-10. |
 | 2026-11-13 | Moved into the repository as `docs/project/ANN_decisions_and_ideas_log.md` (branch `main`), copied unchanged from project knowledge (`claude/SBI_decisions_and_ideas_log.md`, which stays there as a frozen snapshot); from now on only this copy is written. Evidence: the project instructions, DOCUMENT UPKEEP v2 (2026-11-12). |
+| 2026-11-19 | D-004 added: the behaviour inspection of the stopped lcdup15 n01 campaign (activity classes from the sidecars, their thresholds, how the job runs, roadmap block I14). Evidence: the user's answers in the inspection chat, 2026-11-19. |
 
 Tags: `[USER]` the user's decision or statement; `[REPO]` read in the repository; `[KB]` project knowledge or a file the user uploaded; `[SANDBOX]` run here; `[OWN]` own reasoning.
 
@@ -16,6 +17,7 @@ Tags: `[USER]` the user's decision or statement; `[REPO]` read in the repository
 | D-001 | 2026-11-10 | GiuliaGate SBI observation x_o; Methods of the co-culture paper (Main_V1) | The inference targets the control A50 (50:50 N:A) network | active |
 | D-002 | 2026-11-10 | The SBI plan described in the Methods (D-001) | Amortised NPE with a conditional normalising flow; theta with 18 parameters; one x_o for the A50 group; feature list kept as a placeholder; "same detection" sentence kept unqualified **[corrected 2026-11-10: the clause is dropped, D-003]** | active, except the "same detection" item (superseded by D-003) |
 | D-003 | 2026-11-10 | The Methods text; the model geometry it describes | "Same detection" clause dropped from the Methods; model cell numbers kept (108 + 108 on 300 um) | active (reading of "these numbers" to be confirmed) |
+| D-004 | 2026-11-19 | The inspection of lcdup15 n01 and the defaults of `campaign_inspect.py` (SPEC Block 14, roadmap I14) | Activity classes from the sidecars only: silent frac_active < 0.1, high mean rate > 20 Hz, saturated >= 300 Hz (0.9/t_ref); a PBS job on the cpu queue, 48 cores, 1 h; partial topologies excluded; on the roadmap as I14 | active |
 
 ## Decisions
 
@@ -52,6 +54,21 @@ Tags: `[USER]` the user's decision or statement; `[REPO]` read in the repository
 - **Does not decide.** Whether the simulated detection will be aligned with the experimental settings (D-001, "Implies"); whether the virtual-MEA readout is ever re-run on positions scaled by sqrt(2) (the 424 um option; not adopted).
 - **Sources.** `[USER]` chat of 2026-11-10; `[REPO]` main 62afa5b: `GiuliaGate/launch_GG.sh`, `HPC_single_run.py` (`build_topology`); `[KB]` Main_V1.docx, `MEA_Analysis_Reference.md` (52 um detection radius); `[SANDBOX]` `check_density_scaling.py`.
 - **Status.** active; the reading of "these numbers" in (b) is to be confirmed, and an entry superseding (b) follows if the 424 um version was meant.
+
+### D-004 (2026-11-19) -- Behaviour inspection of lcdup15 n01: activity classes from the sidecars
+
+- **Binds.** The first look at the stopped LindaColloDUP campaign `campaign_lcdup15_rho1300_neur_n01`, and the defaults of `campaign_inspect.py` and `submit_campaign_inspect.sh` for any campaign (SPEC Block 14; roadmap block I14).
+- **Decision** `[USER]`, answers of 2026-11-19 to four questions:
+  - views: "Activity classes" only, for all runs, from the sidecars; network bursts on a sample, parameter dependence and example rasters were offered and not chosen;
+  - thresholds: "Range-check + 300 Hz": silent when fewer than 10 % of the neurons exceed 0.1 Hz (frac_active < 0.1), high when the mean rate exceeds 20 Hz, saturated at or above 300 Hz (0.9/t_ref, t_ref = 3 ms);
+  - run: "PBS job, 1,000 runs": cpu queue, 48 cores, 1 h walltime, the index rebuilt when stale, partial topologies excluded; the 1,000-run sample has no use, since no spike-train view was chosen;
+  - roadmap: "Yes, add I14", under S2 (Sweep pipeline).
+- **Statement.** Four classes in this order of precedence, a partition of the classified runs: silent (a < 0.1), saturated (a >= 0.1 and r >= 300 Hz), high (a >= 0.1 and 20 Hz < r < 300 Hz), active (a >= 0.1 and r <= 20 Hz), with a = frac_active and r = mean_FR_Hz of the sidecar, both over the whole 180 s `[REPO]`. The range check uses the same silent and high rules on 2-20 s windows (`hpc/range_check/range_analysis.py`, CFG) `[REPO]`.
+- **Why.** The user stopped the campaign and asked for "a bash code to briefly inspect the behaviour of the simulated cultures" (2026-11-19) `[USER]`.
+- **Implies.** `InspectConfig` holds these thresholds. The job requests 48 cores and 1 h although its work runs in one process `[OWN]`.
+- **Does not decide.** Whether these full-raster classes screen the SBI training set; the reply to the SBI request (`HANDOFF_2026-11-17_reply_to_SBI_LindDUP.md`, section 4.5) advises screening on observation-side statistics instead. Bursts, parameter dependence and rasters (later blocks, if wanted).
+- **Sources.** `[USER]` the inspection chat, 2026-11-19; `[REPO]` main: SPEC Block 14, `hpc/range_check/range_analysis.py`, `HPC_main_sweep.py` at f216b00 (the sidecar's frac_active and mean_FR_Hz).
+- **Status.** active.
 
 ## Ideas
 
