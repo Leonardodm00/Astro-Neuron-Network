@@ -74,6 +74,11 @@ its results, the g_sic axis (38-D registry), the uncapped pairs and Block 13
   `HPC_single_run.py` as far as Block 8 describes them, and the `O_N` lines
   of `ASD_fun_BD_cpp.py` -- not yet the model's equations or the rest of the
   sweep loop (their entries are being written with the author, 2026-10-31)
+- the behaviour inspection of a finished campaign (Block 14):
+  `hpc/Phenomenological_finalv1/campaign_inspect.py`,
+  `campaign_inspect_plots.py`, `submit_campaign_inspect.sh` and
+  `smoke_test_campaign_inspect.py` -- not `aggregate_sweep.py`, whose
+  index it reads
 
 Everything else in the repository is not specified yet and is out of scope
 for the tester.
@@ -1790,6 +1795,125 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   no jitter, phases on a cycle, refractory start) is inferred, proposed by
   Claude and not yet reviewed by the author.
 
+### Block 14: campaign_inspect, the behaviour of a finished campaign (activity classes)
+
+- Modules: `hpc/Phenomenological_finalv1/campaign_inspect.py` (configuration,
+  loading, analysis, report text; CLI), `hpc/Phenomenological_finalv1/campaign_inspect_plots.py`
+  (figures only), `hpc/Phenomenological_finalv1/submit_campaign_inspect.sh`
+  (the PBS job: refresh the index, then inspect),
+  `hpc/Phenomenological_finalv1/smoke_test_campaign_inspect.py`.
+- Purpose (decided by the author on 2026-11-19, D-004): a brief look at what
+  the simulated cultures of a finished or stopped campaign do, from the
+  per-run sidecars only (no spike train is opened): the distribution of the
+  mean rate and the shares of four activity classes. First use: lcdup15 n01
+  after its arrays were stopped (2026-11-19). Bursts, parameter dependence
+  and example rasters were offered and not chosen.
+- Notation. Campaign C; task t = a folder `sweep_*` of C, with
+  k_t = `_resolved_n_workers` x `n_params_per_worker` (its `job_args.json`),
+  the number of simulations the sweep runs on each topology
+  (`HPC_main_sweep.main`, f216b00 lines 1643-1866); topology = a folder
+  `topo_<NNNNN>` of a task, topo_idx = NNNNN; run n = a sidecar
+  `iter_*.json`, one per simulation that finished. For run n, with N_n
+  neurons and T_n seconds (the run's `Nn` and simtime):
+  - K_n = `n_neuronal_spikes`, the finite neuron spike times in [0, T_n];
+  - rbar_n = `mean_FR_Hz` = K_n / (N_n T_n) [Hz], the population mean rate;
+  - a_n = `frac_active` = (1/N_n) sum_i 1[K_(n,i) / T_n > 0.1 Hz], the share
+    of neurons whose own rate exceeds 0.1 Hz (K_(n,i): spikes of neuron i).
+  All three are written by the sweep worker into the sidecar (f216b00 lines
+  1258-1261 and 1288-1293) and copied by `aggregate_sweep.py --write-index`
+  into `campaign_index/summary.csv`. They cover the whole run, [0, T_n]: the
+  range check (Block 6) applies the same silent and high rules on
+  [t_skip, T] with t_skip = 2 s, so here the start-up transient is included.
+- Topology states, from the folder tree: complete when `topology_meta.json`
+  exists and (sidecars + non-empty lines of `_failures.jsonl`) >= k_t;
+  partial when it exists and the sum is < k_t; unstarted when it is missing
+  (the sweep writes it before dispatching the topology's runs, line 1782, so
+  an unstarted topology holds no sidecar); unknown when the task's
+  `job_args.json` lacks the two keys (completeness not judged: kept, and
+  reported). Kept runs: the index rows of complete and unknown topologies.
+  Partial topologies are excluded: their runs are the ones that finished
+  first, and run time grows with activity (handoff 2026-11-17, section 2.2).
+- Classes (D-004; thresholds in `InspectConfig`): a_min = 0.1,
+  r_high = 20 Hz, r_sat = 300 Hz = 0.9 / t_ref (t_ref = 3 ms, the rate
+  ceiling 1/t_ref = 333.3 Hz). For each kept run with finite rbar_n and a_n,
+  in this order of precedence:
+  - silent: a_n < a_min;
+  - saturated: a_n >= a_min and rbar_n >= r_sat;
+  - high: a_n >= a_min and r_high < rbar_n < r_sat;
+  - active: a_n >= a_min and rbar_n <= r_high.
+  The four form a partition of the kept runs with finite values. Reported
+  beside them, not as classes: no spike (K_n = 0, a subset of silent) and
+  silent with rbar_n > r_high (a few neurons firing fast). Rows with a
+  missing value are counted and left out.
+- Statistics over the classified runs: count and share of each class
+  (share = count / number classified); quantiles of rbar and of a at
+  p in {0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99} (`numpy.quantile`, default
+  linear method); histogram of log10(rbar / Hz) over the runs with
+  rbar > 0, bins of 0.05 decade on [-4.5, 2.7] (runs outside the range and
+  the zero-rate runs counted apart); histogram of a, 50 equal bins on [0, 1]
+  (`numpy.histogram`: the last bin is closed, so a = 1 falls in it); the
+  largest rbar and the number of runs with rbar above 1/t_ref (a check of
+  the refractory clamp: none is possible with it).
+- Index consistency: for every complete topology, the number of index rows
+  must equal its number of sidecars; any difference (an index built before
+  the last sidecars were written, or a sidecar removed) is reported as a
+  stale index with the number of topologies concerned, never silently.
+- Inputs: `<C>/campaign_index/summary.csv` (columns used: task, topo_idx,
+  iter_idx, mean_FR_Hz, frac_active, n_neuronal_spikes); the folder tree
+  `<C>/sweep_*/job_args.json`, the listings of `topo_*/`, the presence of
+  `topology_meta.json` and the line count of `_failures.jsonl`.
+- Outputs, in `--out` (default `<C>/campaign_inspect_<UTC>/`, inside the
+  campaign folder, which git ignores): `inspect_report.txt` (also printed),
+  `inspect_summary.json` (every number of the report, the thresholds, the
+  inputs' paths and modification times), `fig_rate_hist.png`,
+  `fig_frac_active_hist.png`, `fig_class_shares.png`.
+- Public API (`campaign_inspect.py`): `InspectConfig` (frozen dataclass:
+  a_min 0.1, r_high_hz 20.0, r_sat_hz 300.0, t_ref_s 0.003, quantiles,
+  log-rate bins, frac bins); `scan_tree(campaign) -> dict`;
+  `load_index(campaign) -> dict` of numpy arrays; `classify(rate_hz,
+  frac_active, cfg) -> int8 array` (codes 0 silent, 1 active, 2 high,
+  3 saturated); `summarize(index, tree, cfg) -> dict`;
+  `format_report(summary) -> str`; `main(argv) -> int`.
+  `campaign_inspect_plots.py`: `write_all(summary, out_dir) -> list of
+  paths`; it plots the counts the summary holds and computes nothing.
+- Job: from the root folder, `qsub -q cpu -v CAMPAIGN=<campaign folder>
+  submit_campaign_inspect.sh`; `#PBS -l select=1:ncpus=48`, walltime 1 h
+  (the author's choice, D-004; the work is one process). REINDEX=auto
+  (default) rebuilds `campaign_index/` with `aggregate_sweep.py
+  --write-index` when `summary.csv` is missing, when a `sweep_*/manifest.json`
+  is newer than it, or when the campaign has no manifest; REINDEX=1 always,
+  REINDEX=0 never; its output goes to `<out>/aggregate_index.log`, exit 3 if
+  it fails. DRYRUN=1 prints the plan and runs nothing. SKIP_CONDA=1
+  (tests outside davinci) uses `python3` on PATH. The interpreter comes from
+  `CONDA_PREFIX` (as Block 6's job). Roadmap marker: stage I14, one task.
+- Library calls relied on: `pandas.read_csv`, `numpy.quantile`,
+  `numpy.histogram`, matplotlib (Agg backend).
+- Custom code: the topology-state scan (directory listings and counts; no
+  library knows this layout).
+- Test oracles (`smoke_test_campaign_inspect.py`): a synthetic campaign
+  (two tasks with k = 4 and k = 2; complete, partial and unstarted
+  topologies; a failure record; runs on every class boundary: a = 0.1
+  exactly is not silent, rbar = 20 Hz exactly is active, 300 Hz exactly is
+  saturated, 299.999 Hz is high; a zero-spike run; a silent run above
+  20 Hz), indexed by the real `aggregate_sweep.py --write-index`. Expected:
+  the class counts known by construction (exact integers); the quantiles
+  equal `numpy.quantile` of the kept values (same function on the same
+  float64 values, so exact); partial and unstarted topologies excluded; a
+  stale index detected after one sidecar is added; JSON, report and three
+  figures written; the job script with SKIP_CONDA=1 under DRYRUN=1 and for
+  real, and `bash -n`.
+- Data flow: consumes the sweep tree of `HPC_main_sweep.py` and
+  `aggregate_sweep.py --write-index` (neither specified here); feeds the
+  author's reading and the SBI side's planning.
+- Confirmed: yes, 2026-11-19 (the author's answers: activity classes only;
+  the thresholds; a PBS job on the cpu queue, 48 cores, 1 h; on the roadmap
+  as I14).
+- Status: smoke-tested 2026-11-19 [SANDBOX: Python 3.13.18, numpy 2.5.3,
+  pandas 3.0.5, matplotlib 3.11.2]: `smoke_test_campaign_inspect.py` 7 pass,
+  1 skip (convergence: not a discretisation). Skipped here: davinci (the
+  brian_final environment, `module load python`, qsub, the roadmap marker's
+  push, the read time of about 4.4e5 sidecars).
+
 ### 5.1 Projects and where their model runs
 
 The tester can check only what is in the repository. The cluster folders
@@ -1837,6 +1961,8 @@ campaign's `job_args.json` `lib_dir`).
 | `python3 smoke_test_sic.py` (`--no-sim` skips the compiled runs) | Block 12 (45 checks) | the root folder; Brian2; S10 and S11 also a C++ compiler, S3 and S11 git | about 2-3 min on two cores; about 40 s with `--no-sim` |
 | `python3 sic_demo.py --out DIR` then `python3 sic_demo_plots.py DIR` | Block 12: SIC on/off twins (regimes nominal, oscillating, quiet_strong, repeated) and their figures | the root folder, Brian2 and a C++ compiler | about 2.5 min per 40 s run on one core (sandbox): about 12-15 min for the four regimes (eight runs) with `--jobs 2` |
 | `python3 smoke_test_astro_ic.py` (`--no-sim` skips A7) | Block 13 (32 checks) | the root folder; Brian2; A7 also a C++ compiler | about 15 s with `--no-sim`; about 2-3 min with A7 |
+| `python3 smoke_test_campaign_inspect.py` | Block 14 | the root folder; numpy, pandas, matplotlib | seconds |
+| `qsub -q cpu -v CAMPAIGN=<campaign folder> submit_campaign_inspect.sh` (first with `DRYRUN=1` given to `bash`) | Block 14 on a campaign: index refresh when stale, then the inspection | the root folder of the clone on davinci | minutes to tens of minutes for about 4.4e5 sidecars (not timed on davinci) |
 | `python3 specs/roadmap/roadmap.py status --yaml specs/roadmap/ANN.yaml` | the roadmap (stages coloured from git, SPEC, reports, markers) | a clone with origin | seconds |
 
 ## 7. Not executable in the sandbox
