@@ -188,3 +188,12 @@ implementation:
     needs_theory: []
     needs_hpc: true
     jobs: [gg_campaign, hpc/Phenomenological_finalv1/GiuliaGate/submit_GG.sh]
+  - id: I14
+    title: "Campaign behaviour inspection"
+    summary: "A brief behaviour report of a finished or stopped campaign from its per-run sidecars: the mean-rate distribution and the shares of silent, active, high and saturated runs (D-004); first run on lcdup15 n01."
+    block: 14
+    parent: S2
+    depends_on: []
+    needs_theory: []
+    needs_hpc: true
+    jobs: [camp_inspect, "hpc/Phenomenological_finalv1/submit_campaign_inspect.sh"]
