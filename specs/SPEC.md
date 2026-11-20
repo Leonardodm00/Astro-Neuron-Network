@@ -1825,7 +1825,8 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   range check (Block 6) applies the same silent and high rules on
   [t_skip, T] with t_skip = 2 s, so here the start-up transient is included.
 - Topology states, from the folder tree: complete when `topology_meta.json`
-  exists and (sidecars + non-empty lines of `_failures.jsonl`) >= k_t;
+  exists and (sidecars + non-empty lines of `_failures.jsonl`) >= k_t
+  **[corrected 2026-11-20: sidecars >= k_t, see below]**;
   partial when it exists and the sum is < k_t; unstarted when it is missing
   (the sweep writes it before dispatching the topology's runs, line 1782, so
   an unstarted topology holds no sidecar); unknown when the task's
@@ -1833,6 +1834,27 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   reported). Kept runs: the index rows of complete and unknown topologies.
   Partial topologies are excluded: their runs are the ones that finished
   first, and run time grows with activity (handoff 2026-11-17, section 2.2).
+  **[corrected 2026-11-20, D-005 [orchestrator]]** Complete means that all
+  k_t runs left a sidecar (sidecars >= k_t), partial that some did not;
+  failure records no longer count toward completeness and are reported by
+  topology state. Evidence, lcdup15 n01 (the inspection of 2026-11-20:
+  `aggregate_index.log` and `inspect_summary.json` of the author's zip
+  [CLUSTER]): its 1,381 failure records lie in 12 cfd tasks, none in the
+  other 177. In tasks 0013, 0028 and 0036, sidecars + records make a whole
+  number of topologies (31, 32 and 31 x 192), and their records
+  (41 + 124 + 76) add up to the 241 the report found in "complete"
+  topologies (335 sidecars beside them if one topology per task holds
+  them); in the other nine, the last topology lacks 1 to 5 records, and
+  its sidecars add up, over the nine, to the 566 rows of partial
+  topologies [OWN, arithmetic on the two files]. A run whose `device.run`
+  raises leaves a record instead of a sidecar (the per-run
+  `except Exception`, f216b00 lines 1113-1212). What made these runs raise
+  is not established (the records' error messages are not inspected): if
+  it was the kill or a resource failure of the slow runs, the topology's
+  sidecars are a selected subset of its theta, as in a partial topology;
+  only if it was a property of theta (the non-finite spike check) are they
+  not. So completeness counts sidecars only. The cost, in the last case:
+  about 335 usable runs dropped in n01 (0.07 % of those kept).
 - Classes (D-004; thresholds in `InspectConfig`): a_min = 0.1,
   r_high = 20 Hz, r_sat = 300 Hz = 0.9 / t_ref (t_ref = 3 ms, the rate
   ceiling 1/t_ref = 333.3 Hz). For each kept run with finite rbar_n and a_n,
@@ -1919,6 +1941,8 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   `module` and conda whose activation exports BUILD and HOST and overwrites
   the job's former variable names: the index must still be rebuilt and the
   expected class counts written (the first version fails this check).
+  A topology whose runs left 2 sidecars and 2 failure records (k = 4) must
+  be partial (the first rule fails this check).
 - Data flow: consumes the sweep tree of `HPC_main_sweep.py` and
   `aggregate_sweep.py --write-index` (neither specified here); feeds the
   author's reading and the SBI side's planning.
@@ -1934,6 +1958,10 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   as expected; job 2100916 failed as described under "Job" (brian_final:
   numpy 2.5.2, pandas 3.0.5, matplotlib 3.11.1). Fixed 2026-11-20: 8 pass,
   1 skip [SANDBOX]; the new activation check fails on the first version.
+  Job of 2026-11-20 [CLUSTER, the author's zip of
+  `campaign_inspect_20261120T131116Z/`]: index of 476,005 runs rebuilt in
+  about 11.5 min, report as specified; its counts showed the flaw corrected
+  under "Topology states" (D-005), after which 8 pass, 1 skip [SANDBOX].
 
 ### 5.1 Projects and where their model runs
 

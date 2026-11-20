@@ -21,9 +21,9 @@ exceeds 0.1 Hz. Classes, in this order of precedence (InspectConfig):
     saturated  a_n >= a_min and rbar_n >= r_sat     r_sat  = 300 Hz = 0.9/t_ref
     high       a_n >= a_min and r_high < rbar_n < r_sat
     active     a_n >= a_min and rbar_n <= r_high    r_high = 20 Hz
-Runs of partial topologies (fewer sidecars + failures than the sweep's
-simulations per topology) are left out; a topology without
-topology_meta.json holds no run.
+Runs of partial topologies (fewer sidecars than the sweep's simulations per
+topology; failure records do not count, SPEC Block 14 and decision D-005)
+are left out; a topology without topology_meta.json holds no run.
 """
 from __future__ import annotations
 
@@ -74,7 +74,12 @@ def scan_tree(campaign: Path) -> Dict:
     Returns {task folder name: {"k": int or None, "topos": {topo_idx:
     {"state", "n_json", "n_fail"}}}}. k = _resolved_n_workers x
     n_params_per_worker from the task's job_args.json (None when absent);
-    state is "complete", "partial", "unstarted" or "unknown" (SPEC Block 14).
+    state is "complete" (all k runs left a sidecar), "partial", "unstarted"
+    or "unknown" (SPEC Block 14). Failure records do not count toward
+    completeness: a count cannot tell a run cut short or starved from a
+    run that theta itself made fail, and in lcdup15 n01 (2026-11-20) the
+    topologies holding the records of three tasks reached k by sidecars +
+    records (decision D-005).
     """
     tasks = {}
     for td in sorted(p for p in Path(campaign).glob("sweep_*") if p.is_dir()):
@@ -98,7 +103,7 @@ def scan_tree(campaign: Path) -> Dict:
                 state = "unstarted"
             elif k is None:
                 state = "unknown"
-            elif n_json + n_fail >= k:
+            elif n_json >= k:
                 state = "complete"
             else:
                 state = "partial"
@@ -154,14 +159,16 @@ def summarize(index: Dict[str, np.ndarray], tree: Dict, cfg: InspectConfig) -> D
     n_rows = int(index["task"].shape[0])
     state_of, n_json_of = {}, {}
     topo_states = {s: 0 for s in ("complete", "partial", "unstarted", "unknown")}
-    n_fail_kept = 0
+    fail_records = {s: 0 for s in topo_states}       # failure lines, by topology state
+    fail_topos = {s: 0 for s in topo_states}         # topologies with any failure line
     for task, rec in tree.items():
         for ti, t in rec["topos"].items():
             state_of[(task, ti)] = t["state"]
             n_json_of[(task, ti)] = t["n_json"]
             topo_states[t["state"]] += 1
-            if t["state"] in KEPT_STATES:
-                n_fail_kept += t["n_fail"]
+            fail_records[t["state"]] += t["n_fail"]
+            fail_topos[t["state"]] += int(t["n_fail"] > 0)
+    n_fail_kept = sum(fail_records[s] for s in KEPT_STATES)
 
     kept = np.zeros(n_rows, dtype=bool)
     rows_by_state: Dict[str, int] = {}
@@ -214,6 +221,8 @@ def summarize(index: Dict[str, np.ndarray], tree: Dict, cfg: InspectConfig) -> D
         "runs_missing_values": int((~fin).sum()),
         "runs_classified": n_cls,
         "failures_in_kept_topologies": n_fail_kept,
+        "failure_records_by_topology_state": fail_records,
+        "topologies_with_failures_by_state": fail_topos,
         "index_stale": stale,
         "index_mismatched_topologies": len(mismatched),
         "index_mismatch_examples": mismatched[:5],
@@ -247,9 +256,12 @@ def format_report(s: Dict) -> str:
             f"{k} {v}" for k, v in s["topologies"].items()),
         f"index rows {s['index_rows']} by topology state: " + ", ".join(
             f"{k} {v}" for k, v in sorted(s["index_rows_by_topology_state"].items())),
-        f"runs kept {s['runs_kept']} | with missing values {s['runs_missing_values']} "
-        f"| classified {s['runs_classified']} | failures in kept topologies "
-        f"{s['failures_in_kept_topologies']}",
+        f"runs kept {s['runs_kept']} (topologies where all runs left a sidecar) "
+        f"| with missing values {s['runs_missing_values']} | classified {s['runs_classified']}",
+        "failure records by topology state: " + (", ".join(
+            f"{k} {v}" for k, v in s["failure_records_by_topology_state"].items() if v) or "none")
+        + " | topologies holding them: " + (", ".join(
+            f"{k} {v}" for k, v in s["topologies_with_failures_by_state"].items() if v) or "none"),
     ]
     if s["tasks_without_k"]:
         out.append(f"WARNING: completeness not judged for {len(s['tasks_without_k'])} "

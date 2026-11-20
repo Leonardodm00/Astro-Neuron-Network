@@ -60,18 +60,22 @@ NN, T_SIM = 159, 180.0
 DESIGN = [
     ("sweep_cfd_task0000", 4, [
         (0, "complete", [(0.0, 0.0), (20.0, 0.1), (300.0, 1.0), (299.999, 1.0)], 0),
-        (1, "complete", [(25.0, 0.05), (20.0001, 0.5), (0.01, 0.0999)], 1),
+        (1, "complete", [(25.0, 0.05), (20.0001, 0.5), (0.01, 0.0999), (1.0, 0.6)], 0),
         (2, "partial", [(310.0, 1.0), (310.0, 1.0)], 0),
         (3, "unstarted", [], 0),
+        # cut by a kill: 2 sidecars + 2 failure records reach k = 4 by count,
+        # yet only 2 runs finished, so the topology is partial (lcdup15 n01:
+        # 3 such topologies, 2026-11-20)
+        (4, "cut", [(310.0, 1.0), (310.0, 1.0)], 2),
     ]),
     ("sweep_cpu_task0000", 2, [
         (0, "complete", [(5.0, 0.9), (0.5, 0.3)], 0),
     ]),
 ]
 # Expected for the kept runs (complete topologies), by construction:
-KEPT_RATES = [0.0, 20.0, 300.0, 299.999, 25.0, 20.0001, 0.01, 5.0, 0.5]
-KEPT_FRACS = [0.0, 0.1, 1.0, 1.0, 0.05, 0.5, 0.0999, 0.9, 0.3]
-EXPECTED_CLASSES = {"silent": 3, "active": 3, "high": 2, "saturated": 1}
+KEPT_RATES = [0.0, 20.0, 300.0, 299.999, 25.0, 20.0001, 0.01, 1.0, 5.0, 0.5]
+KEPT_FRACS = [0.0, 0.1, 1.0, 1.0, 0.05, 0.5, 0.0999, 0.6, 0.9, 0.3]
+EXPECTED_CLASSES = {"silent": 3, "active": 4, "high": 2, "saturated": 1}
 
 
 def build_campaign(root: Path, design=DESIGN, manifest_age_s: float = 1000.0) -> Path:
@@ -132,15 +136,20 @@ def test_known_answer():
         camp = build_campaign(Path(tmp))
         index_campaign(camp)
         s = inspect(camp)
+        cut = ci.scan_tree(camp)["sweep_cfd_task0000"]["topos"][4]
+    # the topology cut by a kill reaches k only with its failure records
+    assert cut == {"state": "partial", "n_json": 2, "n_fail": 2}, cut
     got = {c: s["classes"][c]["n"] for c in ci.CLASS_NAMES}
     assert got == EXPECTED_CLASSES, got
-    assert s["index_rows"] == 11, s["index_rows"]          # 9 kept + 2 of the partial topology
-    assert s["runs_kept"] == 9 and s["runs_classified"] == 9, (s["runs_kept"], s["runs_classified"])
-    assert s["index_rows_by_topology_state"] == {"complete": 9, "partial": 2}, \
+    assert s["index_rows"] == 14, s["index_rows"]          # 10 kept + 2 + 2 of the partial ones
+    assert s["runs_kept"] == 10 and s["runs_classified"] == 10, (s["runs_kept"], s["runs_classified"])
+    assert s["index_rows_by_topology_state"] == {"complete": 10, "partial": 4}, \
         s["index_rows_by_topology_state"]
-    assert s["topologies"] == {"complete": 3, "partial": 1, "unstarted": 1, "unknown": 0}, \
+    assert s["topologies"] == {"complete": 3, "partial": 2, "unstarted": 1, "unknown": 0}, \
         s["topologies"]
-    assert s["failures_in_kept_topologies"] == 1, s["failures_in_kept_topologies"]
+    assert s["failures_in_kept_topologies"] == 0, s["failures_in_kept_topologies"]
+    assert s["failure_records_by_topology_state"]["partial"] == 2, s["failure_records_by_topology_state"]
+    assert s["topologies_with_failures_by_state"]["partial"] == 1, s["topologies_with_failures_by_state"]
     assert s["no_spike"] == 1 and s["silent_above_r_high"] == 1, (s["no_spike"], s["silent_above_r_high"])
     assert s["no_spike_not_silent"] == 0 and s["runs_above_ceiling"] == 0
     assert s["index_stale"] is False, s["index_mismatch_examples"]
