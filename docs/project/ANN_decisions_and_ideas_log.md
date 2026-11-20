@@ -7,8 +7,9 @@
 | 2026-11-10 (evening) | D-003 added: the Methods drop the "same detection" clause and keep the model's cell numbers. D-002's reading of "Drop this" and D-001's "See also" line marked [corrected]: the user dropped the clause from the section, not only the note. Tag `[SANDBOX]` added. Evidence: the user's request "lets keep these numbers and rewrite these methods", 2026-11-10. |
 | 2026-11-13 | Moved into the repository as `docs/project/ANN_decisions_and_ideas_log.md` (branch `main`), copied unchanged from project knowledge (`claude/SBI_decisions_and_ideas_log.md`, which stays there as a frozen snapshot); from now on only this copy is written. Evidence: the project instructions, DOCUMENT UPKEEP v2 (2026-11-12). |
 | 2026-11-19 | D-004 added: the behaviour inspection of the stopped lcdup15 n01 campaign (activity classes from the sidecars, their thresholds, how the job runs, roadmap block I14). Evidence: the user's answers in the inspection chat, 2026-11-19. |
+| 2026-11-20 | D-005 added [orchestrator]: a topology counts as complete only when all its runs left a sidecar; failure records no longer count. Tag `[CLUSTER]` added. Evidence: the inspection of lcdup15 n01 of 2026-11-20 (`inspect_summary.json` and `aggregate_index.log` of the user's zip). |
 
-Tags: `[USER]` the user's decision or statement; `[REPO]` read in the repository; `[KB]` project knowledge or a file the user uploaded; `[SANDBOX]` run here; `[OWN]` own reasoning.
+Tags: `[USER]` the user's decision or statement; `[REPO]` read in the repository; `[KB]` project knowledge or a file the user uploaded; `[SANDBOX]` run here; `[CLUSTER]` read in files the user brought back from davinci (added 2026-11-20); `[OWN]` own reasoning.
 
 ## Index
 
@@ -18,6 +19,7 @@ Tags: `[USER]` the user's decision or statement; `[REPO]` read in the repository
 | D-002 | 2026-11-10 | The SBI plan described in the Methods (D-001) | Amortised NPE with a conditional normalising flow; theta with 18 parameters; one x_o for the A50 group; feature list kept as a placeholder; "same detection" sentence kept unqualified **[corrected 2026-11-10: the clause is dropped, D-003]** | active, except the "same detection" item (superseded by D-003) |
 | D-003 | 2026-11-10 | The Methods text; the model geometry it describes | "Same detection" clause dropped from the Methods; model cell numbers kept (108 + 108 on 300 um) | active (reading of "these numbers" to be confirmed) |
 | D-004 | 2026-11-19 | The inspection of lcdup15 n01 and the defaults of `campaign_inspect.py` (SPEC Block 14, roadmap I14) | Activity classes from the sidecars only: silent frac_active < 0.1, high mean rate > 20 Hz, saturated >= 300 Hz (0.9/t_ref); a PBS job on the cpu queue, 48 cores, 1 h; partial topologies excluded; on the roadmap as I14 | active |
+| D-005 | 2026-11-20 | The topology states of `campaign_inspect.py` (SPEC Block 14); the partial-topology rule and audit of the reply to the SBI request | [orchestrator] A topology is complete only when all its runs left a sidecar; failure records no longer count (fixes what D-004's "partial topologies excluded" means) | active; to revisit when the failure records' cause is read |
 
 ## Decisions
 
@@ -69,6 +71,16 @@ Tags: `[USER]` the user's decision or statement; `[REPO]` read in the repository
 - **Does not decide.** Whether these full-raster classes screen the SBI training set; the reply to the SBI request (`HANDOFF_2026-11-17_reply_to_SBI_LindDUP.md`, section 4.5) advises screening on observation-side statistics instead. Bursts, parameter dependence and rasters (later blocks, if wanted).
 - **Sources.** `[USER]` the inspection chat, 2026-11-19; `[REPO]` main: SPEC Block 14, `hpc/range_check/range_analysis.py`, `HPC_main_sweep.py` at f216b00 (the sidecar's frac_active and mean_FR_Hz).
 - **Status.** active.
+
+### D-005 (2026-11-20) -- A topology is complete only when all its runs left a sidecar [orchestrator]
+
+- **Binds.** The topology states of `campaign_inspect.py` (SPEC Block 14, roadmap I14) and the partial-topology rule of the reply to the SBI request (`HANDOFF_2026-11-17_reply_to_SBI_LindDUP.md`, sections 0, 2.2 and 4.5, and its audit command). It fixes what "partial topologies excluded" in D-004 means; it does not change D-004.
+- **Decision** [orchestrator], under the coding directive on issues: a topology is complete when every one of its k_t runs left a sidecar `iter_*.json` (sidecars >= k_t); a line in `_failures.jsonl` no longer counts toward completeness. Before (SPEC Block 14, 2026-11-19, the orchestrator's rule, not put to the user): sidecars + failure records >= k_t.
+- **Why.** The inspection of lcdup15 n01 on 2026-11-20 `[CLUSTER: inspect_summary.json and aggregate_index.log of campaign_inspect_20261120T131116Z]`: 1,381 failure records, all in 12 cfd tasks (0001, 0011, 0013, 0016, 0017, 0018, 0022, 0023, 0028, 0029, 0036, 0038), none in the other 177; the report found 241 of them in topologies the first rule called complete. In tasks 0013, 0028 and 0036, sidecars + records make 31, 32 and 31 whole topologies of 192 runs, and their records (41 + 124 + 76) are exactly those 241; in the other nine, the last topology lacks 1 to 5 records, and its sidecars add up, over the nine, to the 566 rows the report placed in partial topologies `[OWN, arithmetic on the two files]`. A run whose `device.run` raises leaves a record instead of a sidecar (the per-run `except Exception`, `HPC_main_sweep.py` at f216b00, lines 1113-1212) `[REPO]`. What made these runs raise is not established: the kill, a resource failure of the slow runs, or theta itself (the non-finite spike check). In the first two cases the sidecars beside the records are a selected subset of the topology's theta, the first finishers or the runs that were not the heaviest, which is why partial topologies are excluded `[OWN]`.
+- **Implies.** On n01, the inspection's kept runs fall by the sidecars of the topologies holding the 241 records (335 if one topology per task holds them, 0.07 % of 475,439) and its partial topologies rise from 22 to 25; no class share can move by more than 0.07 percentage points `[OWN]`. The report gives the failure records, and the topologies holding them, by topology state. The SBI side drops these topologies too (handoff 2.2).
+- **Does not decide.** The cause of the records (their `error_type`, `error_msg` and `timestamp` settle it); whether these runs are re-simulated. If theta is the cause, the first rule was right for those topologies and this entry is revisited.
+- **Sources.** `[CLUSTER]` the two files above; `[REPO]` `HPC_main_sweep.py` at f216b00; `[SANDBOX]` `smoke_test_campaign_inspect.py`: 8 pass, 1 skip, its new check failing on the first rule; the corrected audit of the handoff run on a fake campaign.
+- **Status.** active; to revisit when the records' cause is read.
 
 ## Ideas
 

@@ -3,8 +3,9 @@
 | Date | Change |
 |---|---|
 | 2026-11-17 | Created in reply to `REQUEST_2026-11-17_from_SBI_LindDUP_to_ANN.md` (SBI results-commentary chat, via the user). Built from the repository at `main` 1789e40 and at f216b00 (the launched code), sandbox runs of that code, project knowledge and past chats. Nothing was run on davinci for it. |
+| 2026-11-20 | Sections 0, 2.2 and 4.5 corrected (decision D-005 of the ANN log): a topology counts only when all its runs left a sidecar; failure records no longer complete it. Evidence: the inspection of n01 on 2026-11-20 (ANN SPEC Block 14), where the records of three tasks sat in topologies that reached k by count. The audit counts sidecars only and lists each partial topology's counts ([RUN] on a fake campaign). "At most one partial topology per cut task" is not borne out (22 found where 16 tasks stopped short). |
 
-Basis tags, in the request's terms: `[REPO]` read in the repository; `[RUN]` run here on the repository's code at the stated commit, or on files built in the campaign's layout (sandbox: Python 3.13.18, numpy 2.5.3, brian2 2.11.0; davinci's environment not checked); `[KB]` project-knowledge snapshot; `[PUBMED-FT]` PubMed, full text read; `[OWN]` own inference; **NOT KNOWN** where no source has it.
+Basis tags, in the request's terms: `[REPO]` read in the repository; `[RUN]` run here on the repository's code at the stated commit, or on files built in the campaign's layout (sandbox: Python 3.13.18, numpy 2.5.3, brian2 2.11.0; davinci's environment not checked); `[KB]` project-knowledge snapshot; `[PUBMED-FT]` PubMed, full text read; `[OWN]` own inference; `[CLUSTER]` read in files the author brought back from davinci (added 2026-11-20); **NOT KNOWN** where no source has it.
 
 Paths are relative to the campaign's launch folder on davinci, `~/ANN/Astro-Neuron-Network/hpc/Phenomenological_finalv1/LindaColloDUP/`; run the commands there after `conda activate brian_final` `[REPO]`. Line numbers refer to f216b00's unpatched files.
 
@@ -22,7 +23,7 @@ The 192 or 48 theta of a topology are independent prior draws (lines 1789-1791).
 Consequences for the SBI side `[OWN]`:
 - conn_prob has one value per topology. The number of distinct values is the number of topologies (printed by the audit in 2.2), not the number of simulations.
 - Split the training, validation and calibration (SBC, coverage) sets by topology folder (`sweep_*/topo_*`). A per-simulation split puts sibling runs, with the same network and the same start of the noise stream, on both sides.
-- A topology cut short by a kill holds a biased subset of its theta (2.2).
+- A topology cut short by a kill holds a biased subset of its theta (2.2). **[corrected 2026-11-20]** So may a topology in which a run left a failure record instead of a sidecar: drop every topology whose runs did not all leave a sidecar (2.2, "Failure records").
 
 ## 1. Well-to-donor map (item 1): NOT KNOWN
 
@@ -79,9 +80,11 @@ So a kill can leave:
 | topology folder without `topology_meta.json` | steps 1-4 | no simulation; `topology.npz` missing, truncated or complete |
 | `iter_*.npz` without its `.json` | step 5, or between 5 and 6 | a truncated npz, or a complete orphan |
 | `iter_*.json.tmp` | step 6 | the npz beside it is complete |
-| partial topology: sidecars + failures fewer than 192 or 48 | steps 5-6 | only the runs that finished first. Run time grows with activity, so they lean toward quiet theta `[OWN]` |
+| partial topology: sidecars + failures fewer than 192 or 48 **[corrected 2026-11-20: sidecars fewer than 192 or 48; failure records do not count, see "Failure records" below]** | steps 5-6 | only the runs that finished first. Run time grows with activity, so they lean toward quiet theta `[OWN]` |
 
-A task runs its topologies one after another, so each task cut by a kill (this qdel, or an earlier 24 h walltime) has at most one partial topology `[REPO]`.
+A task runs its topologies one after another, so each task cut by a kill (this qdel, or an earlier 24 h walltime) has at most one partial topology `[REPO]`. **[corrected 2026-11-20]** Not borne out on n01: the inspection of 2026-11-20 (ANN SPEC Block 14) counted 22 topologies with sidecars + failure records below k, where 16 tasks stopped short of 32 topologies' worth of runs `[CLUSTER, the author's zip: inspect_summary.json, aggregate_index.log]`. Which folders make the difference is not known yet; the corrected audit below lists every partial topology with its counts.
+
+**Failure records** **[added 2026-11-20, decision D-005 of the ANN log]**. A run whose `device.run` raises leaves a line in `_failures.jsonl` instead of a sidecar (the per-run `except Exception`, lines 1113-1212) `[REPO]`. On n01 the 1,381 records lie in 12 cfd tasks, none in the other 177 `[CLUSTER, aggregate_index.log]`. In three of them (0013, 0028, 0036), sidecars + records make a whole number of topologies, and their 241 records are exactly those the inspection found in topologies the first rule called complete `[OWN, arithmetic on the two files]`. What made these runs raise is not established: the kill, a resource failure of the slow runs, or theta itself (the non-finite spike check). In the first two cases the sidecars beside the records are a selected subset of the topology's theta, the first finishers or the runs that were not the heaviest; only in the third are they not `[OWN]`. Hence the rule: a topology counts only when every one of its 192 or 48 runs left a sidecar. If theta was the cause, this drops about 335 usable runs of n01 (0.07 %) `[OWN]`. The records' `error_type`, `error_msg` and `timestamp` settle the cause.
 
 How the tools treat these files:
 - **`aggregate_sweep.py`**, with `--target` or `--write-index` `[REPO; RUN, f216b00's copy on the fake campaign of the audit below: it indexed the 7 simulations with sidecars, including the 2 of the partial topology, and skipped the orphan npz, the .json.tmp and the topology without metadata]`:
@@ -97,16 +100,16 @@ How the tools treat these files:
 Rules `[OWN]`:
 - A simulation is usable if and only if its `iter_*.json` exists.
 - A topology is usable if and only if its `topology_meta.json` exists.
-- Drop partial topologies whole. Removing a whole block of independent prior draws biases nothing; keeping only the runs that finished first does (4.5).
+- Drop partial topologies whole. Removing a whole block of independent prior draws biases nothing; keeping only the runs that finished first does (4.5). **[corrected 2026-11-20]** Partial: fewer sidecars than 192 or 48, failure records not counted ("Failure records" above).
 
 Audit. It only reads, except for the list it writes to `artifacts/`, which git ignores:
 
 ```bash
-mkdir -p artifacts && python -c "import glob,json,os; C='campaign_lcdup15_rho1300_neur_n01'; T=sorted(glob.glob(C+'/sweep_*/topo_*')); K={d: (lambda a: a['_resolved_n_workers']*a['n_params_per_worker'])(json.load(open(d+'/job_args.json'))) for d in sorted(glob.glob(C+'/sweep_*'))}; L={t: set(os.listdir(t)) for t in T}; J=lambda f: {x[:-5] for x in f if x.startswith('iter_') and x.endswith('.json')}; N=lambda f: {x[:-4] for x in f if x.startswith('iter_') and x.endswith('.npz')}; F=lambda t: sum(1 for l in open(t+'/_failures.jsonl') if l.strip()) if '_failures.jsonl' in L[t] else 0; P=[t for t in T if 'topology_meta.json' in L[t] and len(J(L[t]))+F(t) < K[os.path.dirname(t)]]; open('artifacts/lcdup15_n01_partial_topologies.txt', 'w').write(''.join(os.path.relpath(t, C)+'\n' for t in P)); print('topology folders', len(T), '| without topology_meta.json', sum('topology_meta.json' not in L[t] for t in T), '| iter npz without json', sum(len(N(L[t])-J(L[t])) for t in T), '| json.tmp left', sum(sum(x.endswith('.json.tmp') for x in L[t]) for t in T), '| partial topologies', len(P), 'holding', sum(len(J(L[t])) for t in P), 'sims (listed in artifacts/lcdup15_n01_partial_topologies.txt)')"
+mkdir -p artifacts && python -c "import glob,json,os; C='campaign_lcdup15_rho1300_neur_n01'; T=sorted(glob.glob(C+'/sweep_*/topo_*')); K={d: (lambda a: a['_resolved_n_workers']*a['n_params_per_worker'])(json.load(open(d+'/job_args.json'))) for d in sorted(glob.glob(C+'/sweep_*'))}; L={t: set(os.listdir(t)) for t in T}; J=lambda f: {x[:-5] for x in f if x.startswith('iter_') and x.endswith('.json')}; N=lambda f: {x[:-4] for x in f if x.startswith('iter_') and x.endswith('.npz')}; F=lambda t: sum(1 for l in open(t+'/_failures.jsonl') if l.strip()) if '_failures.jsonl' in L[t] else 0; P=[t for t in T if 'topology_meta.json' in L[t] and len(J(L[t])) < K[os.path.dirname(t)]]; open('artifacts/lcdup15_n01_partial_topologies.txt', 'w').write(''.join('%s %d %d %d\n' % (os.path.relpath(t, C), K[os.path.dirname(t)], len(J(L[t])), F(t)) for t in P)); print('topology folders', len(T), '| without topology_meta.json', sum('topology_meta.json' not in L[t] for t in T), '| iter npz without json', sum(len(N(L[t])-J(L[t])) for t in T), '| json.tmp left', sum(sum(x.endswith('.json.tmp') for x in L[t]) for t in T), '| partial topologies', len(P), 'holding', sum(len(J(L[t])) for t in P), 'sims and', sum(F(t) for t in P), 'failure records (listed in artifacts/lcdup15_n01_partial_topologies.txt: folder, k, sidecars, records)')"
 ```
 
-- `[RUN]` on a fake campaign with one of each defect: each was counted once, and the partial topology was listed.
-- Expected on n01 `[OWN]`: one partial topology per task cut by a walltime kill or by the qdel, and few or no other leftovers.
+- `[RUN]` on a fake campaign with one of each defect: each was counted once, and the partial topology was listed. **[corrected 2026-11-20]** The command counted sidecars + failure records against k (`len(J(L[t]))+F(t) < K[...]`); it now counts sidecars only, and its list gives each partial topology's k, sidecars and records. `[RUN]` on a fake campaign of two tasks (k = 4 and 2) with a complete topology, two topologies with failure records, one with an orphan npz and a `.json.tmp`, one with no run and one without metadata: the 4 partial topologies listed with their counts, the other defects counted as expected.
+- Expected on n01 `[OWN]`: one partial topology per task cut by a walltime kill or by the qdel, and few or no other leftovers. **[corrected 2026-11-20]** The inspection counted 22 by the first rule; by the corrected rule expect 25 if one topology per task holds the 241 records above `[OWN]`.
 - A topology folder without `topology_meta.json` holds no simulation. Before running `process_campaign.py` on its task, move it out of the sweep folder. That is your call; nothing else reads the folder.
 
 ### 2.3 `campaign_index/`: NOT KNOWN whether written
@@ -286,7 +289,7 @@ $$p_A(\theta \mid x) \;=\; \frac{p(\theta)\, p(x \mid \theta)}{\int_\Theta p(\th
 At any observation inside A, a network trained on the screened pairs targets the unscreened posterior. Only the marginal of theta in the training set changes, to p_A(theta) proportional to p(theta) P(x in A | theta). Consequences:
 - **Choose A from statistics of x.** Examples: no detected event on any of the 9 electrodes after the first 2 s; a detected rate above a ceiling. Set the bounds so every recorded well passes with margin, and apply the same rule to the recordings. A well outside A has no posterior from this network.
 - **Do not screen on a quantity that is not a function of x**, such as the full-raster `mean_FR_Hz`. Call that quantity s(y), with y the raw output. A screen on it makes the network target p(theta | x, s(y) in A), which equals p(theta | x) only if P(s(y) in A | theta, x) does not depend on theta. Use `summary.csv` to size the problem, not to screen.
-- **Drop partial topologies whole** (2.2). Their selection is on run time, which depends on y, not on x alone.
+- **Drop partial topologies whole** (2.2). Their selection is on run time, which depends on y, not on x alone. **[corrected 2026-11-20]** Partial now includes a topology whose runs left failure records (2.2, "Failure records").
 - **Apply the same screen to the held-out simulations** used for SBC and coverage, and report the fraction removed.
 
 Equation (2) is my derivation `[OWN]`. According to PubMed (full text read), Deistler, Macke and Gonçalves (2022) [doi:10.1073/pnas.2207632119](https://doi.org/10.1073/pnas.2207632119) handle this as follows `[PUBMED-FT]`:
