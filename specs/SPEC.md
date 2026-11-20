@@ -1883,9 +1883,23 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   --write-index` when `summary.csv` is missing, when a `sweep_*/manifest.json`
   is newer than it, or when the campaign has no manifest; REINDEX=1 always,
   REINDEX=0 never; its output goes to `<out>/aggregate_index.log`, exit 3 if
-  it fails. DRYRUN=1 prints the plan and runs nothing. SKIP_CONDA=1
+  it fails; exit 3 too when `summary.csv` is still missing before the
+  inspection. DRYRUN=1 prints the plan and runs nothing. SKIP_CONDA=1
   (tests outside davinci) uses `python3` on PATH. The interpreter comes from
-  `CONDA_PREFIX` (as Block 6's job). Roadmap marker: stage I14, one task.
+  `CONDA_PREFIX` (as Block 6's job). Every value the job needs, the rebuild
+  decision included, is copied into a `CI_*` variable before the
+  environment is activated, and only `CI_*` variables are read after it:
+  conda's activation exports variables of its own (its compiler packages
+  export BUILD and HOST). **[corrected 2026-11-20]** The first version kept
+  its rebuild flag in `BUILD`; on davinci the activation of brian_final
+  overwrote it, so job 2100916 (intel queue, 2026-11-19) skipped the index
+  rebuild and stopped with "summary.csv not found" (exit 2). The scripts are
+  called by absolute path. Roadmap marker: stage I14, one task; from the
+  compute nodes its pushes fail (no `hpc-status` branch exists on origin,
+  2026-11-20), and the 4 attempts at the start and at the end took, by
+  elimination, most of that job's 19 min (the inspection itself stopped at
+  once) [OWN]: submit with ROADMAP_DISABLE=1 until the cluster can
+  push (`specs/roadmap/` hpc marker guide).
 - Library calls relied on: `pandas.read_csv`, `numpy.quantile`,
   `numpy.histogram`, matplotlib (Agg backend).
 - Custom code: the topology-state scan (directory listings and counts; no
@@ -1901,7 +1915,10 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   float64 values, so exact); partial and unstarted topologies excluded; a
   stale index detected after one sidecar is added; JSON, report and three
   figures written; the job script with SKIP_CONDA=1 under DRYRUN=1 and for
-  real, and `bash -n`.
+  real, and `bash -n`; the job's real activation block through a stand-in
+  `module` and conda whose activation exports BUILD and HOST and overwrites
+  the job's former variable names: the index must still be rebuilt and the
+  expected class counts written (the first version fails this check).
 - Data flow: consumes the sweep tree of `HPC_main_sweep.py` and
   `aggregate_sweep.py --write-index` (neither specified here); feeds the
   author's reading and the SBI side's planning.
@@ -1912,7 +1929,11 @@ calibrated rule) and "fully silenced early" when every spiking neuron is early.
   pandas 3.0.5, matplotlib 3.11.2]: `smoke_test_campaign_inspect.py` 7 pass,
   1 skip (convergence: not a discretisation). Skipped here: davinci (the
   brian_final environment, `module load python`, qsub, the roadmap marker's
-  push, the read time of about 4.4e5 sidecars).
+  push, the read time of about 4.4e5 sidecars). On davinci, 2026-11-19
+  [CLUSTER, the author's paste]: the smoke test 7 pass, 1 skip; the dry run
+  as expected; job 2100916 failed as described under "Job" (brian_final:
+  numpy 2.5.2, pandas 3.0.5, matplotlib 3.11.1). Fixed 2026-11-20: 8 pass,
+  1 skip [SANDBOX]; the new activation check fails on the first version.
 
 ### 5.1 Projects and where their model runs
 

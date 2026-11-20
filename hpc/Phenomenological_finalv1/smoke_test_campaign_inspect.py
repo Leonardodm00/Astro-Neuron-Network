@@ -18,6 +18,10 @@ Checks, from the strongest oracle to the weakest
                         index, missing summary.csv
     test_job_script     submit_campaign_inspect.sh: bash -n, dry run, real
                         run (SKIP_CONDA=1), stale-index rule, bad REINDEX
+    test_job_env_clobber  the job's real activation block, through a stand-in
+                        conda whose activation exports BUILD and HOST and
+                        overwrites the job's former variable names: the index
+                        is still rebuilt and the report written (job 2100916)
 
 Run (from the folder that holds this file; numpy, pandas, matplotlib, bash):
     python3 smoke_test_campaign_inspect.py
@@ -268,7 +272,7 @@ def test_job_script():
         dry = run_job({"DRYRUN": "1"}, camp)
         assert dry.returncode == 0, dry.stdout + dry.stderr
         assert "rebuild  : 1 (no summary.csv yet)" in dry.stdout, dry.stdout
-        assert "[dry run] python campaign_inspect.py" in dry.stdout, dry.stdout
+        assert ("campaign_inspect.py %s --out" % camp.resolve()) in dry.stdout, dry.stdout
         assert not (camp / "campaign_index").exists()
         out = Path(tmp) / "job_out"
         real = run_job({"OUT": str(out)}, camp)
@@ -287,6 +291,61 @@ def test_job_script():
         assert "rebuild  : 1 (1 of 2 manifest.json newer than summary.csv)" in stale.stdout, stale.stdout
         bad = run_job({"DRYRUN": "1", "REINDEX": "yes"}, camp)
         assert bad.returncode == 2 and "REINDEX must be" in bad.stderr, bad.stderr
+
+
+# A stand-in for `module` and conda, so that the job's real activation block
+# runs. Its `conda activate` exports BUILD and HOST, as conda's compiler
+# packages do, and overwrites every name the job reads or once read after the
+# activation (job 2100916 on 2026-11-19 lost its rebuild flag BUILD this way).
+FAKE_CONDA_SH = r"""
+conda() {
+    case "$1" in
+        activate)
+            export CONDA_PREFIX="@ENV@"
+            export BUILD=x86_64-conda-linux-gnu HOST=x86_64-conda-linux-gnu
+            OUT=/nonexistent/out; IDX=/nonexistent/summary.csv; CAMPAIGN=/nonexistent
+            REINDEX=0; DRYRUN=1; WHY=clobbered; PY=/bin/false; RC=99; EXIT_CODE=99
+            N_MAN=0; N_NEW=0; REPO_DIR=/nonexistent
+            ;;
+        deactivate) : ;;
+    esac
+}
+"""
+
+
+def test_job_env_clobber():
+    if shutil.which("bash") is None:
+        raise unittest.SkipTest("bash not available")
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        base, env_dir = tmp / "fakeconda", tmp / "fakeenv"
+        (base / "bin").mkdir(parents=True)
+        (base / "etc" / "profile.d").mkdir(parents=True)
+        (env_dir / "bin").mkdir(parents=True)
+        os.symlink(sys.executable, env_dir / "bin" / "python")
+        (base / "etc" / "profile.d" / "conda.sh").write_text(
+            FAKE_CONDA_SH.replace("@ENV@", str(env_dir)))
+        conda_bin = base / "bin" / "conda"
+        conda_bin.write_text('#!/bin/sh\n[ "$1" = info ] && [ "$2" = --base ] && echo "%s"\n' % base)
+        module_bin = base / "bin" / "module"
+        module_bin.write_text("#!/bin/sh\nexit 0\n")
+        for p in (conda_bin, module_bin):
+            p.chmod(0o755)
+        camp = build_campaign(tmp)
+        out = tmp / "job_out"
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(("PBS_", "BASH_FUNC_", "CONDA", "BUILD", "HOST"))}
+        env.update({"REPO_DIR": str(HERE), "CAMPAIGN": str(camp), "OUT": str(out),
+                    "PATH": str(base / "bin") + os.pathsep + "/usr/bin" + os.pathsep + "/bin"})
+        r = subprocess.run(["bash", str(JOB)], cwd=str(HERE), env=env,
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "[index] python" in r.stdout, r.stdout
+        assert "[env] %s" % (env_dir / "bin" / "python") in r.stdout, r.stdout
+        assert (camp / "campaign_index" / "summary.csv").is_file()
+        assert (out / "inspect_report.txt").is_file() and (out / "aggregate_index.log").is_file()
+        s = json.loads((out / "inspect_summary.json").read_text())
+        assert {c: s["classes"][c]["n"] for c in ci.CLASS_NAMES} == EXPECTED_CLASSES, s["classes"]
 
 
 # ---------------------------------------------------------------- runner ---
